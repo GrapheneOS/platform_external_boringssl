@@ -154,7 +154,7 @@ void BN_MONT_CTX_free(BN_MONT_CTX *mont) {
   }
 }
 
-BN_MONT_CTX *BN_MONT_CTX_copy(BN_MONT_CTX *to, BN_MONT_CTX *from) {
+BN_MONT_CTX *BN_MONT_CTX_copy(BN_MONT_CTX *to, const BN_MONT_CTX *from) {
   if (to == from) {
     return to;
   }
