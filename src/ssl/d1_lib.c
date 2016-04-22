@@ -57,12 +57,11 @@
 #include <openssl/ssl.h>
 
 #include <limits.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/err.h>
 #include <openssl/mem.h>
-#include <openssl/obj.h>
+#include <openssl/nid.h>
 
 #include "internal.h"
 
@@ -110,11 +109,11 @@ int dtls1_new(SSL *ssl) {
 
   ssl->d1 = d1;
 
-  /* Set the version to the highest version for DTLS. This controls the initial
-   * state of |ssl->enc_method| and what the API reports as the version prior to
-   * negotiation.
+  /* Set the version to the highest supported version.
    *
-   * TODO(davidben): This is fragile and confusing. */
+   * TODO(davidben): Move this field into |s3|, have it store the normalized
+   * protocol version, and implement this pre-negotiation quirk in |SSL_version|
+   * at the API boundary rather than in internal state. */
   ssl->version = DTLS1_2_VERSION;
   return 1;
 }
@@ -272,6 +271,10 @@ int dtls1_check_timeout_num(SSL *ssl) {
 }
 
 int DTLSv1_handle_timeout(SSL *ssl) {
+  ssl->rwstate = SSL_NOTHING;
+  /* Functions which use SSL_get_error must clear the error queue on entry. */
+  ERR_clear_error();
+
   if (!SSL_IS_DTLS(ssl)) {
     return -1;
   }

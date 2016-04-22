@@ -149,7 +149,6 @@
 #include <openssl/ssl.h>
 
 #include <assert.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/buf.h>
@@ -158,24 +157,10 @@
 #include <openssl/err.h>
 #include <openssl/md5.h>
 #include <openssl/mem.h>
-#include <openssl/obj.h>
+#include <openssl/nid.h>
 
 #include "internal.h"
 
-
-const SSL3_ENC_METHOD SSLv3_enc_data = {
-    ssl3_prf,
-    tls1_setup_key_block,
-    tls1_generate_master_secret,
-    tls1_change_cipher_state,
-    ssl3_final_finish_mac,
-    ssl3_cert_verify_mac,
-    SSL3_MD_CLIENT_FINISHED_CONST, 4,
-    SSL3_MD_SERVER_FINISHED_CONST, 4,
-    ssl3_alert_code,
-    tls1_export_keying_material,
-    0,
-};
 
 int ssl3_supports_cipher(const SSL_CIPHER *cipher) {
   return 1;
@@ -211,11 +196,11 @@ int ssl3_new(SSL *ssl) {
 
   ssl->s3 = s3;
 
-  /* Set the version to the highest supported version for TLS. This controls the
-   * initial state of |ssl->enc_method| and what the API reports as the version
-   * prior to negotiation.
+  /* Set the version to the highest supported version.
    *
-   * TODO(davidben): This is fragile and confusing. */
+   * TODO(davidben): Move this field into |s3|, have it store the normalized
+   * protocol version, and implement this pre-negotiation quirk in |SSL_version|
+   * at the API boundary rather than in internal state. */
   ssl->version = TLS1_2_VERSION;
   return 1;
 err:
@@ -239,7 +224,10 @@ void ssl3_free(SSL *ssl) {
   OPENSSL_free(ssl->s3->tmp.peer_psk_identity_hint);
   ssl3_free_handshake_buffer(ssl);
   ssl3_free_handshake_hash(ssl);
+  OPENSSL_free(ssl->s3->next_proto_negotiated);
   OPENSSL_free(ssl->s3->alpn_selected);
+  SSL_AEAD_CTX_free(ssl->s3->aead_read_ctx);
+  SSL_AEAD_CTX_free(ssl->s3->aead_write_ctx);
 
   OPENSSL_cleanse(ssl->s3, sizeof *ssl->s3);
   OPENSSL_free(ssl->s3);
@@ -262,7 +250,7 @@ int SSL_CTX_need_tmp_RSA(const SSL_CTX *ctx) {
   return 0;
 }
 
-int SSL_need_rsa(const SSL *ssl) {
+int SSL_need_tmp_RSA(const SSL *ssl) {
   return 0;
 }
 
@@ -322,23 +310,28 @@ int SSL_enable_tls_channel_id(SSL *ssl) {
   return 1;
 }
 
+static int is_p256_key(EVP_PKEY *private_key) {
+  const EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(private_key);
+  return ec_key != NULL &&
+         EC_GROUP_get_curve_name(EC_KEY_get0_group(ec_key)) ==
+             NID_X9_62_prime256v1;
+}
+
 int SSL_CTX_set1_tls_channel_id(SSL_CTX *ctx, EVP_PKEY *private_key) {
-  ctx->tlsext_channel_id_enabled = 1;
-  if (EVP_PKEY_id(private_key) != EVP_PKEY_EC ||
-      EVP_PKEY_bits(private_key) != 256) {
+  if (!is_p256_key(private_key)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_CHANNEL_ID_NOT_P256);
     return 0;
   }
+
   EVP_PKEY_free(ctx->tlsext_channel_id_private);
   ctx->tlsext_channel_id_private = EVP_PKEY_up_ref(private_key);
+  ctx->tlsext_channel_id_enabled = 1;
+
   return 1;
 }
 
 int SSL_set1_tls_channel_id(SSL *ssl, EVP_PKEY *private_key) {
-  EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(private_key);
-  if (ec_key == NULL ||
-      EC_GROUP_get_curve_name(EC_KEY_get0_group(ec_key)) !=
-          NID_X9_62_prime256v1) {
+  if (!is_p256_key(private_key)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_CHANNEL_ID_NOT_P256);
     return 0;
   }
@@ -365,7 +358,9 @@ int SSL_set_tlsext_host_name(SSL *ssl, const char *name) {
   if (name == NULL) {
     return 1;
   }
-  if (strlen(name) > TLSEXT_MAXLEN_host_name) {
+
+  size_t len = strlen(name);
+  if (len == 0 || len > TLSEXT_MAXLEN_host_name) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_SSL3_EXT_INVALID_SERVERNAME);
     return 0;
   }
@@ -452,17 +447,15 @@ struct ssl_cipher_preference_list_st *ssl_get_cipher_preferences(SSL *ssl) {
     return ssl->cipher_list;
   }
 
-  if (ssl->version >= TLS1_1_VERSION && ssl->ctx != NULL &&
-      ssl->ctx->cipher_list_tls11 != NULL) {
+  if (ssl->version >= TLS1_1_VERSION && ssl->ctx->cipher_list_tls11 != NULL) {
     return ssl->ctx->cipher_list_tls11;
   }
 
-  if (ssl->version >= TLS1_VERSION && ssl->ctx != NULL &&
-      ssl->ctx->cipher_list_tls10 != NULL) {
+  if (ssl->version >= TLS1_VERSION && ssl->ctx->cipher_list_tls10 != NULL) {
     return ssl->ctx->cipher_list_tls10;
   }
 
-  if (ssl->ctx != NULL && ssl->ctx->cipher_list != NULL) {
+  if (ssl->ctx->cipher_list != NULL) {
     return ssl->ctx->cipher_list;
   }
 
@@ -505,8 +498,7 @@ const SSL_CIPHER *ssl3_choose_cipher(
     ok = 1;
 
     /* Check the TLS version. */
-    if (SSL_CIPHER_get_min_version(c) >
-        ssl3_version_from_wire(ssl, ssl->version)) {
+    if (SSL_CIPHER_get_min_version(c) > ssl3_protocol_version(ssl)) {
       ok = 0;
     }
 
@@ -578,10 +570,10 @@ int ssl3_get_req_cert_type(SSL *ssl, uint8_t *p) {
 
 /* If we are using default SHA1+MD5 algorithms switch to new SHA256 PRF and
  * handshake macs if required. */
-uint32_t ssl_get_algorithm_prf(SSL *ssl) {
+uint32_t ssl_get_algorithm_prf(const SSL *ssl) {
   uint32_t algorithm_prf = ssl->s3->tmp.new_cipher->algorithm_prf;
-  if (ssl->enc_method->enc_flags & SSL_ENC_FLAG_SHA256_PRF &&
-      algorithm_prf == SSL_HANDSHAKE_MAC_DEFAULT) {
+  if (algorithm_prf == SSL_HANDSHAKE_MAC_DEFAULT &&
+      ssl3_protocol_version(ssl) >= TLS1_2_VERSION) {
     return SSL_HANDSHAKE_MAC_SHA256;
   }
   return algorithm_prf;

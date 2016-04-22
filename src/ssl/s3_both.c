@@ -114,7 +114,6 @@
 
 #include <assert.h>
 #include <limits.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/buf.h>
@@ -122,7 +121,7 @@
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/md5.h>
-#include <openssl/obj.h>
+#include <openssl/nid.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
@@ -156,15 +155,15 @@ int ssl3_do_write(SSL *ssl, int type) {
   return 0;
 }
 
-int ssl3_send_finished(SSL *ssl, int a, int b, const char *sender, int slen) {
+int ssl3_send_finished(SSL *ssl, int a, int b) {
   uint8_t *p;
   int n;
 
   if (ssl->state == a) {
     p = ssl_handshake_start(ssl);
 
-    n = ssl->enc_method->final_finish_mac(ssl, sender, slen,
-                                          ssl->s3->tmp.finish_md);
+    n = ssl->s3->enc_method->final_finish_mac(ssl, ssl->server,
+                                              ssl->s3->tmp.finish_md);
     if (n == 0) {
       return 0;
     }
@@ -202,25 +201,14 @@ int ssl3_send_finished(SSL *ssl, int a, int b, const char *sender, int slen) {
 /* ssl3_take_mac calculates the Finished MAC for the handshakes messages seen
  * so far. */
 static void ssl3_take_mac(SSL *ssl) {
-  const char *sender;
-  int slen;
-
   /* If no new cipher setup then return immediately: other functions will set
    * the appropriate error. */
   if (ssl->s3->tmp.new_cipher == NULL) {
     return;
   }
 
-  if (ssl->state & SSL_ST_CONNECT) {
-    sender = ssl->enc_method->server_finished_label;
-    slen = ssl->enc_method->server_finished_label_len;
-  } else {
-    sender = ssl->enc_method->client_finished_label;
-    slen = ssl->enc_method->client_finished_label_len;
-  }
-
-  ssl->s3->tmp.peer_finish_md_len = ssl->enc_method->final_finish_mac(
-      ssl, sender, slen, ssl->s3->tmp.peer_finish_md);
+  ssl->s3->tmp.peer_finish_md_len = ssl->s3->enc_method->final_finish_mac(
+      ssl, !ssl->server, ssl->s3->tmp.peer_finish_md);
 }
 
 int ssl3_get_finished(SSL *ssl, int a, int b) {
@@ -250,7 +238,12 @@ int ssl3_get_finished(SSL *ssl, int a, int b) {
     goto f_err;
   }
 
-  if (CRYPTO_memcmp(p, ssl->s3->tmp.peer_finish_md, finished_len) != 0) {
+  int finished_ret =
+      CRYPTO_memcmp(p, ssl->s3->tmp.peer_finish_md, finished_len);
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
+  finished_ret = 0;
+#endif
+  if (finished_ret != 0) {
     al = SSL_AD_DECRYPT_ERROR;
     OPENSSL_PUT_ERROR(SSL, SSL_R_DIGEST_CHECK_FAILED);
     goto f_err;
@@ -277,13 +270,6 @@ err:
   return 0;
 }
 
-/* for these 2 messages, we need to
- * ssl->enc_read_ctx      re-init
- * ssl->s3->read_sequence   zero
- * ssl->s3->read_mac_secret   re-init
- * ssl->session->read_sym_enc   assign
- * ssl->session->read_compression assign
- * ssl->session->read_hash    assign */
 int ssl3_send_change_cipher_spec(SSL *ssl, int a, int b) {
   if (ssl->state == a) {
     *((uint8_t *)ssl->init_buf->data) = SSL3_MT_CCS;
@@ -407,7 +393,6 @@ long ssl3_get_message(SSL *ssl, int header_state, int body_state, int msg_type,
     int bytes_read =
         ssl3_read_bytes(ssl, SSL3_RT_HANDSHAKE, &p[ssl->init_num], n, 0);
     if (bytes_read <= 0) {
-      ssl->rwstate = SSL_READING;
       *ok = 0;
       return bytes_read;
     }
@@ -452,7 +437,7 @@ int ssl3_cert_verify_hash(SSL *ssl, uint8_t *out, size_t *out_len,
   /* For TLS v1.2 send signature algorithm and signature using
    * agreed digest and cached handshake records. Otherwise, use
    * SHA1 or MD5 + SHA1 depending on key type.  */
-  if (SSL_USE_SIGALGS(ssl)) {
+  if (ssl3_protocol_version(ssl) >= TLS1_2_VERSION) {
     EVP_MD_CTX mctx;
     unsigned len;
 
@@ -467,15 +452,15 @@ int ssl3_cert_verify_hash(SSL *ssl, uint8_t *out, size_t *out_len,
     }
     *out_len = len;
   } else if (pkey_type == EVP_PKEY_RSA) {
-    if (ssl->enc_method->cert_verify_mac(ssl, NID_md5, out) == 0 ||
-        ssl->enc_method->cert_verify_mac(ssl, NID_sha1,
-                                         out + MD5_DIGEST_LENGTH) == 0) {
+    if (ssl->s3->enc_method->cert_verify_mac(ssl, NID_md5, out) == 0 ||
+        ssl->s3->enc_method->cert_verify_mac(ssl, NID_sha1,
+                                             out + MD5_DIGEST_LENGTH) == 0) {
       return 0;
     }
     *out_len = MD5_DIGEST_LENGTH + SHA_DIGEST_LENGTH;
     *out_md = EVP_md5_sha1();
   } else if (pkey_type == EVP_PKEY_EC) {
-    if (ssl->enc_method->cert_verify_mac(ssl, NID_sha1, out) == 0) {
+    if (ssl->s3->enc_method->cert_verify_mac(ssl, NID_sha1, out) == 0) {
       return 0;
     }
     *out_len = SHA_DIGEST_LENGTH;
