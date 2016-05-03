@@ -150,7 +150,6 @@
 #include <openssl/ssl.h>
 
 #include <assert.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/bn.h>
@@ -163,7 +162,6 @@
 #include <openssl/evp.h>
 #include <openssl/md5.h>
 #include <openssl/mem.h>
-#include <openssl/obj.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -182,7 +180,6 @@ int ssl3_connect(SSL *ssl) {
   assert(!ssl->server);
   assert(!SSL_IS_DTLS(ssl));
 
-  ERR_clear_error();
   ERR_clear_system_error();
 
   if (ssl->info_callback != NULL) {
@@ -190,8 +187,6 @@ int ssl3_connect(SSL *ssl) {
   } else if (ssl->ctx->info_callback != NULL) {
     cb = ssl->ctx->info_callback;
   }
-
-  ssl->in_handshake++;
 
   for (;;) {
     state = ssl->state;
@@ -388,10 +383,7 @@ int ssl3_connect(SSL *ssl) {
         }
         ssl->init_num = 0;
 
-        ssl->session->cipher = ssl->s3->tmp.new_cipher;
-        if (!ssl->enc_method->setup_key_block(ssl) ||
-            !ssl->enc_method->change_cipher_state(
-                ssl, SSL3_CHANGE_CIPHER_CLIENT_WRITE)) {
+        if (!tls1_change_cipher_state(ssl, SSL3_CHANGE_CIPHER_CLIENT_WRITE)) {
           ret = -1;
           goto end;
         }
@@ -424,9 +416,7 @@ int ssl3_connect(SSL *ssl) {
       case SSL3_ST_CW_FINISHED_A:
       case SSL3_ST_CW_FINISHED_B:
         ret = ssl3_send_finished(ssl, SSL3_ST_CW_FINISHED_A,
-                                 SSL3_ST_CW_FINISHED_B,
-                                 ssl->enc_method->client_finished_label,
-                                 ssl->enc_method->client_finished_label_len);
+                                 SSL3_ST_CW_FINISHED_B);
         if (ret <= 0) {
           goto end;
         }
@@ -487,7 +477,7 @@ int ssl3_connect(SSL *ssl) {
           goto end;
         }
 
-        if (!ssl3_do_change_cipher_spec(ssl)) {
+        if (!tls1_change_cipher_state(ssl, SSL3_CHANGE_CIPHER_CLIENT_READ)) {
           ret = -1;
           goto end;
         }
@@ -511,12 +501,11 @@ int ssl3_connect(SSL *ssl) {
         break;
 
       case SSL3_ST_CW_FLUSH:
-        ssl->rwstate = SSL_WRITING;
         if (BIO_flush(ssl->wbio) <= 0) {
+          ssl->rwstate = SSL_WRITING;
           ret = -1;
           goto end;
         }
-        ssl->rwstate = SSL_NOTHING;
         ssl->state = ssl->s3->tmp.next_state;
         break;
 
@@ -581,7 +570,6 @@ int ssl3_connect(SSL *ssl) {
   }
 
 end:
-  ssl->in_handshake--;
   BUF_MEM_free(buf);
   if (cb != NULL) {
     cb(ssl, SSL_CB_CONNECT_EXIT, ret);
@@ -676,13 +664,12 @@ int ssl3_send_client_hello(SSL *ssl) {
     ssl->client_version = max_version;
   }
 
-  /* If the configured session has expired or was created at a version higher
-   * than our maximum version, drop it. */
+  /* If the configured session has expired or was created at a disabled
+   * version, drop it. */
   if (ssl->session != NULL &&
       (ssl->session->session_id_length == 0 || ssl->session->not_resumable ||
        ssl->session->timeout < (long)(time(NULL) - ssl->session->time) ||
-       (!SSL_IS_DTLS(ssl) && ssl->session->ssl_version > ssl->version) ||
-       (SSL_IS_DTLS(ssl) && ssl->session->ssl_version < ssl->version))) {
+       !ssl3_is_version_enabled(ssl, ssl->session->ssl_version))) {
     SSL_set_session(ssl, NULL);
   }
 
@@ -791,8 +778,8 @@ int ssl3_get_server_hello(SSL *ssl) {
       goto f_err;
     }
     ssl->version = server_version;
-    ssl->enc_method = ssl3_get_enc_method(server_version);
-    assert(ssl->enc_method != NULL);
+    ssl->s3->enc_method = ssl3_get_enc_method(server_version);
+    assert(ssl->s3->enc_method != NULL);
     /* At this point, the connection's version is known and ssl->version is
      * fixed. Begin enforcing the record-layer version. */
     ssl->s3->have_version = 1;
@@ -841,8 +828,7 @@ int ssl3_get_server_hello(SSL *ssl) {
   /* If the cipher is disabled then we didn't sent it in the ClientHello, so if
    * the server selected it, it's an error. */
   if ((c->algorithm_mkey & ct->mask_k) || (c->algorithm_auth & ct->mask_a) ||
-      SSL_CIPHER_get_min_version(c) >
-          ssl3_version_from_wire(ssl, ssl->version)) {
+      SSL_CIPHER_get_min_version(c) > ssl3_protocol_version(ssl)) {
     al = SSL_AD_ILLEGAL_PARAMETER;
     OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CIPHER_RETURNED);
     goto f_err;
@@ -867,6 +853,8 @@ int ssl3_get_server_hello(SSL *ssl) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_OLD_SESSION_VERSION_NOT_RETURNED);
       goto f_err;
     }
+  } else {
+    ssl->session->cipher = c;
   }
   ssl->s3->tmp.new_cipher = c;
 
@@ -878,7 +866,7 @@ int ssl3_get_server_hello(SSL *ssl) {
   /* If doing a full handshake with TLS 1.2, the server may request a client
    * certificate which requires hashing the handshake transcript under a
    * different hash. Otherwise, the handshake buffer may be released. */
-  if (!SSL_USE_SIGALGS(ssl) || ssl->hit) {
+  if (ssl->hit || ssl3_protocol_version(ssl) < TLS1_2_VERSION) {
     ssl3_free_handshake_buffer(ssl);
   }
 
@@ -1060,19 +1048,16 @@ err:
 int ssl3_get_server_key_exchange(SSL *ssl) {
   EVP_MD_CTX md_ctx;
   int al, ok;
-  long n, alg_k, alg_a;
   EVP_PKEY *pkey = NULL;
-  const EVP_MD *md = NULL;
   DH *dh = NULL;
   EC_KEY *ecdh = NULL;
   EC_POINT *srvr_ecpoint = NULL;
-  CBS server_key_exchange, server_key_exchange_orig, parameter;
 
   /* use same message size as in ssl3_get_certificate_request() as
    * ServerKeyExchange message may be skipped */
-  n = ssl->method->ssl_get_message(ssl, SSL3_ST_CR_KEY_EXCH_A,
-                                 SSL3_ST_CR_KEY_EXCH_B, -1, ssl->max_cert_list,
-                                 ssl_hash_message, &ok);
+  long n = ssl->method->ssl_get_message(
+      ssl, SSL3_ST_CR_KEY_EXCH_A, SSL3_ST_CR_KEY_EXCH_B, -1, ssl->max_cert_list,
+      ssl_hash_message, &ok);
   if (!ok) {
     return n;
   }
@@ -1097,11 +1082,12 @@ int ssl3_get_server_key_exchange(SSL *ssl) {
   }
 
   /* Retain a copy of the original CBS to compute the signature over. */
+  CBS server_key_exchange;
   CBS_init(&server_key_exchange, ssl->init_msg, n);
-  server_key_exchange_orig = server_key_exchange;
+  CBS server_key_exchange_orig = server_key_exchange;
 
-  alg_k = ssl->s3->tmp.new_cipher->algorithm_mkey;
-  alg_a = ssl->s3->tmp.new_cipher->algorithm_auth;
+  uint32_t alg_k = ssl->s3->tmp.new_cipher->algorithm_mkey;
+  uint32_t alg_a = ssl->s3->tmp.new_cipher->algorithm_auth;
   EVP_MD_CTX_init(&md_ctx);
 
   if (alg_a & SSL_aPSK) {
@@ -1224,6 +1210,7 @@ int ssl3_get_server_key_exchange(SSL *ssl) {
   /* At this point, |server_key_exchange| contains the signature, if any, while
    * |server_key_exchange_orig| contains the entire message. From that, derive
    * a CBS containing just the parameter. */
+  CBS parameter;
   CBS_init(&parameter, CBS_data(&server_key_exchange_orig),
            CBS_len(&server_key_exchange_orig) - CBS_len(&server_key_exchange));
 
@@ -1234,7 +1221,8 @@ int ssl3_get_server_key_exchange(SSL *ssl) {
       goto err;
     }
 
-    if (SSL_USE_SIGALGS(ssl)) {
+    const EVP_MD *md = NULL;
+    if (ssl3_protocol_version(ssl) >= TLS1_2_VERSION) {
       uint8_t hash, signature;
       if (!CBS_get_u8(&server_key_exchange, &hash) ||
           !CBS_get_u8(&server_key_exchange, &signature)) {
@@ -1261,15 +1249,20 @@ int ssl3_get_server_key_exchange(SSL *ssl) {
       goto f_err;
     }
 
-    if (!EVP_DigestVerifyInit(&md_ctx, NULL, md, NULL, pkey) ||
-        !EVP_DigestVerifyUpdate(&md_ctx, ssl->s3->client_random,
-                                SSL3_RANDOM_SIZE) ||
-        !EVP_DigestVerifyUpdate(&md_ctx, ssl->s3->server_random,
-                                SSL3_RANDOM_SIZE) ||
-        !EVP_DigestVerifyUpdate(&md_ctx, CBS_data(&parameter),
-                                CBS_len(&parameter)) ||
-        !EVP_DigestVerifyFinal(&md_ctx, CBS_data(&signature),
-                               CBS_len(&signature))) {
+    int sig_ok = EVP_DigestVerifyInit(&md_ctx, NULL, md, NULL, pkey) &&
+                 EVP_DigestVerifyUpdate(&md_ctx, ssl->s3->client_random,
+                                        SSL3_RANDOM_SIZE) &&
+                 EVP_DigestVerifyUpdate(&md_ctx, ssl->s3->server_random,
+                                        SSL3_RANDOM_SIZE) &&
+                 EVP_DigestVerifyUpdate(&md_ctx, CBS_data(&parameter),
+                                        CBS_len(&parameter)) &&
+                 EVP_DigestVerifyFinal(&md_ctx, CBS_data(&signature),
+                                       CBS_len(&signature));
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
+    sig_ok = 1;
+    ERR_clear_error();
+#endif
+    if (!sig_ok) {
       /* bad signature */
       al = SSL_AD_DECRYPT_ERROR;
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
@@ -1306,17 +1299,12 @@ static int ca_dn_cmp(const X509_NAME **a, const X509_NAME **b) {
 
 int ssl3_get_certificate_request(SSL *ssl) {
   int ok, ret = 0;
-  unsigned long n;
   X509_NAME *xn = NULL;
   STACK_OF(X509_NAME) *ca_sk = NULL;
-  CBS cbs;
-  CBS certificate_types;
-  CBS certificate_authorities;
-  const uint8_t *data;
 
-  n = ssl->method->ssl_get_message(ssl, SSL3_ST_CR_CERT_REQ_A,
-                                 SSL3_ST_CR_CERT_REQ_B, -1, ssl->max_cert_list,
-                                 ssl_hash_message, &ok);
+  long n = ssl->method->ssl_get_message(
+      ssl, SSL3_ST_CR_CERT_REQ_A, SSL3_ST_CR_CERT_REQ_B, -1, ssl->max_cert_list,
+      ssl_hash_message, &ok);
 
   if (!ok) {
     return n;
@@ -1334,10 +1322,11 @@ int ssl3_get_certificate_request(SSL *ssl) {
 
   if (ssl->s3->tmp.message_type != SSL3_MT_CERTIFICATE_REQUEST) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
-    OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_MESSAGE_TYPE);
+    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_MESSAGE);
     goto err;
   }
 
+  CBS cbs;
   CBS_init(&cbs, ssl->init_msg, n);
 
   ca_sk = sk_X509_NAME_new(ca_dn_cmp);
@@ -1347,6 +1336,7 @@ int ssl3_get_certificate_request(SSL *ssl) {
   }
 
   /* get the certificate types */
+  CBS certificate_types;
   if (!CBS_get_u8_length_prefixed(&cbs, &certificate_types)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
@@ -1359,7 +1349,7 @@ int ssl3_get_certificate_request(SSL *ssl) {
     goto err;
   }
 
-  if (SSL_USE_SIGALGS(ssl)) {
+  if (ssl3_protocol_version(ssl) >= TLS1_2_VERSION) {
     CBS supported_signature_algorithms;
     if (!CBS_get_u16_length_prefixed(&cbs, &supported_signature_algorithms) ||
         !tls1_parse_peer_sigalgs(ssl, &supported_signature_algorithms)) {
@@ -1370,6 +1360,7 @@ int ssl3_get_certificate_request(SSL *ssl) {
   }
 
   /* get the CA RDNs */
+  CBS certificate_authorities;
   if (!CBS_get_u16_length_prefixed(&cbs, &certificate_authorities)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     OPENSSL_PUT_ERROR(SSL, SSL_R_LENGTH_MISMATCH);
@@ -1385,25 +1376,13 @@ int ssl3_get_certificate_request(SSL *ssl) {
       goto err;
     }
 
-    data = CBS_data(&distinguished_name);
-
+    const uint8_t *data = CBS_data(&distinguished_name);
     /* A u16 length cannot overflow a long. */
     xn = d2i_X509_NAME(NULL, &data, (long)CBS_len(&distinguished_name));
-    if (xn == NULL) {
+    if (xn == NULL ||
+        data != CBS_data(&distinguished_name) + CBS_len(&distinguished_name)) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
-      OPENSSL_PUT_ERROR(SSL, ERR_R_ASN1_LIB);
-      goto err;
-    }
-
-    if (!CBS_skip(&distinguished_name, data - CBS_data(&distinguished_name))) {
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
-      OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
-      goto err;
-    }
-
-    if (CBS_len(&distinguished_name) != 0) {
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
-      OPENSSL_PUT_ERROR(SSL, SSL_R_CA_DN_LENGTH_MISMATCH);
+      OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
       goto err;
     }
 
@@ -1411,6 +1390,7 @@ int ssl3_get_certificate_request(SSL *ssl) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       goto err;
     }
+    xn = NULL;
   }
 
   /* we should setup a certificate to return.... */
@@ -1422,6 +1402,7 @@ int ssl3_get_certificate_request(SSL *ssl) {
   ret = 1;
 
 err:
+  X509_NAME_free(xn);
   sk_X509_NAME_pop_free(ca_sk, X509_NAME_free);
   return ret;
 }
@@ -1755,8 +1736,8 @@ int ssl3_send_client_key_exchange(SSL *ssl) {
   }
   ssl->state = SSL3_ST_CW_KEY_EXCH_B;
 
-  ssl->session->master_key_length = ssl->enc_method->generate_master_secret(
-      ssl, ssl->session->master_key, pms, pms_len);
+  ssl->session->master_key_length =
+      tls1_generate_master_secret(ssl, ssl->session->master_key, pms, pms_len);
   if (ssl->session->master_key_length == 0) {
     goto err;
   }
@@ -1768,6 +1749,7 @@ int ssl3_send_client_key_exchange(SSL *ssl) {
   return ssl_do_write(ssl);
 
 err:
+  CBB_cleanup(&cbb);
   if (pms != NULL) {
     OPENSSL_cleanse(pms, pms_len);
     OPENSSL_free(pms);
@@ -1794,7 +1776,7 @@ int ssl3_send_cert_verify(SSL *ssl) {
   if (ssl->state == SSL3_ST_CW_CERT_VRFY_A) {
     /* Select and write out the digest type in TLS 1.2. */
     const EVP_MD *md = NULL;
-    if (SSL_USE_SIGALGS(ssl)) {
+    if (ssl3_protocol_version(ssl) >= TLS1_2_VERSION) {
       md = tls1_choose_signing_digest(ssl);
       if (!tls12_add_sigandhash(ssl, &cbb, md)) {
         OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
@@ -1828,7 +1810,8 @@ int ssl3_send_cert_verify(SSL *ssl) {
     /* Skip over the already written signature algorithm and retry the
      * signature. */
     uint8_t *ptr;
-    if ((SSL_USE_SIGALGS(ssl) && !CBB_did_write(&cbb, 2)) ||
+    if ((ssl3_protocol_version(ssl) >= TLS1_2_VERSION &&
+         !CBB_did_write(&cbb, 2)) ||
         !CBB_add_u16_length_prefixed(&cbb, &child) ||
         !CBB_reserve(&child, &ptr, max_sig_len)) {
       goto err;
@@ -1839,10 +1822,8 @@ int ssl3_send_cert_verify(SSL *ssl) {
 
   switch (sign_result) {
     case ssl_private_key_success:
-      ssl->rwstate = SSL_NOTHING;
       break;
     case ssl_private_key_failure:
-      ssl->rwstate = SSL_NOTHING;
       goto err;
     case ssl_private_key_retry:
       ssl->rwstate = SSL_PRIVATE_KEY_OPERATION;
@@ -1872,23 +1853,18 @@ static int ssl3_has_client_certificate(SSL *ssl) {
 }
 
 int ssl3_send_client_certificate(SSL *ssl) {
-  X509 *x509 = NULL;
-  EVP_PKEY *pkey = NULL;
-  int i;
-
   if (ssl->state == SSL3_ST_CW_CERT_A) {
-    /* Let cert callback update client certificates if required */
+    /* Call cert_cb to update the certificate. */
     if (ssl->cert->cert_cb) {
-      i = ssl->cert->cert_cb(ssl, ssl->cert->cert_cb_arg);
-      if (i < 0) {
+      int ret = ssl->cert->cert_cb(ssl, ssl->cert->cert_cb_arg);
+      if (ret < 0) {
         ssl->rwstate = SSL_X509_LOOKUP;
         return -1;
       }
-      if (i == 0) {
+      if (ret == 0) {
         ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
-        return 0;
+        return -1;
       }
-      ssl->rwstate = SSL_NOTHING;
     }
 
     if (ssl3_has_client_certificate(ssl)) {
@@ -1898,52 +1874,42 @@ int ssl3_send_client_certificate(SSL *ssl) {
     }
   }
 
-  /* We need to get a client cert */
   if (ssl->state == SSL3_ST_CW_CERT_B) {
-    /* If we get an error, we need to:
-     *   ssl->rwstate=SSL_X509_LOOKUP; return(-1);
-     * We then get retried later */
-    i = ssl_do_client_cert_cb(ssl, &x509, &pkey);
-    if (i < 0) {
+    /* Call client_cert_cb to update the certificate. */
+    X509 *x509 = NULL;
+    EVP_PKEY *pkey = NULL;
+    int ret = ssl_do_client_cert_cb(ssl, &x509, &pkey);
+    if (ret < 0) {
       ssl->rwstate = SSL_X509_LOOKUP;
       return -1;
     }
-    ssl->rwstate = SSL_NOTHING;
-    if (i == 1 && pkey != NULL && x509 != NULL) {
-      ssl->state = SSL3_ST_CW_CERT_B;
-      if (!SSL_use_certificate(ssl, x509) || !SSL_use_PrivateKey(ssl, pkey)) {
-        i = 0;
-      }
-    } else if (i == 1) {
-      i = 0;
-      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_DATA_RETURNED_BY_CALLBACK);
-    }
 
+    int setup_error = ret == 1 && (!SSL_use_certificate(ssl, x509) ||
+                                   !SSL_use_PrivateKey(ssl, pkey));
     X509_free(x509);
     EVP_PKEY_free(pkey);
-    if (i && !ssl3_has_client_certificate(ssl)) {
-      i = 0;
-    }
-    if (i == 0) {
-      if (ssl->version == SSL3_VERSION) {
-        ssl->s3->tmp.cert_req = 0;
-        ssl3_send_alert(ssl, SSL3_AL_WARNING, SSL_AD_NO_CERTIFICATE);
-        return 1;
-      } else {
-        ssl->s3->tmp.cert_req = 2;
-        /* There is no client certificate, so the handshake buffer may be
-         * released. */
-        ssl3_free_handshake_buffer(ssl);
-      }
+    if (setup_error) {
+      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
+      return -1;
     }
 
-    /* Ok, we have a cert */
     ssl->state = SSL3_ST_CW_CERT_C;
   }
 
   if (ssl->state == SSL3_ST_CW_CERT_C) {
-    if (ssl->s3->tmp.cert_req == 2) {
-      /* Send an empty Certificate message. */
+    if (!ssl3_has_client_certificate(ssl)) {
+      /* Without a client certificate, the handshake buffer may be released. */
+      ssl3_free_handshake_buffer(ssl);
+
+      if (ssl->version == SSL3_VERSION) {
+        /* In SSL 3.0, send no certificate by skipping both messages. */
+        ssl->s3->tmp.cert_req = 0;
+        ssl3_send_alert(ssl, SSL3_AL_WARNING, SSL_AD_NO_CERTIFICATE);
+        return 1;
+      }
+
+      /* In TLS, send an empty Certificate message. */
+      ssl->s3->tmp.cert_req = 2;
       uint8_t *p = ssl_handshake_start(ssl);
       l2n3(0, p);
       if (!ssl_set_handshake_header(ssl, SSL3_MT_CERTIFICATE, 3)) {
@@ -1955,7 +1921,7 @@ int ssl3_send_client_certificate(SSL *ssl) {
     ssl->state = SSL3_ST_CW_CERT_D;
   }
 
-  /* SSL3_ST_CW_CERT_D */
+  assert(ssl->state == SSL3_ST_CW_CERT_D);
   return ssl_do_write(ssl);
 }
 
@@ -1967,7 +1933,7 @@ int ssl3_send_next_proto(SSL *ssl) {
   assert(ssl->state == SSL3_ST_CW_NEXT_PROTO_A);
 
   static const uint8_t kZero[32] = {0};
-  size_t padding_len = 32 - ((ssl->next_proto_negotiated_len + 2) % 32);
+  size_t padding_len = 32 - ((ssl->s3->next_proto_negotiated_len + 2) % 32);
 
   CBB cbb, child;
   size_t length;
@@ -1975,8 +1941,8 @@ int ssl3_send_next_proto(SSL *ssl) {
   if (!CBB_init_fixed(&cbb, ssl_handshake_start(ssl),
                       ssl->init_buf->max - SSL_HM_HEADER_LENGTH(ssl)) ||
       !CBB_add_u8_length_prefixed(&cbb, &child) ||
-      !CBB_add_bytes(&child, ssl->next_proto_negotiated,
-                     ssl->next_proto_negotiated_len) ||
+      !CBB_add_bytes(&child, ssl->s3->next_proto_negotiated,
+                     ssl->s3->next_proto_negotiated_len) ||
       !CBB_add_u8_length_prefixed(&cbb, &child) ||
       !CBB_add_bytes(&child, kZero, padding_len) ||
       !CBB_finish(&cbb, NULL, &length) ||
@@ -2013,7 +1979,6 @@ int ssl3_send_channel_id(SSL *ssl) {
     ssl->rwstate = SSL_CHANNEL_ID_LOOKUP;
     return -1;
   }
-  ssl->rwstate = SSL_NOTHING;
 
   EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(ssl->tlsext_channel_id_private);
   if (ec_key == NULL) {
@@ -2075,7 +2040,15 @@ int ssl_do_client_cert_cb(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey) {
   if (ssl->ctx->client_cert_cb == NULL) {
     return 0;
   }
-  return ssl->ctx->client_cert_cb(ssl, out_x509, out_pkey);
+
+  int ret = ssl->ctx->client_cert_cb(ssl, out_x509, out_pkey);
+  if (ret <= 0) {
+    return ret;
+  }
+
+  assert(*out_x509 != NULL);
+  assert(*out_pkey != NULL);
+  return 1;
 }
 
 int ssl3_verify_server_cert(SSL *ssl) {

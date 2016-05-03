@@ -115,7 +115,6 @@
 #include <openssl/ssl.h>
 
 #include <assert.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/bn.h>
@@ -125,7 +124,6 @@
 #include <openssl/err.h>
 #include <openssl/md5.h>
 #include <openssl/mem.h>
-#include <openssl/obj.h>
 #include <openssl/rand.h>
 
 #include "internal.h"
@@ -143,7 +141,6 @@ int dtls1_connect(SSL *ssl) {
   assert(!ssl->server);
   assert(SSL_IS_DTLS(ssl));
 
-  ERR_clear_error();
   ERR_clear_system_error();
 
   if (ssl->info_callback != NULL) {
@@ -151,8 +148,6 @@ int dtls1_connect(SSL *ssl) {
   } else if (ssl->ctx->info_callback != NULL) {
     cb = ssl->ctx->info_callback;
   }
-
-  ssl->in_handshake++;
 
   for (;;) {
     state = ssl->state;
@@ -368,10 +363,7 @@ int dtls1_connect(SSL *ssl) {
         ssl->state = SSL3_ST_CW_FINISHED_A;
         ssl->init_num = 0;
 
-        ssl->session->cipher = ssl->s3->tmp.new_cipher;
-        if (!ssl->enc_method->setup_key_block(ssl) ||
-            !ssl->enc_method->change_cipher_state(
-                ssl, SSL3_CHANGE_CIPHER_CLIENT_WRITE)) {
+        if (!tls1_change_cipher_state(ssl, SSL3_CHANGE_CIPHER_CLIENT_WRITE)) {
           ret = -1;
           goto end;
         }
@@ -383,10 +375,8 @@ int dtls1_connect(SSL *ssl) {
           dtls1_start_timer(ssl);
         }
 
-        ret =
-            ssl3_send_finished(ssl, SSL3_ST_CW_FINISHED_A, SSL3_ST_CW_FINISHED_B,
-                               ssl->enc_method->client_finished_label,
-                               ssl->enc_method->client_finished_label_len);
+        ret = ssl3_send_finished(ssl, SSL3_ST_CW_FINISHED_A,
+                                 SSL3_ST_CW_FINISHED_B);
         if (ret <= 0) {
           goto end;
         }
@@ -431,7 +421,7 @@ int dtls1_connect(SSL *ssl) {
           goto end;
         }
 
-        if (!ssl3_do_change_cipher_spec(ssl)) {
+        if (!tls1_change_cipher_state(ssl, SSL3_CHANGE_CIPHER_CLIENT_READ)) {
           ret = -1;
           goto end;
         }
@@ -457,12 +447,11 @@ int dtls1_connect(SSL *ssl) {
         break;
 
       case SSL3_ST_CW_FLUSH:
-        ssl->rwstate = SSL_WRITING;
         if (BIO_flush(ssl->wbio) <= 0) {
+          ssl->rwstate = SSL_WRITING;
           ret = -1;
           goto end;
         }
-        ssl->rwstate = SSL_NOTHING;
         ssl->state = ssl->s3->tmp.next_state;
         break;
 
@@ -508,8 +497,6 @@ int dtls1_connect(SSL *ssl) {
   }
 
 end:
-  ssl->in_handshake--;
-
   BUF_MEM_free(buf);
   if (cb != NULL) {
     cb(ssl, SSL_CB_CONNECT_EXIT, ret);

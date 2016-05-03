@@ -346,6 +346,10 @@ typedef struct dtls1_bitmap_st {
 
 /* Record layer. */
 
+/* ssl_record_sequence_update increments the sequence number in |seq|. It
+ * returns one on success and zero on wraparound. */
+int ssl_record_sequence_update(uint8_t *seq, size_t seq_len);
+
 /* ssl_record_prefix_len returns the length of the prefix before the ciphertext
  * of a record for |ssl|.
  *
@@ -431,6 +435,14 @@ enum dtls1_use_epoch_t {
 int dtls_seal_record(SSL *ssl, uint8_t *out, size_t *out_len, size_t max_out,
                      uint8_t type, const uint8_t *in, size_t in_len,
                      enum dtls1_use_epoch_t use_epoch);
+
+/* ssl_set_read_state sets |ssl|'s read cipher state to |aead_ctx|. It takes
+ * ownership of |aead_ctx|. */
+void ssl_set_read_state(SSL *ssl, SSL_AEAD_CTX *aead_ctx);
+
+/* ssl_set_write_state sets |ssl|'s write cipher state to |aead_ctx|. It takes
+ * ownership of |aead_ctx|. */
+void ssl_set_write_state(SSL *ssl, SSL_AEAD_CTX *aead_ctx);
 
 
 /* Private key operations. */
@@ -519,7 +531,7 @@ int ssl3_update_handshake_hash(SSL *ssl, const uint8_t *in, size_t in_len);
 #define SSL_CURVE_SECP256R1 23
 #define SSL_CURVE_SECP384R1 24
 #define SSL_CURVE_SECP521R1 25
-#define SSL_CURVE_ECDH_X25519 29
+#define SSL_CURVE_X25519 29
 
 /* An SSL_ECDH_METHOD is an implementation of ECDH-like key exchanges for
  * TLS. */
@@ -735,12 +747,6 @@ void ssl_write_buffer_clear(SSL *ssl);
 
 /* Check if an SSL structure is using DTLS */
 #define SSL_IS_DTLS(ssl) (ssl->method->is_dtls)
-/* See if we need explicit IV */
-#define SSL_USE_EXPLICIT_IV(ssl) \
-  (ssl->enc_method->enc_flags & SSL_ENC_FLAG_EXPLICIT_IV)
-/* See if we use signature algorithms extension and signature algorithm before
- * signatures. */
-#define SSL_USE_SIGALGS(ssl) (ssl->enc_method->enc_flags & SSL_ENC_FLAG_SIGALGS)
 
 /* From RFC4492, used in encoding the curve type in ECParameters */
 #define NAMED_CURVE_TYPE 3
@@ -797,6 +803,10 @@ typedef struct cert_st {
    * supported signature algorithms or curves. */
   int (*cert_cb)(SSL *ssl, void *arg);
   void *cert_cb_arg;
+
+  /* Optional X509_STORE for certificate validation. If NULL the parent SSL_CTX
+   * store is used instead. */
+  X509_STORE *verify_store;
 } CERT;
 
 /* SSL_METHOD is a compatibility structure to support the legacy version-locked
@@ -840,22 +850,16 @@ struct ssl_protocol_method_st {
 /* This is for the SSLv3/TLSv1.0 differences in crypto/hash stuff It is a bit
  * of a mess of functions, but hell, think of it as an opaque structure. */
 struct ssl3_enc_method {
-  int (*prf)(SSL *, uint8_t *, size_t, const uint8_t *, size_t, const char *,
-             size_t, const uint8_t *, size_t, const uint8_t *, size_t);
-  int (*setup_key_block)(SSL *);
-  int (*generate_master_secret)(SSL *, uint8_t *, const uint8_t *, size_t);
-  int (*change_cipher_state)(SSL *, int);
-  int (*final_finish_mac)(SSL *, const char *, int, uint8_t *);
+  /* prf computes the PRF function for |ssl|. It writes |out_len| bytes to
+   * |out|, using |secret| as the secret and |label| as the label. |seed1| and
+   * |seed2| are concatenated to form the seed parameter. It returns one on
+   * success and zero on failure. */
+  int (*prf)(const SSL *ssl, uint8_t *out, size_t out_len,
+             const uint8_t *secret, size_t secret_len, const char *label,
+             size_t label_len, const uint8_t *seed1, size_t seed1_len,
+             const uint8_t *seed2, size_t seed2_len);
+  int (*final_finish_mac)(SSL *ssl, int from_server, uint8_t *out);
   int (*cert_verify_mac)(SSL *, int, uint8_t *);
-  const char *client_finished_label;
-  int client_finished_label_len;
-  const char *server_finished_label;
-  int server_finished_label_len;
-  int (*alert_value)(int);
-  int (*export_keying_material)(SSL *, uint8_t *, size_t, const char *, size_t,
-                                const uint8_t *, size_t, int use_context);
-  /* Various flags indicating protocol version requirements */
-  unsigned int enc_flags;
 };
 
 #define SSL_HM_HEADER_LENGTH(ssl) ssl->method->hhlen
@@ -864,15 +868,6 @@ struct ssl3_enc_method {
 #define ssl_set_handshake_header(ssl, htype, len) \
   ssl->method->set_handshake_header(ssl, htype, len)
 #define ssl_do_write(ssl) ssl->method->do_write(ssl)
-
-/* Values for enc_flags */
-
-/* Uses explicit IV for CBC mode */
-#define SSL_ENC_FLAG_EXPLICIT_IV 0x1
-/* Uses signature algorithms extension */
-#define SSL_ENC_FLAG_SIGALGS 0x2
-/* Uses SHA256 default PRF */
-#define SSL_ENC_FLAG_SHA256_PRF 0x4
 
 /* lengths of messages */
 #define DTLS1_COOKIE_LENGTH 256
@@ -966,12 +961,9 @@ typedef struct dtls1_state_st {
 } DTLS1_STATE;
 
 extern const SSL3_ENC_METHOD TLSv1_enc_data;
-extern const SSL3_ENC_METHOD TLSv1_1_enc_data;
-extern const SSL3_ENC_METHOD TLSv1_2_enc_data;
 extern const SSL3_ENC_METHOD SSLv3_enc_data;
 extern const SRTP_PROTECTION_PROFILE kSRTPProfiles[];
 
-void ssl_clear_cipher_ctx(SSL *ssl);
 int ssl_clear_bad_session(SSL *ssl);
 CERT *ssl_cert_new(void);
 CERT *ssl_cert_dup(CERT *cert);
@@ -1030,10 +1022,6 @@ int ssl3_send_new_session_ticket(SSL *ssl);
 int ssl3_send_certificate_status(SSL *ssl);
 int ssl3_get_finished(SSL *ssl, int state_a, int state_b);
 int ssl3_send_change_cipher_spec(SSL *ssl, int state_a, int state_b);
-int ssl3_prf(SSL *ssl, uint8_t *out, size_t out_len, const uint8_t *secret,
-             size_t secret_len, const char *label, size_t label_len,
-             const uint8_t *seed1, size_t seed1_len,
-             const uint8_t *seed2, size_t seed2_len);
 void ssl3_cleanup_key_block(SSL *ssl);
 int ssl3_do_write(SSL *ssl, int type);
 int ssl3_send_alert(SSL *ssl, int level, int desc);
@@ -1054,7 +1042,7 @@ int ssl3_hash_current_message(SSL *ssl);
 int ssl3_cert_verify_hash(SSL *ssl, uint8_t *out, size_t *out_len,
                           const EVP_MD **out_md, int pkey_type);
 
-int ssl3_send_finished(SSL *ssl, int a, int b, const char *sender, int slen);
+int ssl3_send_finished(SSL *ssl, int a, int b);
 int ssl3_supports_cipher(const SSL_CIPHER *cipher);
 int ssl3_dispatch_alert(SSL *ssl);
 int ssl3_read_app_data(SSL *ssl, uint8_t *buf, int len, int peek);
@@ -1063,8 +1051,6 @@ void ssl3_read_close_notify(SSL *ssl);
 int ssl3_read_bytes(SSL *ssl, int type, uint8_t *buf, int len, int peek);
 int ssl3_write_app_data(SSL *ssl, const void *buf, int len);
 int ssl3_write_bytes(SSL *ssl, int type, const void *buf, int len);
-int ssl3_final_finish_mac(SSL *ssl, const char *sender, int slen, uint8_t *p);
-int ssl3_cert_verify_mac(SSL *ssl, int md_nid, uint8_t *p);
 int ssl3_output_cert_chain(SSL *ssl);
 const SSL_CIPHER *ssl3_choose_cipher(
     SSL *ssl, STACK_OF(SSL_CIPHER) *clnt,
@@ -1074,12 +1060,6 @@ int ssl3_new(SSL *ssl);
 void ssl3_free(SSL *ssl);
 int ssl3_accept(SSL *ssl);
 int ssl3_connect(SSL *ssl);
-
-/* ssl3_record_sequence_update increments the sequence number in |seq|. It
- * returns one on success and zero on wraparound. */
-int ssl3_record_sequence_update(uint8_t *seq, size_t seq_len);
-
-int ssl3_do_change_cipher_spec(SSL *ssl);
 
 int ssl3_set_handshake_header(SSL *ssl, int htype, unsigned long len);
 int ssl3_handshake_write(SSL *ssl);
@@ -1159,29 +1139,11 @@ int dtls1_dispatch_alert(SSL *ssl);
 int ssl_init_wbio_buffer(SSL *ssl, int push);
 void ssl_free_wbio_buffer(SSL *ssl);
 
-/* tls1_prf computes the TLS PRF function for |ssl| as described in RFC 5246,
- * section 5 and RFC 2246 section 5. It writes |out_len| bytes to |out|, using
- * |secret| as the secret and |label| as the label. |seed1| and |seed2| are
- * concatenated to form the seed parameter. It returns one on success and zero
- * on failure. */
-int tls1_prf(SSL *ssl, uint8_t *out, size_t out_len, const uint8_t *secret,
-             size_t secret_len, const char *label, size_t label_len,
-             const uint8_t *seed1, size_t seed1_len,
-             const uint8_t *seed2, size_t seed2_len);
-
 int tls1_change_cipher_state(SSL *ssl, int which);
 int tls1_setup_key_block(SSL *ssl);
 int tls1_handshake_digest(SSL *ssl, uint8_t *out, size_t out_len);
-int tls1_final_finish_mac(SSL *ssl, const char *str, int slen, uint8_t *p);
-int tls1_cert_verify_mac(SSL *ssl, int md_nid, uint8_t *p);
 int tls1_generate_master_secret(SSL *ssl, uint8_t *out, const uint8_t *premaster,
                                 size_t premaster_len);
-int tls1_export_keying_material(SSL *ssl, uint8_t *out, size_t out_len,
-                                const char *label, size_t label_len,
-                                const uint8_t *context, size_t context_len,
-                                int use_context);
-int tls1_alert_code(int code);
-int ssl3_alert_code(int code);
 
 char ssl_early_callback_init(struct ssl_early_callback_ctx *ctx);
 
@@ -1219,13 +1181,13 @@ int ssl_parse_serverhello_tlsext(SSL *ssl, CBS *cbs);
 
 #define tlsext_tick_md EVP_sha256
 
-/* tls_process_ticket processes the session ticket extension. On success, it
- * sets |*out_session| to the decrypted session or NULL if the ticket was
- * rejected. It sets |*out_send_ticket| to whether a new ticket should be sent
- * at the end of the handshake. It returns one on success and zero on fatal
+/* tls_process_ticket processes a session ticket from the client. On success,
+ * it sets |*out_session| to the decrypted session or NULL if the ticket was
+ * rejected. If the ticket was valid, it sets |*out_renew_ticket| to whether
+ * the ticket should be renewed. It returns one on success and zero on fatal
  * error. */
 int tls_process_ticket(SSL *ssl, SSL_SESSION **out_session,
-                       int *out_send_ticket, const uint8_t *ticket,
+                       int *out_renew_ticket, const uint8_t *ticket,
                        size_t ticket_len, const uint8_t *session_id,
                        size_t session_id_len);
 
@@ -1294,9 +1256,13 @@ int ssl3_is_version_enabled(SSL *ssl, uint16_t version);
  *
  * TODO(davidben): To normalize some DTLS-specific code, move away from using
  * the wire version except at API boundaries. */
-uint16_t ssl3_version_from_wire(SSL *ssl, uint16_t wire_version);
+uint16_t ssl3_version_from_wire(const SSL *ssl, uint16_t wire_version);
 
-uint32_t ssl_get_algorithm_prf(SSL *ssl);
+/* ssl3_protocol_version returns |ssl|'s protocol version. It is an error to
+ * call this function before the version is determined. */
+uint16_t ssl3_protocol_version(const SSL *ssl);
+
+uint32_t ssl_get_algorithm_prf(const SSL *ssl);
 int tls1_parse_peer_sigalgs(SSL *ssl, const CBS *sigalgs);
 
 /* tls1_choose_signing_digest returns a digest for use with |ssl|'s private key
