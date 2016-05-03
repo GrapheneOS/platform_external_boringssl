@@ -312,8 +312,7 @@ func (e *x25519ECDHCurve) computeSecret(peerKey []byte) (preMasterSecret []byte,
 	copy(peerKeyCopy[:], peerKey)
 	curve25519.ScalarMult(&out, &e.privateKey, &peerKeyCopy)
 
-	// Per draft-irtf-cfrg-curves-11, reject the all-zero value in constant
-	// time.
+	// Per RFC 7748, reject the all-zero value in constant time.
 	var zeros [32]byte
 	if subtle.ConstantTimeCompare(zeros[:], out[:]) == 1 {
 		return nil, errors.New("tls: X25519 value with wrong order")
@@ -567,6 +566,9 @@ NextCandidate:
 	}
 	serverECDHParams[3] = byte(len(publicKey))
 	copy(serverECDHParams[4:], publicKey)
+	if config.Bugs.InvalidECDHPoint {
+		serverECDHParams[4] ^= 0xff
+	}
 
 	return ka.auth.signParameters(config, cert, clientHello, hello, serverECDHParams)
 }
@@ -623,6 +625,9 @@ func (ka *ecdheKeyAgreement) generateClientKeyExchange(config *Config, clientHel
 	ckx.ciphertext = make([]byte, 1+len(publicKey))
 	ckx.ciphertext[0] = byte(len(publicKey))
 	copy(ckx.ciphertext[1:], publicKey)
+	if config.Bugs.InvalidECDHPoint {
+		ckx.ciphertext[1] ^= 0xff
+	}
 
 	return preMasterSecret, ckx, nil
 }

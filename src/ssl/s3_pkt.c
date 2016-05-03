@@ -110,7 +110,6 @@
 
 #include <assert.h>
 #include <limits.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/buf.h>
@@ -183,6 +182,8 @@ again:
 }
 
 int ssl3_write_app_data(SSL *ssl, const void *buf, int len) {
+  assert(!SSL_in_init(ssl) || SSL_in_false_start(ssl));
+
   return ssl3_write_bytes(ssl, SSL3_RT_APPLICATION_DATA, buf, len);
 }
 
@@ -190,24 +191,11 @@ int ssl3_write_app_data(SSL *ssl, const void *buf, int len) {
  * not all data has been sent or non-blocking IO. */
 int ssl3_write_bytes(SSL *ssl, int type, const void *buf_, int len) {
   const uint8_t *buf = buf_;
-  unsigned int tot, n, nw;
-  int i;
+  unsigned tot, n, nw;
 
-  ssl->rwstate = SSL_NOTHING;
   assert(ssl->s3->wnum <= INT_MAX);
   tot = ssl->s3->wnum;
   ssl->s3->wnum = 0;
-
-  if (!ssl->in_handshake && SSL_in_init(ssl) && !SSL_in_false_start(ssl)) {
-    i = ssl->handshake_func(ssl);
-    if (i < 0) {
-      return i;
-    }
-    if (i == 0) {
-      OPENSSL_PUT_ERROR(SSL, SSL_R_SSL_HANDSHAKE_FAILURE);
-      return -1;
-    }
-  }
 
   /* Ensure that if we end up with a smaller value of data to write out than
    * the the original len from a write which didn't complete for non-blocking
@@ -232,19 +220,19 @@ int ssl3_write_bytes(SSL *ssl, int type, const void *buf_, int len) {
       nw = n;
     }
 
-    i = do_ssl3_write(ssl, type, &buf[tot], nw);
-    if (i <= 0) {
+    int ret = do_ssl3_write(ssl, type, &buf[tot], nw);
+    if (ret <= 0) {
       ssl->s3->wnum = tot;
-      return i;
+      return ret;
     }
 
-    if (i == (int)n || (type == SSL3_RT_APPLICATION_DATA &&
-                        (ssl->mode & SSL_MODE_ENABLE_PARTIAL_WRITE))) {
-      return tot + i;
+    if (ret == (int)n || (type == SSL3_RT_APPLICATION_DATA &&
+                          (ssl->mode & SSL_MODE_ENABLE_PARTIAL_WRITE))) {
+      return tot + ret;
     }
 
-    n -= i;
-    tot += i;
+    n -= ret;
+    tot += ret;
   }
 }
 
@@ -315,6 +303,7 @@ static int do_ssl3_write(SSL *ssl, int type, const uint8_t *buf, unsigned len) {
 }
 
 int ssl3_read_app_data(SSL *ssl, uint8_t *buf, int len, int peek) {
+  assert(!SSL_in_init(ssl));
   return ssl3_read_bytes(ssl, SSL3_RT_APPLICATION_DATA, buf, len, peek);
 }
 
@@ -387,26 +376,7 @@ int ssl3_read_bytes(SSL *ssl, int type, uint8_t *buf, int len, int peek) {
     return -1;
   }
 
-  /* This may require multiple iterations. False Start will cause
-   * |ssl->handshake_func| to signal success one step early, but the handshake
-   * must be completely finished before other modes are accepted.
-   *
-   * TODO(davidben): Move this check up to a higher level. */
-  while (!ssl->in_handshake && SSL_in_init(ssl)) {
-    assert(type == SSL3_RT_APPLICATION_DATA);
-    i = ssl->handshake_func(ssl);
-    if (i < 0) {
-      return i;
-    }
-    if (i == 0) {
-      OPENSSL_PUT_ERROR(SSL, SSL_R_SSL_HANDSHAKE_FAILURE);
-      return -1;
-    }
-  }
-
 start:
-  ssl->rwstate = SSL_NOTHING;
-
   /* ssl->s3->rrec.type    - is the type of record
    * ssl->s3->rrec.data    - data
    * ssl->s3->rrec.off     - offset into 'data' for next read
@@ -427,7 +397,6 @@ start:
    * 'peek' mode) */
   if (ssl->shutdown & SSL_RECEIVED_SHUTDOWN) {
     rr->length = 0;
-    ssl->rwstate = SSL_NOTHING;
     return 0;
   }
 
@@ -437,7 +406,7 @@ start:
     /* Make sure that we are not getting application data when we are doing a
      * handshake for the first time. */
     if (SSL_in_init(ssl) && type == SSL3_RT_APPLICATION_DATA &&
-        ssl->aead_read_ctx == NULL) {
+        ssl->s3->aead_read_ctx == NULL) {
       /* TODO(davidben): Is this check redundant with the handshake_func
        * check? */
       al = SSL_AD_UNEXPECTED_MESSAGE;
@@ -546,11 +515,10 @@ start:
     goto start;
   }
 
-  /* If an alert record, process one alert out of the record. Note that we allow
-   * a single record to contain multiple alerts. */
+  /* If an alert record, process the alert. */
   if (rr->type == SSL3_RT_ALERT) {
-    /* Alerts may not be fragmented. */
-    if (rr->length < 2) {
+    /* Alerts records may not contain fragmented or multiple alerts. */
+    if (rr->length != 2) {
       al = SSL_AD_DECODE_ERROR;
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_ALERT);
       goto f_err;
@@ -577,23 +545,10 @@ start:
     }
 
     if (alert_level == SSL3_AL_WARNING) {
-      ssl->s3->warn_alert = alert_descr;
       if (alert_descr == SSL_AD_CLOSE_NOTIFY) {
+        ssl->s3->clean_shutdown = 1;
         ssl->shutdown |= SSL_RECEIVED_SHUTDOWN;
         return 0;
-      }
-
-      /* This is a warning but we receive it if we requested renegotiation and
-       * the peer denied it. Terminate with a fatal alert because if
-       * application tried to renegotiatie it presumably had a good reason and
-       * expects it to succeed.
-       *
-       * In future we might have a renegotiation where we don't care if the
-       * peer refused it where we carry on. */
-      else if (alert_descr == SSL_AD_NO_RENEGOTIATION) {
-        al = SSL_AD_HANDSHAKE_FAILURE;
-        OPENSSL_PUT_ERROR(SSL, SSL_R_NO_RENEGOTIATION);
-        goto f_err;
       }
 
       ssl->s3->warning_alert_count++;
@@ -605,8 +560,6 @@ start:
     } else if (alert_level == SSL3_AL_FATAL) {
       char tmp[16];
 
-      ssl->rwstate = SSL_NOTHING;
-      ssl->s3->fatal_alert = alert_descr;
       OPENSSL_PUT_ERROR(SSL, SSL_AD_REASON_OFFSET + alert_descr);
       BIO_snprintf(tmp, sizeof(tmp), "%d", alert_descr);
       ERR_add_error_data(2, "SSL alert number ", tmp);
@@ -637,46 +590,7 @@ err:
   return -1;
 }
 
-int ssl3_do_change_cipher_spec(SSL *ssl) {
-  int i;
-
-  if (ssl->state & SSL_ST_ACCEPT) {
-    i = SSL3_CHANGE_CIPHER_SERVER_READ;
-  } else {
-    i = SSL3_CHANGE_CIPHER_CLIENT_READ;
-  }
-
-  if (ssl->s3->tmp.key_block == NULL) {
-    if (ssl->session == NULL || ssl->session->master_key_length == 0) {
-      /* might happen if dtls1_read_bytes() calls this */
-      OPENSSL_PUT_ERROR(SSL, SSL_R_CCS_RECEIVED_EARLY);
-      return 0;
-    }
-
-    ssl->session->cipher = ssl->s3->tmp.new_cipher;
-    if (!ssl->enc_method->setup_key_block(ssl)) {
-      return 0;
-    }
-  }
-
-  if (!ssl->enc_method->change_cipher_state(ssl, i)) {
-    return 0;
-  }
-
-  return 1;
-}
-
 int ssl3_send_alert(SSL *ssl, int level, int desc) {
-  /* Map tls/ssl alert value to correct one */
-  desc = ssl->enc_method->alert_value(desc);
-  if (ssl->version == SSL3_VERSION && desc == SSL_AD_PROTOCOL_VERSION) {
-    /* SSL 3.0 does not have protocol_version alerts */
-    desc = SSL_AD_HANDSHAKE_FAILURE;
-  }
-  if (desc < 0) {
-    return -1;
-  }
-
   /* If a fatal one, remove from cache */
   if (level == 2 && ssl->session != NULL) {
     SSL_CTX_remove_session(ssl->ctx, ssl->session);
@@ -697,36 +611,34 @@ int ssl3_send_alert(SSL *ssl, int level, int desc) {
 }
 
 int ssl3_dispatch_alert(SSL *ssl) {
-  int i, j;
-  void (*cb)(const SSL *ssl, int type, int value) = NULL;
-
   ssl->s3->alert_dispatch = 0;
-  i = do_ssl3_write(ssl, SSL3_RT_ALERT, &ssl->s3->send_alert[0], 2);
-  if (i <= 0) {
+  int ret = do_ssl3_write(ssl, SSL3_RT_ALERT, &ssl->s3->send_alert[0], 2);
+  if (ret <= 0) {
     ssl->s3->alert_dispatch = 1;
-  } else {
-    /* Alert sent to BIO.  If it is important, flush it now. If the message
-     * does not get sent due to non-blocking IO, we will not worry too much. */
-    if (ssl->s3->send_alert[0] == SSL3_AL_FATAL) {
-      BIO_flush(ssl->wbio);
-    }
-
-    if (ssl->msg_callback) {
-      ssl->msg_callback(1, ssl->version, SSL3_RT_ALERT, ssl->s3->send_alert, 2,
-                        ssl, ssl->msg_callback_arg);
-    }
-
-    if (ssl->info_callback != NULL) {
-      cb = ssl->info_callback;
-    } else if (ssl->ctx->info_callback != NULL) {
-      cb = ssl->ctx->info_callback;
-    }
-
-    if (cb != NULL) {
-      j = (ssl->s3->send_alert[0] << 8) | ssl->s3->send_alert[1];
-      cb(ssl, SSL_CB_WRITE_ALERT, j);
-    }
+    return ret;
   }
 
-  return i;
+  /* If the alert is fatal, flush the BIO now. */
+  if (ssl->s3->send_alert[0] == SSL3_AL_FATAL) {
+    BIO_flush(ssl->wbio);
+  }
+
+  if (ssl->msg_callback != NULL) {
+    ssl->msg_callback(1 /* write */, ssl->version, SSL3_RT_ALERT,
+                      ssl->s3->send_alert, 2, ssl, ssl->msg_callback_arg);
+  }
+
+  void (*cb)(const SSL *ssl, int type, int value) = NULL;
+  if (ssl->info_callback != NULL) {
+    cb = ssl->info_callback;
+  } else if (ssl->ctx->info_callback != NULL) {
+    cb = ssl->ctx->info_callback;
+  }
+
+  if (cb != NULL) {
+    int alert = (ssl->s3->send_alert[0] << 8) | ssl->s3->send_alert[1];
+    cb(ssl, SSL_CB_WRITE_ALERT, alert);
+  }
+
+  return 1;
 }

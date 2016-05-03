@@ -115,7 +115,6 @@
 #include <openssl/ssl.h>
 
 #include <assert.h>
-#include <stdio.h>
 
 #include <openssl/bn.h>
 #include <openssl/buf.h>
@@ -123,7 +122,6 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/md5.h>
-#include <openssl/obj.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 
@@ -141,7 +139,6 @@ int dtls1_accept(SSL *ssl) {
   assert(ssl->server);
   assert(SSL_IS_DTLS(ssl));
 
-  ERR_clear_error();
   ERR_clear_system_error();
 
   if (ssl->info_callback != NULL) {
@@ -149,8 +146,6 @@ int dtls1_accept(SSL *ssl) {
   } else if (ssl->ctx->info_callback != NULL) {
     cb = ssl->ctx->info_callback;
   }
-
-  ssl->in_handshake++;
 
   for (;;) {
     state = ssl->state;
@@ -307,12 +302,11 @@ int dtls1_accept(SSL *ssl) {
         break;
 
       case SSL3_ST_SW_FLUSH:
-        ssl->rwstate = SSL_WRITING;
         if (BIO_flush(ssl->wbio) <= 0) {
+          ssl->rwstate = SSL_WRITING;
           ret = -1;
           goto end;
         }
-        ssl->rwstate = SSL_NOTHING;
         ssl->state = ssl->s3->tmp.next_state;
         break;
 
@@ -355,7 +349,7 @@ int dtls1_accept(SSL *ssl) {
           goto end;
         }
 
-        if (!ssl3_do_change_cipher_spec(ssl)) {
+        if (!tls1_change_cipher_state(ssl, SSL3_CHANGE_CIPHER_SERVER_READ)) {
           ret = -1;
           goto end;
         }
@@ -393,12 +387,6 @@ int dtls1_accept(SSL *ssl) {
 
       case SSL3_ST_SW_CHANGE_A:
       case SSL3_ST_SW_CHANGE_B:
-        ssl->session->cipher = ssl->s3->tmp.new_cipher;
-        if (!ssl->enc_method->setup_key_block(ssl)) {
-          ret = -1;
-          goto end;
-        }
-
         ret = dtls1_send_change_cipher_spec(ssl, SSL3_ST_SW_CHANGE_A,
                                             SSL3_ST_SW_CHANGE_B);
 
@@ -409,8 +397,7 @@ int dtls1_accept(SSL *ssl) {
         ssl->state = SSL3_ST_SW_FINISHED_A;
         ssl->init_num = 0;
 
-        if (!ssl->enc_method->change_cipher_state(
-                ssl, SSL3_CHANGE_CIPHER_SERVER_WRITE)) {
+        if (!tls1_change_cipher_state(ssl, SSL3_CHANGE_CIPHER_SERVER_WRITE)) {
           ret = -1;
           goto end;
         }
@@ -419,9 +406,7 @@ int dtls1_accept(SSL *ssl) {
       case SSL3_ST_SW_FINISHED_A:
       case SSL3_ST_SW_FINISHED_B:
         ret = ssl3_send_finished(ssl, SSL3_ST_SW_FINISHED_A,
-                                 SSL3_ST_SW_FINISHED_B,
-                                 ssl->enc_method->server_finished_label,
-                                 ssl->enc_method->server_finished_label_len);
+                                 SSL3_ST_SW_FINISHED_B);
         if (ret <= 0) {
           goto end;
         }
@@ -476,7 +461,6 @@ int dtls1_accept(SSL *ssl) {
   }
 
 end:
-  ssl->in_handshake--;
   BUF_MEM_free(buf);
   if (cb != NULL) {
     cb(ssl, SSL_CB_ACCEPT_EXIT, ret);
