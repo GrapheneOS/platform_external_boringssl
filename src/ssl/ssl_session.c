@@ -136,7 +136,6 @@
 #include <openssl/ssl.h>
 
 #include <assert.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/err.h>
@@ -161,7 +160,7 @@ static void SSL_SESSION_list_add(SSL_CTX *ctx, SSL_SESSION *session);
 static int remove_session_lock(SSL_CTX *ctx, SSL_SESSION *session, int lock);
 
 SSL_SESSION *SSL_SESSION_new(void) {
-  SSL_SESSION *session = (SSL_SESSION *)OPENSSL_malloc(sizeof(SSL_SESSION));
+  SSL_SESSION *session = OPENSSL_malloc(sizeof(SSL_SESSION));
   if (session == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     return 0;
@@ -230,6 +229,19 @@ uint32_t SSL_SESSION_get_key_exchange_info(const SSL_SESSION *session) {
 
 X509 *SSL_SESSION_get0_peer(const SSL_SESSION *session) {
   return session->peer;
+}
+
+size_t SSL_SESSION_get_master_key(const SSL_SESSION *session, uint8_t *out,
+                                  size_t max_out) {
+  /* TODO(davidben): Fix master_key_length's type and remove these casts. */
+  if (max_out == 0) {
+    return (size_t)session->master_key_length;
+  }
+  if (max_out > (size_t)session->master_key_length) {
+    max_out = (size_t)session->master_key_length;
+  }
+  memcpy(out, session->master_key, max_out);
+  return max_out;
 }
 
 long SSL_SESSION_set_time(SSL_SESSION *session, long time) {
@@ -430,7 +442,7 @@ enum ssl_session_result_t ssl_get_prev_session(
   /* This is used only by servers. */
   assert(ssl->server);
   SSL_SESSION *session = NULL;
-  int send_ticket = 0;
+  int renew_ticket = 0;
 
   /* If tickets are disabled, always behave as if no tickets are present. */
   const uint8_t *ticket = NULL;
@@ -440,24 +452,27 @@ enum ssl_session_result_t ssl_get_prev_session(
       ssl->version > SSL3_VERSION &&
       SSL_early_callback_ctx_extension_get(ctx, TLSEXT_TYPE_session_ticket,
                                            &ticket, &ticket_len);
-  if (tickets_supported) {
-    if (!tls_process_ticket(ssl, &session, &send_ticket, ticket, ticket_len,
+  int from_cache = 0;
+  if (tickets_supported && ticket_len > 0) {
+    if (!tls_process_ticket(ssl, &session, &renew_ticket, ticket, ticket_len,
                             ctx->session_id, ctx->session_id_len)) {
       return ssl_session_error;
     }
   } else {
-    /* The client does not support session tickets, so the session ID should be
-     * used instead. */
+    /* The client didn't send a ticket, so the session ID is a real ID. */
     enum ssl_session_result_t lookup_ret = ssl_lookup_session(
         ssl, &session, ctx->session_id, ctx->session_id_len);
     if (lookup_ret != ssl_session_success) {
       return lookup_ret;
     }
+    from_cache = 1;
   }
 
   if (session == NULL ||
       session->sid_ctx_length != ssl->sid_ctx_length ||
       memcmp(session->sid_ctx, ssl->sid_ctx, ssl->sid_ctx_length) != 0) {
+    /* The client did not offer a suitable ticket or session ID. If supported,
+     * the new session should use a ticket. */
     goto no_session;
   }
 
@@ -471,11 +486,12 @@ enum ssl_session_result_t ssl_get_prev_session(
      * effectively disable the session cache by accident without anyone
      * noticing). */
     OPENSSL_PUT_ERROR(SSL, SSL_R_SESSION_ID_CONTEXT_UNINITIALIZED);
-    goto fatal_error;
+    SSL_SESSION_free(session);
+    return ssl_session_error;
   }
 
   if (session->timeout < (long)(time(NULL) - session->time)) {
-    if (!tickets_supported) {
+    if (from_cache) {
       /* The session was from the cache, so remove it. */
       SSL_CTX_remove_session(ssl->initial_ctx, session);
     }
@@ -483,12 +499,8 @@ enum ssl_session_result_t ssl_get_prev_session(
   }
 
   *out_session = session;
-  *out_send_ticket = send_ticket;
+  *out_send_ticket = renew_ticket;
   return ssl_session_success;
-
-fatal_error:
-  SSL_SESSION_free(session);
-  return ssl_session_error;
 
 no_session:
   *out_session = NULL;
