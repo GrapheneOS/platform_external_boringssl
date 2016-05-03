@@ -303,17 +303,17 @@ OPENSSL_EXPORT BN_ULONG BN_get_word(const BIGNUM *bn);
 
 /* ASN.1 functions. */
 
-/* BN_cbs2unsigned parses a non-negative DER INTEGER from |cbs| writes the
- * result to |ret|. It returns one on success and zero on failure. */
-OPENSSL_EXPORT int BN_cbs2unsigned(CBS *cbs, BIGNUM *ret);
+/* BN_parse_asn1_unsigned parses a non-negative DER INTEGER from |cbs| writes
+ * the result to |ret|. It returns one on success and zero on failure. */
+OPENSSL_EXPORT int BN_parse_asn1_unsigned(CBS *cbs, BIGNUM *ret);
 
-/* BN_cbs2unsigned_buggy acts like |BN_cbs2unsigned| but tolerates some invalid
- * encodings. Do not use this function. */
-OPENSSL_EXPORT int BN_cbs2unsigned_buggy(CBS *cbs, BIGNUM *ret);
+/* BN_parse_asn1_unsigned_buggy acts like |BN_parse_asn1_unsigned| but tolerates
+ * some invalid encodings. Do not use this function. */
+OPENSSL_EXPORT int BN_parse_asn1_unsigned_buggy(CBS *cbs, BIGNUM *ret);
 
-/* BN_bn2cbb marshals |bn| as a non-negative DER INTEGER and appends the result
- * to |cbb|. It returns one on success and zero on failure. */
-OPENSSL_EXPORT int BN_bn2cbb(CBB *cbb, const BIGNUM *bn);
+/* BN_marshal_asn1 marshals |bn| as a non-negative DER INTEGER and appends the
+ * result to |cbb|. It returns one on success and zero on failure. */
+OPENSSL_EXPORT int BN_marshal_asn1(CBB *cbb, const BIGNUM *bn);
 
 
 /* Internal functions.
@@ -749,11 +749,11 @@ OPENSSL_EXPORT int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod,
 
 /* BN_MONT_CTX_set_locked takes |lock| and checks whether |*pmont| is NULL. If
  * so, it creates a new |BN_MONT_CTX| and sets the modulus for it to |mod|. It
- * then stores it as |*pmont| and returns it, or NULL on error.
+ * then stores it as |*pmont|. It returns one on success and zero on error.
  *
- * If |*pmont| is already non-NULL then the existing value is returned. */
-BN_MONT_CTX *BN_MONT_CTX_set_locked(BN_MONT_CTX **pmont, CRYPTO_MUTEX *lock,
-                                    const BIGNUM *mod, BN_CTX *bn_ctx);
+ * If |*pmont| is already non-NULL then it does nothing and returns one. */
+int BN_MONT_CTX_set_locked(BN_MONT_CTX **pmont, CRYPTO_MUTEX *lock,
+                           const BIGNUM *mod, BN_CTX *bn_ctx);
 
 /* BN_to_montgomery sets |ret| equal to |a| in the Montgomery domain. It
  * returns one on success and zero on error. */
@@ -850,15 +850,6 @@ OPENSSL_EXPORT unsigned BN_num_bits_word(BN_ULONG l);
  * call BN_mod_exp_mont_consttime, BN_div() will call BN_div_no_branch,
  * BN_mod_inverse() will call BN_mod_inverse_no_branch. */
 #define BN_FLG_CONSTTIME 0x04
-
-
-/* Android compatibility section.
- *
- * These functions are declared, temporarily, for Android because
- * wpa_supplicant will take a little time to sync with upstream. Outside of
- * Android they'll have no definition. */
-
-OPENSSL_EXPORT BIGNUM *get_rfc3526_prime_1536(BIGNUM *bn);
 
 
 #if defined(__cplusplus)

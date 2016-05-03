@@ -424,6 +424,10 @@ type ProtocolBugs struct {
 	// to be wrong.
 	InvalidSKXCurve bool
 
+	// InvalidECDHPoint, if true, causes the ECC points in
+	// ServerKeyExchange or ClientKeyExchange messages to be invalid.
+	InvalidECDHPoint bool
+
 	// BadECDSAR controls ways in which the 'r' value of an ECDSA signature
 	// can be invalid.
 	BadECDSAR BadValue
@@ -468,6 +472,10 @@ type ProtocolBugs struct {
 	// SkipNewSessionTicket causes the server to skip sending the
 	// NewSessionTicket message despite promising to in ServerHello.
 	SkipNewSessionTicket bool
+
+	// SkipClientCertificate causes the client to skip the Certificate
+	// message.
+	SkipClientCertificate bool
 
 	// SkipChangeCipherSpec causes the implementation to skip
 	// sending the ChangeCipherSpec message (and adjusting cipher
@@ -516,6 +524,10 @@ type ProtocolBugs struct {
 	// FragmentAlert will cause all alerts to be fragmented across
 	// two records.
 	FragmentAlert bool
+
+	// DoubleAlert will cause all alerts to be sent as two copies packed
+	// within one record.
+	DoubleAlert bool
 
 	// SendSpuriousAlert, if non-zero, will cause an spurious, unwanted
 	// alert to be sent.
@@ -814,6 +826,14 @@ type ProtocolBugs struct {
 	// BadHelloRequest, if not nil, is what to send instead of a
 	// HelloRequest.
 	BadHelloRequest []byte
+
+	// RequireSessionTickets, if true, causes the client to require new
+	// sessions use session tickets instead of session IDs.
+	RequireSessionTickets bool
+
+	// NullAllCiphers, if true, causes every cipher to behave like the null
+	// cipher.
+	NullAllCiphers bool
 }
 
 func (c *Config) serverInit() {

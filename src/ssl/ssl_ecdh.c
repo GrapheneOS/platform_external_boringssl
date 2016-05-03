@@ -23,7 +23,7 @@
 #include <openssl/ec.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
-#include <openssl/obj.h>
+#include <openssl/nid.h>
 
 #include "internal.h"
 
@@ -65,21 +65,12 @@ static int ssl_ec_point_generate_keypair(SSL_ECDH_CTX *ctx, CBB *out) {
     }
   } while (BN_is_zero(private_key));
 
-  /* Compute the corresponding public key. */
+  /* Compute the corresponding public key and serialize it. */
   public_key = EC_POINT_new(group);
   if (public_key == NULL ||
-      !EC_POINT_mul(group, public_key, private_key, NULL, NULL, bn_ctx)) {
-    goto err;
-  }
-
-  /* Serialize the public key. */
-  size_t len = EC_POINT_point2oct(
-      group, public_key, POINT_CONVERSION_UNCOMPRESSED, NULL, 0, bn_ctx);
-  uint8_t *ptr;
-  if (len == 0 ||
-      !CBB_add_space(out, &ptr, len) ||
-      EC_POINT_point2oct(group, public_key, POINT_CONVERSION_UNCOMPRESSED, ptr,
-                         len, bn_ctx) != len) {
+      !EC_POINT_mul(group, public_key, private_key, NULL, NULL, bn_ctx) ||
+      !EC_POINT_point2cbb(out, group, public_key, POINT_CONVERSION_UNCOMPRESSED,
+                          bn_ctx)) {
     goto err;
   }
 
@@ -93,9 +84,12 @@ err:
   return ret;
 }
 
-int ssl_ec_point_compute_secret(SSL_ECDH_CTX *ctx, uint8_t **out_secret,
-                                size_t *out_secret_len, uint8_t *out_alert,
-                                const uint8_t *peer_key, size_t peer_key_len) {
+static int ssl_ec_point_compute_secret(SSL_ECDH_CTX *ctx,
+                                       uint8_t **out_secret,
+                                       size_t *out_secret_len,
+                                       uint8_t *out_alert,
+                                       const uint8_t *peer_key,
+                                       size_t peer_key_len) {
   BIGNUM *private_key = (BIGNUM *)ctx->data;
   assert(private_key != NULL);
   *out_alert = SSL_AD_INTERNAL_ERROR;
@@ -297,8 +291,8 @@ static const SSL_ECDH_METHOD kMethods[] = {
         ssl_ec_point_compute_secret,
     },
     {
-        NID_x25519,
-        SSL_CURVE_ECDH_X25519,
+        NID_X25519,
+        SSL_CURVE_X25519,
         "X25519",
         ssl_x25519_cleanup,
         ssl_x25519_generate_keypair,
