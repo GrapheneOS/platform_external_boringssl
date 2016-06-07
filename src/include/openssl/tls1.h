@@ -196,8 +196,10 @@ extern "C" {
 /* ExtensionType values from RFC6091 */
 #define TLSEXT_TYPE_cert_type 9
 
+/* ExtensionType values from draft-ietf-tls-tls13-latest */
+#define TLSEXT_TYPE_supported_groups 10
+
 /* ExtensionType values from RFC4492 */
-#define TLSEXT_TYPE_elliptic_curves 10
 #define TLSEXT_TYPE_ec_point_formats 11
 
 /* ExtensionType value from RFC5054 */
@@ -439,6 +441,12 @@ extern "C" {
 #define TLS1_CK_ECDHE_RSA_CHACHA20_POLY1305 \
   TLS1_CK_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
 
+/* CECPQ1 ciphersuites.  These are specific to BoringSSL and not standard. */
+#define TLS1_CK_CECPQ1_RSA_WITH_CHACHA20_POLY1305_SHA256 0x030016B7
+#define TLS1_CK_CECPQ1_ECDSA_WITH_CHACHA20_POLY1305_SHA256 0x030016B8
+#define TLS1_CK_CECPQ1_RSA_WITH_AES_256_GCM_SHA384 0x030016B9
+#define TLS1_CK_CECPQ1_ECDSA_WITH_AES_256_GCM_SHA384 0x030016BA
+
 /* XXX
  * Inconsistency alert:
  * The OpenSSL names of ciphers with ephemeral DH here include the string
@@ -618,6 +626,17 @@ extern "C" {
  * were missing 'SHA256'. */
 #define TLS1_TXT_ECDHE_RSA_WITH_CHACHA20_POLY1305 \
   TLS1_TXT_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+
+/* CECPQ1 ciphersuites.  These are specific to BoringSSL and not standard. */
+#define TLS1_TXT_CECPQ1_RSA_WITH_CHACHA20_POLY1305_SHA256 \
+  "CECPQ1-RSA-CHACHA20-POLY1305-SHA256"
+#define TLS1_TXT_CECPQ1_ECDSA_WITH_CHACHA20_POLY1305_SHA256 \
+  "CECPQ1-ECDSA-CHACHA20-POLY1305-SHA256"
+#define TLS1_TXT_CECPQ1_RSA_WITH_AES_256_GCM_SHA384 \
+  "CECPQ1-RSA-AES256-GCM-SHA384"
+#define TLS1_TXT_CECPQ1_ECDSA_WITH_AES_256_GCM_SHA384 \
+  "CECPQ1-ECDSA-AES256-GCM-SHA384"
+
 
 #define TLS_CT_RSA_SIGN 1
 #define TLS_CT_DSS_SIGN 2
