@@ -662,6 +662,28 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_HANDSHAKE_MAC_SHA256,
     },
 
+    /* Cipher D001 */
+    {
+     TLS1_TXT_ECDHE_PSK_WITH_AES_128_GCM_SHA256,
+     TLS1_CK_ECDHE_PSK_WITH_AES_128_GCM_SHA256,
+     SSL_kECDHE,
+     SSL_aPSK,
+     SSL_AES128GCM,
+     SSL_SHA256,
+     SSL_HANDSHAKE_MAC_SHA256,
+    },
+
+    /* Cipher D002 */
+    {
+     TLS1_TXT_ECDHE_PSK_WITH_AES_256_GCM_SHA384,
+     TLS1_CK_ECDHE_PSK_WITH_AES_256_GCM_SHA384,
+     SSL_kECDHE,
+     SSL_aPSK,
+     SSL_AES256GCM,
+     SSL_SHA384,
+     SSL_HANDSHAKE_MAC_SHA384,
+    },
+
 };
 
 static const size_t kCiphersLen = sizeof(kCiphers) / sizeof(kCiphers[0]);
@@ -1667,6 +1689,10 @@ int SSL_CIPHER_is_block_cipher(const SSL_CIPHER *cipher) {
 
 int SSL_CIPHER_is_ECDSA(const SSL_CIPHER *cipher) {
   return (cipher->algorithm_auth & SSL_aECDSA) != 0;
+}
+
+int SSL_CIPHER_is_DHE(const SSL_CIPHER *cipher) {
+  return (cipher->algorithm_mkey & SSL_kDHE) != 0;
 }
 
 int SSL_CIPHER_is_ECDHE(const SSL_CIPHER *cipher) {
