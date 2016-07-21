@@ -76,15 +76,7 @@ cc_defaults {
 cc_library {
     name: "libcrypto",
     defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
-
-    // Shared host library is disabled until all users use libcrypto instead of libcrypto-host
-    target: {
-        host: {
-            shared: {
-                enabled: false,
-            },
-        },
-    },
+    unique_host_soname: true,
 }
 
 // Static library
@@ -108,12 +100,6 @@ cc_library_static {
     },
 }
 
-// Host shared library
-cc_library_host_shared {
-    name: "libcrypto-host",
-    defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
-}
-
 //// libssl
 
 // Target static library
@@ -128,20 +114,9 @@ cc_library {
     name: "libssl",
     host_supported: true,
     defaults: ["libssl_sources", "boringssl_defaults", "boringssl_flags"],
+    unique_host_soname: true,
 
-    // Shared host library is disabled until all users use libssl instead of libssl-host
-    target: {
-        android: {
-            shared_libs: ["libcrypto"],
-        },
-        host: {
-            shared_libs: ["libcrypto-host"],
-
-            shared: {
-                enabled: false,
-            },
-        },
-    },
+    shared_libs: ["libcrypto"],
 }
 
 // Host static library
@@ -159,33 +134,18 @@ cc_library_host_static {
     },
 }
 
-// Host shared library
-cc_library_host_shared {
-    name: "libssl-host",
-    defaults: ["libssl_sources", "boringssl_defaults", "boringssl_flags"],
-
-    shared_libs: ["libcrypto-host"],
-}
-
 // Tool
 cc_binary {
     name: "bssl",
     host_supported: true,
     defaults: ["bssl_sources", "boringssl_flags"],
 
+    shared_libs: [
+        "libcrypto",
+        "libssl",
+    ],
     target: {
-        android: {
-            shared_libs: [
-                "libcrypto",
-                "libssl",
-            ],
-        },
         host: {
-            shared_libs: [
-                "libcrypto-host",
-                "libssl-host",
-            ],
-
             // Needed for clock_gettime.
             host_ldlibs: ["-lrt"],
         },
@@ -201,20 +161,10 @@ cc_library_static {
     host_supported: true,
     defaults: ["boringssl_test_support_sources", "boringssl_flags"],
 
-    target: {
-        android: {
-            shared_libs: [
-                "libcrypto",
-                "libssl",
-            ],
-        },
-        host: {
-            shared_libs: [
-                "libcrypto-host",
-                "libssl-host",
-            ],
-        },
-    },
+    shared_libs: [
+        "libcrypto",
+        "libssl",
+    ],
 }
 
 // Tests
@@ -225,18 +175,8 @@ cc_test {
     defaults: ["boringssl_tests_sources", "boringssl_flags"],
     whole_static_libs: ["boringssl_test_support"],
 
-    target: {
-        android: {
-            shared_libs: [
-                "libcrypto",
-                "libssl",
-            ],
-        },
-        host: {
-            shared_libs: [
-                "libcrypto-host",
-                "libssl-host",
-            ],
-        },
-    },
+    shared_libs: [
+        "libcrypto",
+        "libssl",
+    ],
 }
