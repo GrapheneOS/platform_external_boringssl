@@ -13,8 +13,6 @@ cc_defaults {
         "-fvisibility=hidden",
         "-DBORINGSSL_SHARED_LIBRARY",
         "-DBORINGSSL_IMPLEMENTATION",
-	// TODO(davidben): Remove this once RC4 is no longer needed in Android.
-        "-DBORINGSSL_ENABLE_RC4_TLS",
         "-DOPENSSL_SMALL",
         "-D_XOPEN_SOURCE=700",
         "-Wno-unused-parameter",
