@@ -86,6 +86,11 @@ static const struct argument kArguments[] = {
       "Private-key file to use (default is no client certificate)",
     },
     {
+      "-starttls", kOptionalArgument,
+      "A STARTTLS mini-protocol to run before the TLS handshake. Supported"
+      " values: 'smtp'",
+    },
+    {
      "", kOptionalArgument, "",
     },
 };
@@ -100,24 +105,6 @@ static ScopedEVP_PKEY LoadPrivateKey(const std::string &file) {
   return pkey;
 }
 
-static bool VersionFromString(uint16_t *out_version,
-                              const std::string& version) {
-  if (version == "ssl3") {
-    *out_version = SSL3_VERSION;
-    return true;
-  } else if (version == "tls1" || version == "tls1.0") {
-    *out_version = TLS1_VERSION;
-    return true;
-  } else if (version == "tls1.1") {
-    *out_version = TLS1_1_VERSION;
-    return true;
-  } else if (version == "tls1.2") {
-    *out_version = TLS1_2_VERSION;
-    return true;
-  }
-  return false;
-}
-
 static int NextProtoSelectCallback(SSL* ssl, uint8_t** out, uint8_t* outlen,
                                    const uint8_t* in, unsigned inlen, void* arg) {
   *out = reinterpret_cast<uint8_t *>(arg);
@@ -130,6 +117,21 @@ static FILE *g_keylog_file = nullptr;
 static void KeyLogCallback(const SSL *ssl, const char *line) {
   fprintf(g_keylog_file, "%s\n", line);
   fflush(g_keylog_file);
+}
+
+static ScopedBIO session_out;
+
+static int NewSessionCallback(SSL *ssl, SSL_SESSION *session) {
+  if (session_out) {
+    if (!PEM_write_bio_SSL_SESSION(session_out.get(), session) ||
+        BIO_flush(session_out.get()) <= 0) {
+      fprintf(stderr, "Error while saving session:\n");
+      ERR_print_errors_cb(PrintErrorCallback, stderr);
+      return 0;
+    }
+  }
+
+  return 0;
 }
 
 bool Client(const std::vector<std::string> &args) {
@@ -252,9 +254,31 @@ bool Client(const std::vector<std::string> &args) {
     }
   }
 
+  if (args_map.count("-session-out") != 0) {
+    session_out.reset(BIO_new_file(args_map["-session-out"].c_str(), "wb"));
+    if (!session_out) {
+      fprintf(stderr, "Error while saving session:\n");
+      ERR_print_errors_cb(PrintErrorCallback, stderr);
+      return false;
+    }
+    SSL_CTX_sess_set_new_cb(ctx.get(), NewSessionCallback);
+  }
+
   int sock = -1;
   if (!Connect(&sock, args_map["-connect"])) {
     return false;
+  }
+
+  if (args_map.count("-starttls") != 0) {
+    const std::string& starttls = args_map["-starttls"];
+    if (starttls == "smtp") {
+      if (!DoSMTPStartTLS(sock)) {
+        return false;
+      }
+    } else {
+      fprintf(stderr, "Unknown value for -starttls: %s\n", starttls.c_str());
+      return false;
+    }
   }
 
   ScopedBIO bio(BIO_new_socket(sock, BIO_CLOSE));
@@ -294,16 +318,6 @@ bool Client(const std::vector<std::string> &args) {
 
   fprintf(stderr, "Connected.\n");
   PrintConnectionInfo(ssl.get());
-
-  if (args_map.count("-session-out") != 0) {
-    ScopedBIO out(BIO_new_file(args_map["-session-out"].c_str(), "wb"));
-    if (!out ||
-        !PEM_write_bio_SSL_SESSION(out.get(), SSL_get0_session(ssl.get()))) {
-      fprintf(stderr, "Error while saving session:\n");
-      ERR_print_errors_cb(PrintErrorCallback, stderr);
-      return false;
-    }
-  }
 
   bool ok = TransferData(ssl.get(), sock);
 
