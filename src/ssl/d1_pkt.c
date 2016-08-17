@@ -197,9 +197,11 @@ again:
   return -1;
 }
 
-int dtls1_read_app_data(SSL *ssl, uint8_t *buf, int len, int peek) {
+int dtls1_read_app_data(SSL *ssl, int *out_got_handshake, uint8_t *buf, int len,
+                        int peek) {
   assert(!SSL_in_init(ssl));
 
+  *out_got_handshake = 0;
   SSL3_RECORD *rr = &ssl->s3->rrec;
 
 again:
@@ -223,7 +225,8 @@ again:
       return -1;
     }
 
-    if (msg_hdr.type == SSL3_MT_FINISHED) {
+    if (msg_hdr.type == SSL3_MT_FINISHED &&
+        msg_hdr.seq == ssl->d1->handshake_read_seq - 1) {
       if (msg_hdr.frag_off == 0) {
         /* Retransmit our last flight of messages. If the peer sends the second
          * Finished, they may not have received ours. Only do this for the
@@ -232,7 +235,7 @@ again:
           return -1;
         }
 
-        dtls1_retransmit_buffered_messages(ssl);
+        dtls1_retransmit_outgoing_messages(ssl);
       }
 
       rr->length = 0;
@@ -362,7 +365,7 @@ int dtls1_write_record(SSL *ssl, int type, const uint8_t *buf, size_t len,
 
   /* If we have an alert to send, lets send it */
   if (ssl->s3->alert_dispatch) {
-    int ret = ssl->method->ssl_dispatch_alert(ssl);
+    int ret = ssl->method->dispatch_alert(ssl);
     if (ret <= 0) {
       return ret;
     }
