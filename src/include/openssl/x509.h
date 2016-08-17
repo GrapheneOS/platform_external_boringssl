@@ -243,7 +243,6 @@ struct x509_st
 	X509_CINF *cert_info;
 	X509_ALGOR *sig_alg;
 	ASN1_BIT_STRING *signature;
-	int valid;
 	CRYPTO_refcount_t references;
 	char *name;
 	CRYPTO_EX_DATA ex_data;
@@ -782,9 +781,8 @@ DECLARE_ASN1_FUNCTIONS(X509_CERT_AUX)
 
 DECLARE_ASN1_FUNCTIONS(X509_CERT_PAIR)
 
-/* X509_up_ref adds one to the reference count of |x| and returns
- * |x|. */
-OPENSSL_EXPORT X509 *X509_up_ref(X509 *x);
+/* X509_up_ref adds one to the reference count of |x| and returns one. */
+OPENSSL_EXPORT int X509_up_ref(X509 *x);
 
 OPENSSL_EXPORT int X509_get_ex_new_index(long argl, void *argp, CRYPTO_EX_unused *unused,
 	     CRYPTO_EX_dup *dup_func, CRYPTO_EX_free *free_func);
@@ -859,6 +857,7 @@ OPENSSL_EXPORT int 		X509_set_pubkey(X509 *x, EVP_PKEY *pkey);
 OPENSSL_EXPORT EVP_PKEY *	X509_get_pubkey(X509 *x);
 OPENSSL_EXPORT ASN1_BIT_STRING * X509_get0_pubkey_bitstr(const X509 *x);
 OPENSSL_EXPORT int		X509_certificate_type(X509 *x,EVP_PKEY *pubkey /* optional */);
+OPENSSL_EXPORT STACK_OF(X509_EXTENSION) *X509_get0_extensions(const X509 *x);
 
 OPENSSL_EXPORT int		X509_REQ_set_version(X509_REQ *x,long version);
 OPENSSL_EXPORT int		X509_REQ_set_subject_name(X509_REQ *req,X509_NAME *name);
@@ -894,7 +893,7 @@ OPENSSL_EXPORT int X509_CRL_set_issuer_name(X509_CRL *x, X509_NAME *name);
 OPENSSL_EXPORT int X509_CRL_set_lastUpdate(X509_CRL *x, const ASN1_TIME *tm);
 OPENSSL_EXPORT int X509_CRL_set_nextUpdate(X509_CRL *x, const ASN1_TIME *tm);
 OPENSSL_EXPORT int X509_CRL_sort(X509_CRL *crl);
-OPENSSL_EXPORT void X509_CRL_up_ref(X509_CRL *crl);
+OPENSSL_EXPORT int X509_CRL_up_ref(X509_CRL *crl);
 
 OPENSSL_EXPORT int X509_REVOKED_set_serialNumber(X509_REVOKED *x, ASN1_INTEGER *serial);
 OPENSSL_EXPORT int X509_REVOKED_set_revocationDate(X509_REVOKED *r, ASN1_TIME *tm);

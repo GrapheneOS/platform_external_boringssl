@@ -242,7 +242,8 @@ OPENSSL_EXPORT int CBS_get_optional_asn1_bool(CBS *cbs, int *out, unsigned tag,
  * not be used again.
  *
  * If one needs to force a length prefix to be written out because a |CBB| is
- * going out of scope, use |CBB_flush|. */
+ * going out of scope, use |CBB_flush|. If an operation on a |CBB| fails, it is
+ * in an undefined state and must not be used except to call |CBB_cleanup|. */
 
 struct cbb_buffer_st {
   uint8_t *buf;
@@ -250,6 +251,8 @@ struct cbb_buffer_st {
   size_t cap;      /* The size of buf. */
   char can_resize; /* One iff |buf| is owned by this object. If not then |buf|
                       cannot be resized. */
+  char error;      /* One iff there was an error writing to this CBB. All future
+                      operations will fail. */
 };
 
 struct cbb_st {
@@ -376,6 +379,10 @@ OPENSSL_EXPORT int CBB_add_u16(CBB *cbb, uint16_t value);
 /* CBB_add_u24 appends a 24-bit, big-endian number from |value| to |cbb|. It
  * returns one on success and zero otherwise. */
 OPENSSL_EXPORT int CBB_add_u24(CBB *cbb, uint32_t value);
+
+/* CBB_add_u32 appends a 32-bit, big-endian number from |value| to |cbb|. It
+ * returns one on success and zero otherwise. */
+OPENSSL_EXPORT int CBB_add_u32(CBB *cbb, uint32_t value);
 
 /* CBB_discard_child discards the current unflushed child of |cbb|. Neither the
  * child's contents nor the length prefix will be included in the output. */

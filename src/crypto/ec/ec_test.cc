@@ -17,7 +17,7 @@
 
 #include <vector>
 
-#include <openssl/bytestring.h>
+#include <openssl/c++/bytestring.h>
 #include <openssl/crypto.h>
 #include <openssl/ec_key.h>
 #include <openssl/err.h>
@@ -25,6 +25,7 @@
 
 #include "../test/scoped_types.h"
 
+namespace bssl {
 
 // kECKeyWithoutPublic is an ECPrivateKey with the optional publicKey field
 // omitted.
@@ -404,37 +405,6 @@ static bool TestArbitraryCurve() {
     return false;
   }
 
-  // Repeat the process for |EC_GROUP_new_arbitrary|.
-  group.reset(EC_GROUP_new_arbitrary(p.get(), a.get(), b.get(), gx.get(),
-                                     gy.get(), order.get(), cofactor.get()));
-  if (!group) {
-    return false;
-  }
-
-  // |group| should not have a curve name.
-  if (EC_GROUP_get_curve_name(group.get()) != NID_undef) {
-    return false;
-  }
-
-  // Copy |key| to |key2| using |group|.
-  key2.reset(EC_KEY_new());
-  point.reset(EC_POINT_new(group.get()));
-  if (!key2 || !point ||
-      !EC_KEY_set_group(key2.get(), group.get()) ||
-      !EC_KEY_set_private_key(key2.get(), EC_KEY_get0_private_key(key.get())) ||
-      !EC_POINT_set_affine_coordinates_GFp(group.get(), point.get(), x.get(),
-                                           y.get(), nullptr) ||
-      !EC_KEY_set_public_key(key2.get(), point.get())) {
-    fprintf(stderr, "Could not copy key.\n");
-    return false;
-  }
-
-  // The key must be valid according to the new group too.
-  if (!EC_KEY_check_key(key2.get())) {
-    fprintf(stderr, "Copied key is not valid.\n");
-    return false;
-  }
-
   return true;
 }
 
@@ -502,7 +472,7 @@ static bool ForEachCurve(bool (*test_func)(int nid)) {
   return true;
 }
 
-int main(void) {
+static int Main() {
   CRYPTO_library_init();
 
   if (!Testd2i_ECPrivateKey() ||
@@ -517,4 +487,10 @@ int main(void) {
 
   printf("PASS\n");
   return 0;
+}
+
+}  // namespace bssl
+
+int main() {
+  return bssl::Main();
 }

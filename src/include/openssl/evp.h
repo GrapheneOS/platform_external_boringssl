@@ -89,8 +89,8 @@ OPENSSL_EXPORT EVP_PKEY *EVP_PKEY_new(void);
  * itself. */
 OPENSSL_EXPORT void EVP_PKEY_free(EVP_PKEY *pkey);
 
-/* EVP_PKEY_up_ref increments the reference count of |pkey| and returns it. */
-OPENSSL_EXPORT EVP_PKEY *EVP_PKEY_up_ref(EVP_PKEY *pkey);
+/* EVP_PKEY_up_ref increments the reference count of |pkey| and returns one. */
+OPENSSL_EXPORT int EVP_PKEY_up_ref(EVP_PKEY *pkey);
 
 /* EVP_PKEY_is_opaque returns one if |pkey| is opaque. Opaque keys are backed by
  * custom implementations which do not expose key material and parameters. It is
@@ -654,8 +654,8 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_get0_rsa_oaep_label(EVP_PKEY_CTX *ctx,
 /* OpenSSL_add_all_algorithms does nothing. */
 OPENSSL_EXPORT void OpenSSL_add_all_algorithms(void);
 
-/* OpenSSL_add_all_algorithms_conf does nothing. */
-OPENSSL_EXPORT void OpenSSL_add_all_algorithms_conf(void);
+/* OPENSSL_add_all_algorithms_conf does nothing. */
+OPENSSL_EXPORT void OPENSSL_add_all_algorithms_conf(void);
 
 /* OpenSSL_add_all_ciphers does nothing. */
 OPENSSL_EXPORT void OpenSSL_add_all_ciphers(void);
@@ -720,6 +720,9 @@ OPENSSL_EXPORT EVP_PKEY *d2i_PrivateKey(int type, EVP_PKEY **out,
  * RSAPrivateKey, and |EC_parse_private_key| for an ECPrivateKey. */
 OPENSSL_EXPORT EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **out, const uint8_t **inp,
                                             long len);
+
+/* EVP_PKEY_get0_DH returns NULL. */
+OPENSSL_EXPORT DH *EVP_PKEY_get0_DH(EVP_PKEY *pkey);
 
 
 /* Private structures. */
