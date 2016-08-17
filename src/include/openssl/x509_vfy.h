@@ -109,8 +109,10 @@ The X509_STORE then calls a function to actually verify the
 certificate chain.
 */
 
+/* The following are legacy constants that should not be used. */
 #define X509_LU_RETRY		-1
 #define X509_LU_FAIL		0
+
 #define X509_LU_X509		1
 #define X509_LU_CRL		2
 #define X509_LU_PKEY		3
@@ -160,7 +162,7 @@ typedef struct X509_VERIFY_PARAM_ID_st X509_VERIFY_PARAM_ID;
  * parameters used can be customized
  */
 
-typedef struct X509_VERIFY_PARAM_st
+struct X509_VERIFY_PARAM_st
 	{
 	char *name;
 	time_t check_time;	/* Time to use */
@@ -171,7 +173,7 @@ typedef struct X509_VERIFY_PARAM_st
 	int depth;		/* Verify depth */
 	STACK_OF(ASN1_OBJECT) *policies;	/* Permissible policies */
 	X509_VERIFY_PARAM_ID *id;	/* opaque ID data */
-	} X509_VERIFY_PARAM;
+	};
 
 DECLARE_STACK_OF(X509_VERIFY_PARAM)
 
@@ -228,7 +230,6 @@ struct x509_lookup_st
 struct x509_store_ctx_st      /* X509_STORE_CTX */
 	{
 	X509_STORE *ctx;
-	int current_method;	/* used when looking up certs */
 
 	/* The following are set by the caller */
 	X509 *cert;		/* The cert to check */
@@ -436,10 +437,10 @@ OPENSSL_EXPORT int X509_OBJECT_idx_by_subject(STACK_OF(X509_OBJECT) *h, int type
 	     X509_NAME *name);
 OPENSSL_EXPORT X509_OBJECT *X509_OBJECT_retrieve_by_subject(STACK_OF(X509_OBJECT) *h,int type,X509_NAME *name);
 OPENSSL_EXPORT X509_OBJECT *X509_OBJECT_retrieve_match(STACK_OF(X509_OBJECT) *h, X509_OBJECT *x);
-OPENSSL_EXPORT void X509_OBJECT_up_ref_count(X509_OBJECT *a);
+OPENSSL_EXPORT int X509_OBJECT_up_ref_count(X509_OBJECT *a);
 OPENSSL_EXPORT void X509_OBJECT_free_contents(X509_OBJECT *a);
 OPENSSL_EXPORT X509_STORE *X509_STORE_new(void );
-OPENSSL_EXPORT void X509_STORE_up_ref(X509_STORE *store);
+OPENSSL_EXPORT int X509_STORE_up_ref(X509_STORE *store);
 OPENSSL_EXPORT void X509_STORE_free(X509_STORE *v);
 
 OPENSSL_EXPORT STACK_OF(X509)* X509_STORE_get1_certs(X509_STORE_CTX *st, X509_NAME *nm);

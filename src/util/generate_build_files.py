@@ -213,6 +213,7 @@ class Bazel(object):
           out, 'crypto_internal_headers', files['crypto_internal_headers'])
       self.PrintVariableSection(out, 'crypto_sources', files['crypto'])
       self.PrintVariableSection(out, 'tool_sources', files['tool'])
+      self.PrintVariableSection(out, 'tool_headers', files['tool_headers'])
 
       for ((osname, arch), asm_files) in asm_outputs:
         self.PrintVariableSection(
@@ -222,16 +223,17 @@ class Bazel(object):
       out.write(self.header)
 
       out.write('test_support_sources = [\n')
-      for filename in files['test_support']:
+      for filename in sorted(files['test_support'] +
+                             files['test_support_headers'] +
+                             files['crypto_internal_headers'] +
+                             files['ssl_internal_headers']):
         if os.path.basename(filename) == 'malloc.cc':
           continue
         out.write('    "%s",\n' % PathOf(filename))
 
       out.write(']\n\n')
 
-      out.write('def create_tests(copts):\n')
-      out.write('  test_support_sources_complete = test_support_sources + \\\n')
-      out.write('      native.glob(["%s"])\n' % PathOf("src/crypto/test/*.h"))
+      out.write('def create_tests(copts, crypto, ssl):\n')
       name_counts = {}
       for test in files['tests']:
         name = os.path.basename(test[0])
@@ -261,7 +263,7 @@ class Bazel(object):
         out.write('  native.cc_test(\n')
         out.write('      name = "%s",\n' % name)
         out.write('      size = "small",\n')
-        out.write('      srcs = ["%s"] + test_support_sources_complete,\n' %
+        out.write('      srcs = ["%s"] + test_support_sources,\n' %
             PathOf(src))
 
         data_files = []
@@ -287,11 +289,11 @@ class Bazel(object):
 
         if 'ssl/' in test[0]:
           out.write('      deps = [\n')
-          out.write('          ":crypto",\n')
-          out.write('          ":ssl",\n')
+          out.write('          crypto,\n')
+          out.write('          ssl,\n')
           out.write('      ],\n')
         else:
-          out.write('      deps = [":crypto"],\n')
+          out.write('      deps = [crypto],\n')
         out.write('  )\n')
 
 
@@ -322,8 +324,12 @@ class GN(object):
     with open('BUILD.generated.gni', 'w+') as out:
       out.write(self.header)
 
-      self.PrintVariableSection(out, 'crypto_sources', files['crypto'])
-      self.PrintVariableSection(out, 'ssl_sources', files['ssl'])
+      self.PrintVariableSection(out, 'crypto_sources',
+                                files['crypto'] + files['crypto_headers'] +
+                                files['crypto_internal_headers'])
+      self.PrintVariableSection(out, 'ssl_sources',
+                                files['ssl'] + files['ssl_headers'] +
+                                files['ssl_internal_headers'])
 
       for ((osname, arch), asm_files) in asm_outputs:
         self.PrintVariableSection(
@@ -338,7 +344,8 @@ class GN(object):
       out.write(self.header)
 
       self.PrintVariableSection(out, '_test_support_sources',
-                                files['test_support'])
+                                files['test_support'] +
+                                files['test_support_headers'])
       out.write('\n')
 
       out.write('template("create_tests") {\n')
@@ -392,10 +399,12 @@ class GYP(object):
     with open('boringssl.gypi', 'w+') as gypi:
       gypi.write(self.header + '{\n  \'variables\': {\n')
 
-      self.PrintVariableSection(
-          gypi, 'boringssl_ssl_sources', files['ssl'])
-      self.PrintVariableSection(
-          gypi, 'boringssl_crypto_sources', files['crypto'])
+      self.PrintVariableSection(gypi, 'boringssl_ssl_sources',
+                                files['ssl'] + files['ssl_headers'] +
+                                files['ssl_internal_headers'])
+      self.PrintVariableSection(gypi, 'boringssl_crypto_sources',
+                                files['crypto'] + files['crypto_headers'] +
+                                files['crypto_internal_headers'])
 
       for ((osname, arch), asm_files) in asm_outputs:
         self.PrintVariableSection(gypi, 'boringssl_%s_%s_sources' %
@@ -429,8 +438,9 @@ class GYP(object):
 
       test_gypi.write('  ],\n  \'variables\': {\n')
 
-      self.PrintVariableSection(
-          test_gypi, 'boringssl_test_support_sources', files['test_support'])
+      self.PrintVariableSection(test_gypi, 'boringssl_test_support_sources',
+                                files['test_support'] +
+                                files['test_support_headers'])
 
       test_gypi.write('    \'boringssl_test_targets\': [\n')
 
@@ -510,6 +520,10 @@ def FindHeaderFiles(directory, filter_func):
         continue
       hfiles.append(os.path.join(path, filename))
 
+      for (i, dirname) in enumerate(dirnames):
+        if not filter_func(dirname, True):
+          del dirnames[i]
+
   return hfiles
 
 
@@ -554,10 +568,8 @@ def PerlAsm(output_filename, input_filename, perlasm_style, extra_args):
   base_dir = os.path.dirname(output_filename)
   if not os.path.isdir(base_dir):
     os.makedirs(base_dir)
-  output = subprocess.check_output(
-      ['perl', input_filename, perlasm_style] + extra_args)
-  with open(output_filename, 'w+') as out_file:
-    out_file.write(output)
+  subprocess.check_call(
+      ['perl', input_filename, perlasm_style] + extra_args + [output_filename])
 
 
 def ArchForAsmFilename(filename):
@@ -614,6 +626,7 @@ def main(platforms):
   crypto_c_files = FindCFiles(os.path.join('src', 'crypto'), NoTests)
   ssl_c_files = FindCFiles(os.path.join('src', 'ssl'), NoTests)
   tool_c_files = FindCFiles(os.path.join('src', 'tool'), NoTests)
+  tool_h_files = FindHeaderFiles(os.path.join('src', 'tool'), AllFiles)
 
   # Generate err_data.c
   with open('err_data.c', 'w+') as err_data:
@@ -624,6 +637,9 @@ def main(platforms):
 
   test_support_c_files = FindCFiles(os.path.join('src', 'crypto', 'test'),
                                     AllFiles)
+  test_support_h_files = (
+      FindHeaderFiles(os.path.join('src', 'crypto', 'test'), AllFiles) +
+      FindHeaderFiles(os.path.join('src', 'ssl', 'test'), AllFiles))
 
   test_c_files = FindCFiles(os.path.join('src', 'crypto'), OnlyTests)
   test_c_files += FindCFiles(os.path.join('src', 'ssl'), OnlyTests)
@@ -674,8 +690,10 @@ def main(platforms):
       'ssl_headers': ssl_h_files,
       'ssl_internal_headers': ssl_internal_h_files,
       'tool': tool_c_files,
+      'tool_headers': tool_h_files,
       'test': test_c_files,
       'test_support': test_support_c_files,
+      'test_support_headers': test_support_h_files,
       'tests': tests,
   }
 
