@@ -41,8 +41,6 @@ crypto_sources := \
   src/crypto/asn1/asn1_lib.c\
   src/crypto/asn1/asn1_par.c\
   src/crypto/asn1/asn_pack.c\
-  src/crypto/asn1/bio_asn1.c\
-  src/crypto/asn1/bio_ndef.c\
   src/crypto/asn1/f_enum.c\
   src/crypto/asn1/f_int.c\
   src/crypto/asn1/f_string.c\
@@ -51,7 +49,6 @@ crypto_sources := \
   src/crypto/asn1/tasn_enc.c\
   src/crypto/asn1/tasn_fre.c\
   src/crypto/asn1/tasn_new.c\
-  src/crypto/asn1/tasn_prn.c\
   src/crypto/asn1/tasn_typ.c\
   src/crypto/asn1/tasn_utl.c\
   src/crypto/asn1/x_bignum.c\
@@ -81,6 +78,7 @@ crypto_sources := \
   src/crypto/bn/generic.c\
   src/crypto/bn/kronecker.c\
   src/crypto/bn/montgomery.c\
+  src/crypto/bn/montgomery_inv.c\
   src/crypto/bn/mul.c\
   src/crypto/bn/prime.c\
   src/crypto/bn/random.c\
