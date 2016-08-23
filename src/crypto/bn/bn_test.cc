@@ -122,6 +122,7 @@ static bool test_dec2bn(FILE *fp, BN_CTX *ctx);
 static bool test_hex2bn(FILE *fp, BN_CTX *ctx);
 static bool test_asc2bn(FILE *fp, BN_CTX *ctx);
 static bool test_rand();
+static bool TestBN2Dec();
 
 static const uint8_t kSample[] =
     "\xC6\x4F\x43\x04\x2A\xEA\xCA\x6E\x58\x36\x80\x5B\xE8\xC9"
@@ -337,6 +338,12 @@ int main(int argc, char *argv[]) {
 
   message(bc_file.get(), "BN_rand");
   if (!test_rand()) {
+    return 1;
+  }
+  flush_fp(bc_file.get());
+
+  message(bc_file.get(), "BN_bn2dec");
+  if (!TestBN2Dec()) {
     return 1;
   }
   flush_fp(bc_file.get());
@@ -1624,6 +1631,41 @@ static bool test_rand() {
       !BN_is_word(bn.get(), 3)) {
     fprintf(stderr, "BN_rand gave a bad result.\n");
     return false;
+  }
+
+  return true;
+}
+
+static bool TestBN2Dec() {
+  static const char *kBN2DecTests[] = {
+      "0",
+      "1",
+      "-1",
+      "100",
+      "-100",
+      "123456789012345678901234567890",
+      "-123456789012345678901234567890",
+      "123456789012345678901234567890123456789012345678901234567890",
+      "-123456789012345678901234567890123456789012345678901234567890",
+  };
+
+  for (const char *test : kBN2DecTests) {
+    ScopedBIGNUM bn;
+    int ret = DecimalToBIGNUM(&bn, test);
+    if (ret == 0) {
+      return false;
+    }
+
+    ScopedOpenSSLString dec(BN_bn2dec(bn.get()));
+    if (!dec) {
+      fprintf(stderr, "BN_bn2dec failed on %s.\n", test);
+      return false;
+    }
+
+    if (strcmp(dec.get(), test) != 0) {
+      fprintf(stderr, "BN_bn2dec gave %s, wanted %s.\n", dec.get(), test);
+      return false;
+    }
   }
 
   return true;
