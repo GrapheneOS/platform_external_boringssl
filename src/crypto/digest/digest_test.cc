@@ -18,12 +18,15 @@
 
 #include <memory>
 
-#include <openssl/c++/digest.h>
 #include <openssl/crypto.h>
+#include <openssl/digest.h>
 #include <openssl/err.h>
 #include <openssl/md4.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
+
+#include "../internal.h"
+
 
 namespace bssl {
 
@@ -247,7 +250,7 @@ static int TestGetters() {
 static int Main() {
   CRYPTO_library_init();
 
-  for (size_t i = 0; i < sizeof(kTestVectors) / sizeof(kTestVectors[0]); i++) {
+  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kTestVectors); i++) {
     if (!TestDigest(&kTestVectors[i])) {
       fprintf(stderr, "Test %d failed\n", (int)i);
       return 1;

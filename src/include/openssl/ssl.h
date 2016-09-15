@@ -921,13 +921,21 @@ OPENSSL_EXPORT int SSL_CTX_set_ocsp_response(SSL_CTX *ctx,
  * before TLS 1.2. */
 #define SSL_SIGN_RSA_PKCS1_MD5_SHA1 0xff01
 
+/* SSL_CTX_set_signing_algorithm_prefs configures |ctx| to use |prefs| as the
+ * preference list when signing with |ctx|'s private key. It returns one on
+ * success and zero on error. |prefs| should not include the internal-only value
+ * |SSL_SIGN_RSA_PKCS1_MD5_SHA1|. */
+OPENSSL_EXPORT int SSL_CTX_set_signing_algorithm_prefs(SSL_CTX *ctx,
+                                                       const uint16_t *prefs,
+                                                       size_t num_prefs);
+
 /* SSL_set_signing_algorithm_prefs configures |ssl| to use |prefs| as the
  * preference list when signing with |ssl|'s private key. It returns one on
  * success and zero on error. |prefs| should not include the internal-only value
  * |SSL_SIGN_RSA_PKCS1_MD5_SHA1|. */
 OPENSSL_EXPORT int SSL_set_signing_algorithm_prefs(SSL *ssl,
                                                    const uint16_t *prefs,
-                                                   size_t prefs_len);
+                                                   size_t num_prefs);
 
 
 /* Certificate and private key convenience functions. */
@@ -1645,7 +1653,7 @@ OPENSSL_EXPORT int SSL_SESSION_set1_id_context(SSL_SESSION *session,
 /* SSL_SESS_CACHE_SERVER enables session caching for a server. */
 #define SSL_SESS_CACHE_SERVER 0x0002
 
-/* SSL_SESS_CACHE_SERVER enables session caching for both client and server. */
+/* SSL_SESS_CACHE_BOTH enables session caching for both client and server. */
 #define SSL_SESS_CACHE_BOTH (SSL_SESS_CACHE_CLIENT | SSL_SESS_CACHE_SERVER)
 
 /* SSL_SESS_CACHE_NO_AUTO_CLEAR disables automatically calling
@@ -2162,9 +2170,6 @@ OPENSSL_EXPORT int SSL_CTX_load_verify_locations(SSL_CTX *ctx,
 /* SSL_get_verify_result returns the result of certificate verification. It is
  * either |X509_V_OK| or a |X509_V_ERR_*| value. */
 OPENSSL_EXPORT long SSL_get_verify_result(const SSL *ssl);
-
-/* SSL_set_verify_result overrides the result of certificate verification. */
-OPENSSL_EXPORT void SSL_set_verify_result(SSL *ssl, long result);
 
 /* SSL_get_ex_data_X509_STORE_CTX_idx returns the ex_data index used to look up
  * the |SSL| associated with an |X509_STORE_CTX| in the verify callback. */
@@ -3569,18 +3574,6 @@ OPENSSL_EXPORT int SSL_set_tmp_ecdh(SSL *ssl, const EC_KEY *ec_key);
 OPENSSL_EXPORT int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *out,
                                                       const char *dir);
 
-/* SSL_SESSION_get_key_exchange_info returns a value that describes the
- * strength of the asymmetric operation that provides confidentiality to
- * |session|. Its interpretation depends on the operation used. See the
- * documentation for this value in the |SSL_SESSION| structure.
- *
- * Use |SSL_get_curve_id| or |SSL_get_dhe_group_size| instead.
- *
- * TODO(davidben): Remove this API once Chromium has switched to the new
- * APIs. */
-OPENSSL_EXPORT uint32_t SSL_SESSION_get_key_exchange_info(
-    const SSL_SESSION *session);
-
 /* SSL_set_private_key_digest_prefs copies |num_digests| NIDs from |digest_nids|
  * into |ssl|. These digests will be used, in decreasing order of preference,
  * when signing with |ssl|'s private key. It returns one on success and zero on
@@ -3592,6 +3585,12 @@ OPENSSL_EXPORT uint32_t SSL_SESSION_get_key_exchange_info(
 OPENSSL_EXPORT int SSL_set_private_key_digest_prefs(SSL *ssl,
                                                     const int *digest_nids,
                                                     size_t num_digests);
+
+/* SSL_set_verify_result calls |abort| unless |result| is |X509_V_OK|.
+ *
+ * TODO(davidben): Remove this function once it has been removed from
+ * netty-tcnative. */
+OPENSSL_EXPORT void SSL_set_verify_result(SSL *ssl, long result);
 
 
 /* Private structures.
@@ -3666,9 +3665,9 @@ struct ssl_session_st {
    * |peer|, but when a server it does not. */
   STACK_OF(X509) *cert_chain;
 
-  /* when app_verify_callback accepts a session where the peer's certificate is
-   * not ok, we must remember the error for session reuse: */
-  long verify_result; /* only for servers */
+  /* verify_result is the result of certificate verification in the case of
+   * non-fatal certificate errors. */
+  long verify_result;
 
   long timeout;
   long time;
@@ -4128,7 +4127,6 @@ struct ssl_st {
   SSL_CTX *ctx;
 
   /* extra application data */
-  long verify_result;
   CRYPTO_EX_DATA ex_data;
 
   /* for server side, keep the list of CA_dn we can use */
@@ -4290,6 +4288,9 @@ typedef struct ssl3_state_st {
    * received. */
   uint8_t warning_alert_count;
 
+  /* key_update_count is the number of consecutive KeyUpdates received. */
+  uint8_t key_update_count;
+
   /* aead_read_ctx is the current read cipher state. */
   SSL_AEAD_CTX *aead_read_ctx;
 
@@ -4439,6 +4440,9 @@ typedef struct ssl3_state_st {
    * session is only filled upon the completion of the handshake and is
    * immutable. */
   SSL_SESSION *established_session;
+
+  /* session_reused indicates whether a session was resumed. */
+  unsigned session_reused:1;
 
   /* Connection binding to prevent renegotiation attacks */
   uint8_t previous_client_finished[EVP_MAX_MD_SIZE];
@@ -4642,6 +4646,19 @@ OPENSSL_EXPORT int SSL_set_ssl_method(SSL *s, const SSL_METHOD *method);
 
 #if defined(__cplusplus)
 } /* extern C */
+
+extern "C++" {
+
+namespace bssl {
+
+BORINGSSL_MAKE_DELETER(SSL, SSL_free)
+BORINGSSL_MAKE_DELETER(SSL_CTX, SSL_CTX_free)
+BORINGSSL_MAKE_DELETER(SSL_SESSION, SSL_SESSION_free)
+
+}  // namespace bssl
+
+}  /* extern C++ */
+
 #endif
 
 #define SSL_R_APP_DATA_IN_HANDSHAKE 100
@@ -4804,6 +4821,10 @@ OPENSSL_EXPORT int SSL_set_ssl_method(SSL *s, const SSL_METHOD *method);
 #define SSL_R_DUPLICATE_EXTENSION 257
 #define SSL_R_MISSING_KEY_SHARE 258
 #define SSL_R_INVALID_ALPN_PROTOCOL 259
+#define SSL_R_TOO_MANY_KEY_UPDATES 260
+#define SSL_R_BLOCK_CIPHER_PAD_IS_WRONG 261
+#define SSL_R_NO_CIPHERS_SPECIFIED 262
+#define SSL_R_RENEGOTIATION_EMS_MISMATCH 263
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020
