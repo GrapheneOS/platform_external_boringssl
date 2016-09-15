@@ -43,23 +43,25 @@ OPENSSL_MSVC_PRAGMA(warning(pop))
 #include <openssl/bio.h>
 #include <openssl/buf.h>
 #include <openssl/bytestring.h>
-#include <openssl/c++/digest.h>
 #include <openssl/cipher.h>
 #include <openssl/crypto.h>
+#include <openssl/dh.h>
+#include <openssl/digest.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/nid.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
+#include <openssl/x509.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "../../crypto/test/scoped_types.h"
+#include "../../crypto/internal.h"
 #include "async_bio.h"
 #include "packeted_bio.h"
-#include "scoped_types.h"
 #include "test_config.h"
 
 namespace bssl {
@@ -88,19 +90,20 @@ struct TestState {
   BIO *async_bio = nullptr;
   // packeted_bio is the packeted BIO which simulates read timeouts.
   BIO *packeted_bio = nullptr;
-  ScopedEVP_PKEY channel_id;
+  bssl::UniquePtr<EVP_PKEY> channel_id;
   bool cert_ready = false;
-  ScopedSSL_SESSION session;
-  ScopedSSL_SESSION pending_session;
+  bssl::UniquePtr<SSL_SESSION> session;
+  bssl::UniquePtr<SSL_SESSION> pending_session;
   bool early_callback_called = false;
   bool handshake_done = false;
   // private_key is the underlying private key used when testing custom keys.
-  ScopedEVP_PKEY private_key;
+  bssl::UniquePtr<EVP_PKEY> private_key;
   std::vector<uint8_t> private_key_result;
   // private_key_retries is the number of times an asynchronous private key
   // operation has been retried.
   unsigned private_key_retries = 0;
   bool got_new_session = false;
+  bssl::UniquePtr<SSL_SESSION> new_session;
   bool ticket_decrypt_done = false;
   bool alpn_select_done = false;
 };
@@ -134,20 +137,21 @@ static TestState *GetTestState(const SSL *ssl) {
   return (TestState *)SSL_get_ex_data(ssl, g_state_index);
 }
 
-static ScopedX509 LoadCertificate(const std::string &file) {
-  ScopedBIO bio(BIO_new(BIO_s_file()));
+static bssl::UniquePtr<X509> LoadCertificate(const std::string &file) {
+  bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_file()));
   if (!bio || !BIO_read_filename(bio.get(), file.c_str())) {
     return nullptr;
   }
-  return ScopedX509(PEM_read_bio_X509(bio.get(), NULL, NULL, NULL));
+  return bssl::UniquePtr<X509>(PEM_read_bio_X509(bio.get(), NULL, NULL, NULL));
 }
 
-static ScopedEVP_PKEY LoadPrivateKey(const std::string &file) {
-  ScopedBIO bio(BIO_new(BIO_s_file()));
+static bssl::UniquePtr<EVP_PKEY> LoadPrivateKey(const std::string &file) {
+  bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_file()));
   if (!bio || !BIO_read_filename(bio.get(), file.c_str())) {
     return nullptr;
   }
-  return ScopedEVP_PKEY(PEM_read_bio_PrivateKey(bio.get(), NULL, NULL, NULL));
+  return bssl::UniquePtr<EVP_PKEY>(
+      PEM_read_bio_PrivateKey(bio.get(), NULL, NULL, NULL));
 }
 
 static int AsyncPrivateKeyType(SSL *ssl) {
@@ -315,8 +319,8 @@ struct Free {
   }
 };
 
-static bool GetCertificate(SSL *ssl, ScopedX509 *out_x509,
-                           ScopedEVP_PKEY *out_pkey) {
+static bool GetCertificate(SSL *ssl, bssl::UniquePtr<X509> *out_x509,
+                           bssl::UniquePtr<EVP_PKEY> *out_pkey) {
   const TestConfig *config = GetTestConfig(ssl);
 
   if (!config->digest_prefs.empty()) {
@@ -370,8 +374,8 @@ static bool GetCertificate(SSL *ssl, ScopedX509 *out_x509,
 }
 
 static bool InstallCertificate(SSL *ssl) {
-  ScopedX509 x509;
-  ScopedEVP_PKEY pkey;
+  bssl::UniquePtr<X509> x509;
+  bssl::UniquePtr<EVP_PKEY> pkey;
   if (!GetCertificate(ssl, &x509, &pkey)) {
     return false;
   }
@@ -451,8 +455,8 @@ static int ClientCertCallback(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey) {
     return -1;
   }
 
-  ScopedX509 x509;
-  ScopedEVP_PKEY pkey;
+  bssl::UniquePtr<X509> x509;
+  bssl::UniquePtr<EVP_PKEY> pkey;
   if (!GetCertificate(ssl, &x509, &pkey)) {
     return -1;
   }
@@ -645,8 +649,7 @@ static void InfoCallback(const SSL *ssl, int type, int val) {
 
 static int NewSessionCallback(SSL *ssl, SSL_SESSION *session) {
   GetTestState(ssl)->got_new_session = true;
-  // BoringSSL passes a reference to |session|.
-  SSL_SESSION_free(session);
+  GetTestState(ssl)->new_session.reset(session);
   return 1;
 }
 
@@ -798,8 +801,8 @@ class SocketCloser {
   const int sock_;
 };
 
-static ScopedSSL_CTX SetupCtx(const TestConfig *config) {
-  ScopedSSL_CTX ssl_ctx(SSL_CTX_new(
+static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
+  bssl::UniquePtr<SSL_CTX> ssl_ctx(SSL_CTX_new(
       config->is_dtls ? DTLS_method() : TLS_method()));
   if (!ssl_ctx) {
     return nullptr;
@@ -830,7 +833,7 @@ static ScopedSSL_CTX SetupCtx(const TestConfig *config) {
     return nullptr;
   }
 
-  ScopedDH dh(DH_get_2048_256(NULL));
+  bssl::UniquePtr<DH> dh(DH_get_2048_256(NULL));
   if (!dh) {
     return nullptr;
   }
@@ -972,7 +975,8 @@ static bool RetryAsync(SSL *ssl, int ret) {
       AsyncBioAllowWrite(test_state->async_bio, 1);
       return true;
     case SSL_ERROR_WANT_CHANNEL_ID_LOOKUP: {
-      ScopedEVP_PKEY pkey = LoadPrivateKey(GetTestConfig(ssl)->send_channel_id);
+      bssl::UniquePtr<EVP_PKEY> pkey =
+          LoadPrivateKey(GetTestConfig(ssl)->send_channel_id);
       if (!pkey) {
         return false;
       }
@@ -1255,10 +1259,10 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
 // true and sets |*out_session| to the negotiated SSL session. If the test is a
 // resumption attempt, |is_resume| is true and |session| is the session from the
 // previous exchange.
-static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
-                       const TestConfig *config, bool is_resume,
-                       SSL_SESSION *session) {
-  ScopedSSL ssl(SSL_new(ssl_ctx));
+static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
+                       SSL_CTX *ssl_ctx, const TestConfig *config,
+                       bool is_resume, SSL_SESSION *session) {
+  bssl::UniquePtr<SSL> ssl(SSL_new(ssl_ctx));
   if (!ssl) {
     return false;
   }
@@ -1318,7 +1322,7 @@ static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
     SSL_enable_tls_channel_id(ssl.get());
     if (!config->async) {
       // The async case will be supplied by |ChannelIdCallback|.
-      ScopedEVP_PKEY pkey = LoadPrivateKey(config->send_channel_id);
+      bssl::UniquePtr<EVP_PKEY> pkey = LoadPrivateKey(config->send_channel_id);
       if (!pkey || !SSL_set1_tls_channel_id(ssl.get(), pkey.get())) {
         return false;
       }
@@ -1396,7 +1400,7 @@ static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
       NID_X9_62_prime256v1, NID_secp384r1, NID_secp521r1, NID_X25519,
     };
     if (!SSL_set1_curves(ssl.get(), kAllCurves,
-                         sizeof(kAllCurves) / sizeof(kAllCurves[0]))) {
+                         OPENSSL_ARRAY_SIZE(kAllCurves))) {
       return false;
     }
   }
@@ -1411,12 +1415,12 @@ static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
   }
   SocketCloser closer(sock);
 
-  ScopedBIO bio(BIO_new_socket(sock, BIO_NOCLOSE));
+  bssl::UniquePtr<BIO> bio(BIO_new_socket(sock, BIO_NOCLOSE));
   if (!bio) {
     return false;
   }
   if (config->is_dtls) {
-    ScopedBIO packeted = PacketedBioCreate(!config->async);
+    bssl::UniquePtr<BIO> packeted = PacketedBioCreate(!config->async);
     if (!packeted) {
       return false;
     }
@@ -1425,7 +1429,7 @@ static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
     bio = std::move(packeted);
   }
   if (config->async) {
-    ScopedBIO async_scoped =
+    bssl::UniquePtr<BIO> async_scoped =
         config->is_dtls ? AsyncBioCreateDatagram() : AsyncBioCreate();
     if (!async_scoped) {
       return false;
@@ -1535,8 +1539,7 @@ static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
     memset(buf.get(), 0x42, kBufLen);
     static const size_t kRecordSizes[] = {
         0, 1, 255, 256, 257, 16383, 16384, 16385, 32767, 32768, 32769};
-    for (size_t i = 0; i < sizeof(kRecordSizes) / sizeof(kRecordSizes[0]);
-         i++) {
+    for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kRecordSizes); i++) {
       const size_t len = kRecordSizes[i];
       if (len > kBufLen) {
         fprintf(stderr, "Bad kRecordSizes value.\n");
@@ -1621,7 +1624,7 @@ static bool DoExchange(ScopedSSL_SESSION *out_session, SSL_CTX *ssl_ctx,
   }
 
   if (out_session) {
-    out_session->reset(SSL_get1_session(ssl.get()));
+    *out_session = std::move(GetTestState(ssl.get())->new_session);
   }
 
   ret = DoShutdown(ssl.get());
@@ -1692,24 +1695,27 @@ static int Main(int argc, char **argv) {
     return Usage(argv[0]);
   }
 
-  ScopedSSL_CTX ssl_ctx = SetupCtx(&config);
+  bssl::UniquePtr<SSL_CTX> ssl_ctx = SetupCtx(&config);
   if (!ssl_ctx) {
     ERR_print_errors_fp(stderr);
     return 1;
   }
 
-  ScopedSSL_SESSION session;
-  if (!DoExchange(&session, ssl_ctx.get(), &config, false /* is_resume */,
-                  NULL /* session */)) {
-    ERR_print_errors_fp(stderr);
-    return 1;
-  }
+  bssl::UniquePtr<SSL_SESSION> session;
+  for (int i = 0; i < config.resume_count + 1; i++) {
+    bool is_resume = i > 0;
+    if (is_resume && !config.is_server && !session) {
+      fprintf(stderr, "No session to offer.\n");
+      return 1;
+    }
 
-  if (config.resume &&
-      !DoExchange(NULL, ssl_ctx.get(), &config, true /* is_resume */,
-                  session.get())) {
-    ERR_print_errors_fp(stderr);
-    return 1;
+    bssl::UniquePtr<SSL_SESSION> offer_session = std::move(session);
+    if (!DoExchange(&session, ssl_ctx.get(), &config, is_resume,
+                    offer_session.get())) {
+      fprintf(stderr, "Connection %d failed.\n", i + 1);
+      ERR_print_errors_fp(stderr);
+      return 1;
+    }
   }
 
   return 0;

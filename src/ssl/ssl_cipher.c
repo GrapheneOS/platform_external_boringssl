@@ -151,6 +151,7 @@
 #include <openssl/stack.h>
 
 #include "internal.h"
+#include "../crypto/internal.h"
 
 
 /* kCiphers is an array of all supported ciphers, sorted by id. */
@@ -167,6 +168,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
 
+#ifdef BORINGSSL_ENABLE_RC4_TLS
     /* Cipher 04 */
     {
      SSL3_TXT_RSA_RC4_128_MD5,
@@ -188,6 +190,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_SHA1,
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
+#endif
 
     /* Cipher 0A */
     {
@@ -296,6 +299,7 @@ static const SSL_CIPHER kCiphers[] = {
 
     /* PSK cipher suites. */
 
+#ifdef BORINGSSL_ENABLE_RC4_TLS
     /* Cipher 8A */
     {
      TLS1_TXT_PSK_WITH_RC4_128_SHA,
@@ -306,6 +310,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_SHA1,
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
+#endif
 
     /* Cipher 8C */
     {
@@ -421,6 +426,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_HANDSHAKE_MAC_SHA384,
     },
 
+#ifdef BORINGSSL_ENABLE_RC4_TLS
     /* Cipher C007 */
     {
      TLS1_TXT_ECDHE_ECDSA_WITH_RC4_128_SHA,
@@ -431,6 +437,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_SHA1,
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
+#endif
 
     /* Cipher C009 */
     {
@@ -454,6 +461,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
 
+#ifdef BORINGSSL_ENABLE_RC4_TLS
     /* Cipher C011 */
     {
      TLS1_TXT_ECDHE_RSA_WITH_RC4_128_SHA,
@@ -464,6 +472,7 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_SHA1,
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
+#endif
 
     /* Cipher C013 */
     {
@@ -686,7 +695,7 @@ static const SSL_CIPHER kCiphers[] = {
 
 };
 
-static const size_t kCiphersLen = sizeof(kCiphers) / sizeof(kCiphers[0]);
+static const size_t kCiphersLen = OPENSSL_ARRAY_SIZE(kCiphers);
 
 #define CIPHER_ADD 1
 #define CIPHER_KILL 2
@@ -786,8 +795,7 @@ static const CIPHER_ALIAS kCipherAliases[] = {
     {"FIPS", ~SSL_kCECPQ1, ~0u, ~(SSL_eNULL|SSL_RC4), ~0u, 0},
 };
 
-static const size_t kCipherAliasesLen =
-    sizeof(kCipherAliases) / sizeof(kCipherAliases[0]);
+static const size_t kCipherAliasesLen = OPENSSL_ARRAY_SIZE(kCipherAliases);
 
 static int ssl_cipher_id_cmp(const void *in_a, const void *in_b) {
   const SSL_CIPHER *a = in_a;
@@ -845,6 +853,7 @@ int ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
       *out_fixed_iv_len = 12;
       break;
 
+#ifdef BORINGSSL_ENABLE_RC4_TLS
     case SSL_RC4:
       switch (cipher->algorithm_mac) {
         case SSL_MD5:
@@ -867,6 +876,7 @@ int ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
           return 0;
       }
       break;
+#endif
 
     case SSL_AES128:
       switch (cipher->algorithm_mac) {
@@ -1658,6 +1668,30 @@ uint16_t ssl_cipher_get_value(const SSL_CIPHER *cipher) {
   /* All ciphers are SSLv3. */
   assert((id & 0xff000000) == 0x03000000);
   return id & 0xffff;
+}
+
+int ssl_cipher_get_ecdhe_psk_cipher(const SSL_CIPHER *cipher,
+                                    uint16_t *out_cipher) {
+  switch (cipher->id) {
+    case TLS1_CK_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:
+    case TLS1_CK_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:
+    case TLS1_CK_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256:
+      *out_cipher = TLS1_CK_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256 & 0xffff;
+      return 1;
+
+    case TLS1_CK_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+    case TLS1_CK_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+    case TLS1_CK_ECDHE_PSK_WITH_AES_128_GCM_SHA256:
+      *out_cipher = TLS1_CK_ECDHE_PSK_WITH_AES_128_GCM_SHA256 & 0xffff;
+      return 1;
+
+    case TLS1_CK_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+    case TLS1_CK_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+    case TLS1_CK_ECDHE_PSK_WITH_AES_256_GCM_SHA384:
+      *out_cipher = TLS1_CK_ECDHE_PSK_WITH_AES_256_GCM_SHA384 & 0xffff;
+      return 1;
+  }
+  return 0;
 }
 
 int SSL_CIPHER_is_AES(const SSL_CIPHER *cipher) {

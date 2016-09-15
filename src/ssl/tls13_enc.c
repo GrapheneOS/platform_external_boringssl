@@ -318,7 +318,7 @@ int tls13_finished_mac(SSL *ssl, uint8_t *out, size_t *out_len, int is_server) {
   uint8_t key[EVP_MAX_MD_SIZE];
   size_t key_len = EVP_MD_size(digest);
 
-  uint8_t *traffic_secret;
+  const uint8_t *traffic_secret;
   const char *label;
   if (is_server) {
     label = "server finished";
@@ -349,6 +349,28 @@ int tls13_finished_mac(SSL *ssl, uint8_t *out, size_t *out_len, int is_server) {
   }
   *out_len = len;
   return 1;
+}
+
+static const char kTLS13LabelResumptionPSK[] = "resumption psk";
+static const char kTLS13LabelResumptionContext[] = "resumption context";
+
+int tls13_resumption_psk(SSL *ssl, uint8_t *out, size_t out_len,
+                         const SSL_SESSION *session) {
+  const EVP_MD *digest = ssl_get_handshake_digest(ssl_get_algorithm_prf(ssl));
+  return hkdf_expand_label(out, digest, session->master_key,
+                           session->master_key_length,
+                           (const uint8_t *)kTLS13LabelResumptionPSK,
+                           strlen(kTLS13LabelResumptionPSK), NULL, 0, out_len);
+}
+
+int tls13_resumption_context(SSL *ssl, uint8_t *out, size_t out_len,
+                             const SSL_SESSION *session) {
+  const EVP_MD *digest = ssl_get_handshake_digest(ssl_get_algorithm_prf(ssl));
+  return hkdf_expand_label(out, digest, session->master_key,
+                           session->master_key_length,
+                           (const uint8_t *)kTLS13LabelResumptionContext,
+                           strlen(kTLS13LabelResumptionContext), NULL, 0,
+                           out_len);
 }
 
 int tls13_export_keying_material(SSL *ssl, uint8_t *out, size_t out_len,

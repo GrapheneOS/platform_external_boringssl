@@ -22,11 +22,11 @@
 
 #include <vector>
 
-#include <openssl/c++/bytestring.h>
+#include <openssl/bytestring.h>
 #include <openssl/crypto.h>
 
 #include "internal.h"
-#include "../test/scoped_types.h"
+#include "../internal.h"
 
 namespace bssl {
 
@@ -293,7 +293,7 @@ static bool TestCBBBasic() {
     return false;
   }
 
-  ScopedOpenSSLBytes scoper(buf);
+  bssl::UniquePtr<uint8_t> scoper(buf);
   return buf_len == sizeof(kExpected) && memcmp(buf, kExpected, buf_len) == 0;
 }
 
@@ -344,7 +344,7 @@ static bool TestCBBFinishChild() {
     CBB_cleanup(&cbb);
     return false;
   }
-  ScopedOpenSSLBytes scoper(out_buf);
+  bssl::UniquePtr<uint8_t> scoper(out_buf);
   return out_size == 1 && out_buf[0] == 0;
 }
 
@@ -377,7 +377,7 @@ static bool TestCBBPrefixed() {
     return false;
   }
 
-  ScopedOpenSSLBytes scoper(buf);
+  bssl::UniquePtr<uint8_t> scoper(buf);
   return buf_len == sizeof(kExpected) && memcmp(buf, kExpected, buf_len) == 0;
 }
 
@@ -417,7 +417,7 @@ static bool TestCBBDiscardChild() {
   if (!CBB_finish(cbb.get(), &buf, &buf_len)) {
     return false;
   }
-  ScopedOpenSSLBytes scoper(buf);
+  bssl::UniquePtr<uint8_t> scoper(buf);
 
   static const uint8_t kExpected[] = {
         0xaa,
@@ -463,7 +463,7 @@ static bool TestCBBMisuse() {
     CBB_cleanup(&cbb);
     return false;
   }
-  ScopedOpenSSLBytes scoper(buf);
+  bssl::UniquePtr<uint8_t> scoper(buf);
 
   if (buf_len != 3 ||
       memcmp(buf, "\x01\x01\x02", 3) != 0) {
@@ -487,7 +487,7 @@ static bool TestCBBASN1() {
     CBB_cleanup(&cbb);
     return false;
   }
-  ScopedOpenSSLBytes scoper(buf);
+  bssl::UniquePtr<uint8_t> scoper(buf);
 
   if (buf_len != sizeof(kExpected) || memcmp(buf, kExpected, buf_len) != 0) {
     return false;
@@ -562,7 +562,7 @@ static bool DoBerConvert(const char *name,
     fprintf(stderr, "%s: CBS_asn1_ber_to_der failed.\n", name);
     return false;
   }
-  ScopedOpenSSLBytes scoper(out);
+  bssl::UniquePtr<uint8_t> scoper(out);
 
   if (out == NULL) {
     if (ber_len != der_len ||
@@ -675,7 +675,7 @@ static bool TestImplicitString() {
     int ok = CBS_get_asn1_implicit_string(&in, &out, &storage,
                                           CBS_ASN1_CONTEXT_SPECIFIC | 0,
                                           CBS_ASN1_OCTETSTRING);
-    ScopedOpenSSLBytes scoper(storage);
+    bssl::UniquePtr<uint8_t> scoper(storage);
 
     if (static_cast<bool>(ok) != test.ok) {
       fprintf(stderr, "CBS_get_asn1_implicit_string unexpectedly %s\n",
@@ -730,8 +730,7 @@ static const ASN1InvalidUint64Test kASN1InvalidUint64Tests[] = {
 };
 
 static bool TestASN1Uint64() {
-  for (size_t i = 0; i < sizeof(kASN1Uint64Tests) / sizeof(kASN1Uint64Tests[0]);
-       i++) {
+  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kASN1Uint64Tests); i++) {
     const ASN1Uint64Test *test = &kASN1Uint64Tests[i];
     CBS cbs;
     uint64_t value;
@@ -754,15 +753,13 @@ static bool TestASN1Uint64() {
       CBB_cleanup(&cbb);
       return false;
     }
-    ScopedOpenSSLBytes scoper(out);
+    bssl::UniquePtr<uint8_t> scoper(out);
     if (len != test->encoding_len || memcmp(out, test->encoding, len) != 0) {
       return false;
     }
   }
 
-  for (size_t i = 0;
-       i < sizeof(kASN1InvalidUint64Tests) / sizeof(kASN1InvalidUint64Tests[0]);
-       i++) {
+  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kASN1InvalidUint64Tests); i++) {
     const ASN1InvalidUint64Test *test = &kASN1InvalidUint64Tests[i];
     CBS cbs;
     uint64_t value;
