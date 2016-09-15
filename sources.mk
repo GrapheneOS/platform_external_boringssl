@@ -22,7 +22,6 @@ crypto_sources := \
   src/crypto/aes/mode_wrappers.c\
   src/crypto/asn1/a_bitstr.c\
   src/crypto/asn1/a_bool.c\
-  src/crypto/asn1/a_bytes.c\
   src/crypto/asn1/a_d2i_fp.c\
   src/crypto/asn1/a_dup.c\
   src/crypto/asn1/a_enum.c\
@@ -323,7 +322,6 @@ linux_x86_sources := \
   linux-x86/crypto/chacha/chacha-x86.S\
   linux-x86/crypto/md5/md5-586.S\
   linux-x86/crypto/modes/ghash-x86.S\
-  linux-x86/crypto/rc4/rc4-586.S\
   linux-x86/crypto/sha/sha1-586.S\
   linux-x86/crypto/sha/sha256-586.S\
   linux-x86/crypto/sha/sha512-586.S\
@@ -343,7 +341,6 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/modes/aesni-gcm-x86_64.S\
   linux-x86_64/crypto/modes/ghash-x86_64.S\
   linux-x86_64/crypto/rand/rdrand-x86_64.S\
-  linux-x86_64/crypto/rc4/rc4-x86_64.S\
   linux-x86_64/crypto/sha/sha1-x86_64.S\
   linux-x86_64/crypto/sha/sha256-x86_64.S\
   linux-x86_64/crypto/sha/sha512-x86_64.S\
