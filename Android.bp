@@ -63,7 +63,7 @@ cc_defaults {
         darwin: {
             cflags: ["-DOPENSSL_NO_ASM"],
         },
-        not_windows: {
+        host: {
             host_ldlibs: ["-lpthread"],
         },
     },
