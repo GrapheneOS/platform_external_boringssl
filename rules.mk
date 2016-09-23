@@ -44,7 +44,6 @@ include $(LOCAL_DIR)/crypto-sources.mk
 # the functions defined in these files exists, the linker will be happy. If
 # such a path is created, it'll be a link-time error and something more complex
 # may need to be considered.
-LOCAL_SRC_FILES := $(filter-out android_compat_hacks.c,$(LOCAL_SRC_FILES))
 LOCAL_SRC_FILES := $(filter-out src/crypto/bio/connect.c,$(LOCAL_SRC_FILES))
 LOCAL_SRC_FILES := $(filter-out src/crypto/bio/fd.c,$(LOCAL_SRC_FILES))
 LOCAL_SRC_FILES := $(filter-out src/crypto/bio/file.c,$(LOCAL_SRC_FILES))
