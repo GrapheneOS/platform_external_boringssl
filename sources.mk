@@ -15,7 +15,6 @@
 # This file is created by generate_build_files.py. Do not edit manually.
 
 crypto_sources := \
-  android_compat_hacks.c\
   android_compat_keywrap.c\
   err_data.c\
   src/crypto/aes/aes.c\

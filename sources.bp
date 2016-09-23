@@ -17,7 +17,6 @@
 cc_defaults {
     name: "libcrypto_sources",
     srcs: [
-        "android_compat_hacks.c",
         "android_compat_keywrap.c",
         "err_data.c",
         "src/crypto/aes/aes.c",
@@ -497,7 +496,7 @@ cc_defaults {
         "src/crypto/hkdf/hkdf_test.c",
         "src/crypto/hmac/hmac_test.cc",
         "src/crypto/lhash/lhash_test.c",
-        "src/crypto/modes/gcm_test.c",
+        "src/crypto/modes/gcm_test.cc",
         "src/crypto/newhope/newhope_statistical_test.cc",
         "src/crypto/newhope/newhope_test.cc",
         "src/crypto/newhope/newhope_vectors_test.cc",
