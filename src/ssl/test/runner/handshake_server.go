@@ -204,15 +204,77 @@ func (hs *serverHandshakeState) readClientHello() error {
 			return fmt.Errorf("tls: client offered different version on renego")
 		}
 	}
+
 	c.clientVersion = hs.clientHello.vers
 
+	// Convert the ClientHello wire version to a protocol version.
+	var clientVersion uint16
+	if c.isDTLS {
+		if hs.clientHello.vers <= 0xfefd {
+			clientVersion = VersionTLS12
+		} else if hs.clientHello.vers <= 0xfeff {
+			clientVersion = VersionTLS10
+		}
+	} else {
+		if hs.clientHello.vers >= VersionTLS12 {
+			clientVersion = VersionTLS12
+		} else if hs.clientHello.vers >= VersionTLS11 {
+			clientVersion = VersionTLS11
+		} else if hs.clientHello.vers >= VersionTLS10 {
+			clientVersion = VersionTLS10
+		} else if hs.clientHello.vers >= VersionSSL30 {
+			clientVersion = VersionSSL30
+		}
+	}
+
+	if config.Bugs.NegotiateVersion != 0 {
+		c.vers = config.Bugs.NegotiateVersion
+	} else if c.haveVers && config.Bugs.NegotiateVersionOnRenego != 0 {
+		c.vers = config.Bugs.NegotiateVersionOnRenego
+	} else if len(hs.clientHello.supportedVersions) > 0 {
+		// Use the versions extension if supplied.
+		var foundVersion, foundGREASE bool
+		for _, extVersion := range hs.clientHello.supportedVersions {
+			if isGREASEValue(extVersion) {
+				foundGREASE = true
+			}
+			extVersion, ok = wireToVersion(extVersion, c.isDTLS)
+			if !ok {
+				continue
+			}
+			if config.isSupportedVersion(extVersion, c.isDTLS) && !foundVersion {
+				c.vers = extVersion
+				foundVersion = true
+				break
+			}
+		}
+		if !foundVersion {
+			c.sendAlert(alertProtocolVersion)
+			return errors.New("tls: client did not offer any supported protocol versions")
+		}
+		if config.Bugs.ExpectGREASE && !foundGREASE {
+			return errors.New("tls: no GREASE version value found")
+		}
+	} else {
+		// Otherwise, use the legacy ClientHello version.
+		version := clientVersion
+		if maxVersion := config.maxVersion(c.isDTLS); version > maxVersion {
+			version = maxVersion
+		}
+		if version == 0 || !config.isSupportedVersion(version, c.isDTLS) {
+			return fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)
+		}
+		c.vers = version
+	}
+	c.haveVers = true
+
 	// Reject < 1.2 ClientHellos with signature_algorithms.
-	if c.clientVersion < VersionTLS12 && len(hs.clientHello.signatureAlgorithms) > 0 {
+	if clientVersion < VersionTLS12 && len(hs.clientHello.signatureAlgorithms) > 0 {
 		return fmt.Errorf("tls: client included signature_algorithms before TLS 1.2")
 	}
 
 	// Check the client cipher list is consistent with the version.
-	if hs.clientHello.vers < VersionTLS12 {
+	if clientVersion < VersionTLS12 {
 		for _, id := range hs.clientHello.cipherSuites {
 			if isTLS12Cipher(id) {
 				return fmt.Errorf("tls: client offered TLS 1.2 cipher before TLS 1.2")
@@ -233,24 +295,13 @@ func (hs *serverHandshakeState) readClientHello() error {
 		return fmt.Errorf("tls: client offered unexpected PSK identities")
 	}
 
-	if config.Bugs.NegotiateVersion != 0 {
-		c.vers = config.Bugs.NegotiateVersion
-	} else if c.haveVers && config.Bugs.NegotiateVersionOnRenego != 0 {
-		c.vers = config.Bugs.NegotiateVersionOnRenego
-	} else {
-		c.vers, ok = config.mutualVersion(hs.clientHello.vers, c.isDTLS)
-		if !ok {
-			c.sendAlert(alertProtocolVersion)
-			return fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)
-		}
-	}
-	c.haveVers = true
-
-	var scsvFound bool
+	var scsvFound, greaseFound bool
 	for _, cipherSuite := range hs.clientHello.cipherSuites {
 		if cipherSuite == fallbackSCSV {
 			scsvFound = true
-			break
+		}
+		if isGREASEValue(cipherSuite) {
+			greaseFound = true
 		}
 	}
 
@@ -258,6 +309,36 @@ func (hs *serverHandshakeState) readClientHello() error {
 		return errors.New("tls: no fallback SCSV found when expected")
 	} else if scsvFound && !config.Bugs.FailIfNotFallbackSCSV {
 		return errors.New("tls: fallback SCSV found when not expected")
+	}
+
+	if !greaseFound && config.Bugs.ExpectGREASE {
+		return errors.New("tls: no GREASE cipher suite value found")
+	}
+
+	greaseFound = false
+	for _, curve := range hs.clientHello.supportedCurves {
+		if isGREASEValue(uint16(curve)) {
+			greaseFound = true
+			break
+		}
+	}
+
+	if !greaseFound && config.Bugs.ExpectGREASE {
+		return errors.New("tls: no GREASE curve value found")
+	}
+
+	if len(hs.clientHello.keyShares) > 0 {
+		greaseFound = false
+		for _, keyShare := range hs.clientHello.keyShares {
+			if isGREASEValue(uint16(keyShare.group)) {
+				greaseFound = true
+				break
+			}
+		}
+
+		if !greaseFound && config.Bugs.ExpectGREASE {
+			return errors.New("tls: no GREASE curve value found")
+		}
 	}
 
 	if config.Bugs.IgnorePeerSignatureAlgorithmPreferences {
@@ -278,12 +359,9 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := c.config
 
 	hs.hello = &serverHelloMsg{
-		isDTLS: c.isDTLS,
-		vers:   c.vers,
-	}
-
-	if config.Bugs.SendServerHelloVersion != 0 {
-		hs.hello.vers = config.Bugs.SendServerHelloVersion
+		isDTLS:       c.isDTLS,
+		vers:         versionToWire(c.vers, c.isDTLS),
+		versOverride: config.Bugs.SendServerHelloVersion,
 	}
 
 	hs.hello.random = make([]byte, 32)
@@ -318,60 +396,89 @@ Curves:
 		}
 	}
 
-	_, ecdsaOk := hs.cert.PrivateKey.(*ecdsa.PrivateKey)
+	if !supportedCurve {
+		c.sendAlert(alertHandshakeFailure)
+		return errors.New("tls: no curve supported by both client and server")
+	}
 
 	pskIdentities := hs.clientHello.pskIdentities
 	if len(pskIdentities) == 0 && len(hs.clientHello.sessionTicket) > 0 && c.config.Bugs.AcceptAnySession {
-		pskIdentities = [][]uint8{hs.clientHello.sessionTicket}
+		psk := pskIdentity{
+			keModes:   []byte{pskDHEKEMode},
+			authModes: []byte{pskAuthMode},
+			ticket:    hs.clientHello.sessionTicket,
+		}
+		pskIdentities = []pskIdentity{psk}
 	}
 	for i, pskIdentity := range pskIdentities {
-		sessionState, ok := c.decryptTicket(pskIdentity)
+		foundKE := false
+		foundAuth := false
+
+		for _, keMode := range pskIdentity.keModes {
+			if keMode == pskDHEKEMode {
+				foundKE = true
+			}
+		}
+
+		for _, authMode := range pskIdentity.authModes {
+			if authMode == pskAuthMode {
+				foundAuth = true
+			}
+		}
+
+		if !foundKE || !foundAuth {
+			continue
+		}
+
+		sessionState, ok := c.decryptTicket(pskIdentity.ticket)
 		if !ok {
 			continue
 		}
-		if !config.Bugs.AcceptAnySession {
+		if config.Bugs.AcceptAnySession {
+			// Replace the cipher suite with one known to work, to
+			// test cross-version resumption attempts.
+			sessionState.cipherSuite = TLS_AES_128_GCM_SHA256
+		} else {
 			if sessionState.vers != c.vers && c.config.Bugs.AcceptAnySession {
-				continue
-			}
-			if sessionState.ticketFlags&ticketAllowDHEResumption == 0 {
 				continue
 			}
 			if sessionState.ticketExpiration.Before(c.config.time()) {
 				continue
 			}
-		}
 
-		suiteId := ecdhePSKSuite(sessionState.cipherSuite)
-
-		// Check the client offered the cipher.
-		clientCipherSuites := hs.clientHello.cipherSuites
-		if config.Bugs.AcceptAnySession {
-			clientCipherSuites = []uint16{suiteId}
-		}
-		suite := mutualCipherSuite(clientCipherSuites, suiteId)
-
-		// Check the cipher is enabled by the server or is a resumption
-		// suite of one enabled by the server. Account for the cipher
-		// change on resume.
-		//
-		// TODO(davidben): The ecdhePSKSuite mess will be gone with the
-		// new cipher negotiation scheme.
-		var found bool
-		for _, id := range config.cipherSuites() {
-			if ecdhePSKSuite(id) == suiteId {
-				found = true
-				break
+			cipherSuiteOk := false
+			// Check that the client is still offering the ciphersuite in the session.
+			for _, id := range hs.clientHello.cipherSuites {
+				if id == sessionState.cipherSuite {
+					cipherSuiteOk = true
+					break
+				}
+			}
+			if !cipherSuiteOk {
+				continue
 			}
 		}
 
-		if suite != nil && found {
-			hs.sessionState = sessionState
-			hs.suite = suite
-			hs.hello.hasPSKIdentity = true
-			hs.hello.pskIdentity = uint16(i)
-			c.didResume = true
-			break
+		// Check that we also support the ciphersuite from the session.
+		suite := c.tryCipherSuite(sessionState.cipherSuite, c.config.cipherSuites(), c.vers, true, true)
+		if suite == nil {
+			continue
 		}
+
+		hs.sessionState = sessionState
+		hs.suite = suite
+		hs.hello.hasPSKIdentity = true
+		hs.hello.pskIdentity = uint16(i)
+		if config.Bugs.SelectPSKIdentityOnResume != 0 {
+			hs.hello.pskIdentity = config.Bugs.SelectPSKIdentityOnResume
+		}
+		c.didResume = true
+		break
+	}
+
+	if config.Bugs.AlwaysSelectPSKIdentity {
+		hs.hello.hasPSKIdentity = true
+		hs.hello.pskIdentity = 0
 	}
 
 	// If not resuming, select the cipher suite.
@@ -386,7 +493,7 @@ Curves:
 		}
 
 		for _, id := range preferenceList {
-			if hs.suite = c.tryCipherSuite(id, supportedList, c.vers, supportedCurve, ecdsaOk, false); hs.suite != nil {
+			if hs.suite = c.tryCipherSuite(id, supportedList, c.vers, true, true); hs.suite != nil {
 				break
 			}
 		}
@@ -406,14 +513,11 @@ Curves:
 	hs.finishedHash.discardHandshakeBuffer()
 	hs.writeClientHash(hs.clientHello.marshal())
 
+	hs.hello.useCertAuth = hs.sessionState == nil
+
 	// Resolve PSK and compute the early secret.
 	var psk []byte
-	// The only way for hs.suite to be a PSK suite yet for there to be
-	// no sessionState is if config.Bugs.EnableAllCiphers is true and
-	// the test runner forced us to negotiated a PSK suite. It doesn't
-	// really matter what we do here so long as we continue the
-	// handshake and let the client error out.
-	if hs.suite.flags&suitePSK != 0 && hs.sessionState != nil {
+	if hs.sessionState != nil {
 		psk = deriveResumptionPSK(hs.suite, hs.sessionState.masterSecret)
 		hs.finishedHash.setResumptionContext(deriveResumptionContext(hs.suite, hs.sessionState.masterSecret))
 	} else {
@@ -423,9 +527,23 @@ Curves:
 
 	earlySecret := hs.finishedHash.extractKey(hs.finishedHash.zeroSecret(), psk)
 
+	if config.Bugs.OmitServerHelloSignatureAlgorithms {
+		hs.hello.useCertAuth = false
+	} else if config.Bugs.IncludeServerHelloSignatureAlgorithms {
+		hs.hello.useCertAuth = true
+	}
+
+	hs.hello.hasKeyShare = true
+	if hs.sessionState != nil && config.Bugs.NegotiatePSKResumption {
+		hs.hello.hasKeyShare = false
+	}
+	if config.Bugs.MissingKeyShare {
+		hs.hello.hasKeyShare = false
+	}
+
 	// Resolve ECDHE and compute the handshake secret.
 	var ecdheSecret []byte
-	if hs.suite.flags&suiteECDHE != 0 && !config.Bugs.MissingKeyShare {
+	if hs.hello.hasKeyShare {
 		// Look for the key share corresponding to our selected curve.
 		var selectedKeyShare *keyShareEntry
 		for i := range hs.clientHello.keyShares {
@@ -451,7 +569,7 @@ Curves:
 		ResendHelloRetryRequest:
 			// Send HelloRetryRequest.
 			helloRetryRequestMsg := helloRetryRequestMsg{
-				vers:          c.vers,
+				vers:          versionToWire(c.vers, c.isDTLS),
 				cipherSuite:   hs.hello.cipherSuite,
 				selectedGroup: selectedCurve,
 			}
@@ -577,12 +695,19 @@ Curves:
 	c.out.useTrafficSecret(c.vers, hs.suite, handshakeTrafficSecret, handshakePhase, serverWrite)
 	c.in.useTrafficSecret(c.vers, hs.suite, handshakeTrafficSecret, handshakePhase, clientWrite)
 
-	if hs.suite.flags&suitePSK == 0 {
+	if hs.hello.useCertAuth {
 		if hs.clientHello.ocspStapling {
 			encryptedExtensions.extensions.ocspResponse = hs.cert.OCSPStaple
 		}
 		if hs.clientHello.sctListSupported {
 			encryptedExtensions.extensions.sctList = hs.cert.SignedCertificateTimestampList
+		}
+	} else {
+		if config.Bugs.SendOCSPResponseOnResume != nil {
+			encryptedExtensions.extensions.ocspResponse = config.Bugs.SendOCSPResponseOnResume
+		}
+		if config.Bugs.SendSCTListOnResume != nil {
+			encryptedExtensions.extensions.sctList = config.Bugs.SendSCTListOnResume
 		}
 	}
 
@@ -595,7 +720,7 @@ Curves:
 		c.writeRecord(recordTypeHandshake, encryptedExtensions.marshal())
 	}
 
-	if hs.suite.flags&suitePSK == 0 {
+	if hs.hello.useCertAuth {
 		if config.ClientAuth >= RequestClientCert {
 			// Request a client certificate
 			certReq := &certificateRequestMsg{
@@ -656,11 +781,9 @@ Curves:
 
 		hs.writeServerHash(certVerify.marshal())
 		c.writeRecord(recordTypeHandshake, certVerify.marshal())
-	} else {
+	} else if hs.sessionState != nil {
 		// Pick up certificates from the session instead.
-		// hs.sessionState may be nil if config.Bugs.EnableAllCiphers is
-		// true.
-		if hs.sessionState != nil && len(hs.sessionState.certificates) > 0 {
+		if len(hs.sessionState.certificates) > 0 {
 			if _, err := hs.processCertsFromClient(hs.sessionState.certificates); err != nil {
 				return err
 			}
@@ -784,12 +907,9 @@ func (hs *serverHandshakeState) processClientHello() (isResume bool, err error) 
 
 	hs.hello = &serverHelloMsg{
 		isDTLS:            c.isDTLS,
-		vers:              c.vers,
+		vers:              versionToWire(c.vers, c.isDTLS),
+		versOverride:      config.Bugs.SendServerHelloVersion,
 		compressionMethod: compressionNone,
-	}
-
-	if config.Bugs.SendServerHelloVersion != 0 {
-		hs.hello.vers = config.Bugs.SendServerHelloVersion
 	}
 
 	hs.hello.random = make([]byte, 32)
@@ -872,7 +992,7 @@ Curves:
 	}
 
 	for _, id := range preferenceList {
-		if hs.suite = c.tryCipherSuite(id, supportedList, c.vers, hs.ellipticOk, hs.ecdsaOk, true); hs.suite != nil {
+		if hs.suite = c.tryCipherSuite(id, supportedList, c.vers, hs.ellipticOk, hs.ecdsaOk); hs.suite != nil {
 			break
 		}
 	}
@@ -1002,6 +1122,10 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 		serverExtensions.ticketSupported = true
 	}
 
+	if !hs.clientHello.hasGREASEExtension && config.Bugs.ExpectGREASE {
+		return errors.New("tls: no GREASE extension found")
+	}
+
 	return nil
 }
 
@@ -1011,7 +1135,7 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 
 	ticket := hs.clientHello.sessionTicket
 	if len(ticket) == 0 && len(hs.clientHello.pskIdentities) > 0 && c.config.Bugs.AcceptAnySession {
-		ticket = hs.clientHello.pskIdentities[0]
+		ticket = hs.clientHello.pskIdentities[0].ticket
 	}
 	if len(ticket) > 0 {
 		if c.config.SessionTicketsDisabled {
@@ -1034,7 +1158,11 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 		}
 	}
 
-	if !c.config.Bugs.AcceptAnySession {
+	if c.config.Bugs.AcceptAnySession {
+		// Replace the cipher suite with one known to work, to test
+		// cross-version resumption attempts.
+		hs.sessionState.cipherSuite = TLS_RSA_WITH_AES_128_CBC_SHA
+	} else {
 		// Never resume a session for a different SSL version.
 		if c.vers != hs.sessionState.vers {
 			return false
@@ -1054,7 +1182,8 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 	}
 
 	// Check that we also support the ciphersuite from the session.
-	hs.suite = c.tryCipherSuite(hs.sessionState.cipherSuite, c.config.cipherSuites(), hs.sessionState.vers, hs.ellipticOk, hs.ecdsaOk, true)
+	hs.suite = c.tryCipherSuite(hs.sessionState.cipherSuite, c.config.cipherSuites(), c.vers, hs.ellipticOk, hs.ecdsaOk)
+
 	if hs.suite == nil {
 		return false
 	}
@@ -1085,6 +1214,12 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 
 	if c.config.Bugs.SendSCTListOnResume != nil {
 		hs.hello.extensions.sctList = c.config.Bugs.SendSCTListOnResume
+	}
+
+	if c.config.Bugs.SendOCSPResponseOnResume != nil {
+		// There is no way, syntactically, to send an OCSP response on a
+		// resumption handshake.
+		hs.hello.extensions.ocspStapling = true
 	}
 
 	hs.finishedHash = newFinishedHash(c.vers, hs.suite)
@@ -1620,7 +1755,7 @@ func (hs *serverHandshakeState) writeHash(msg []byte, seqno uint16) {
 
 // tryCipherSuite returns a cipherSuite with the given id if that cipher suite
 // is acceptable to use.
-func (c *Conn) tryCipherSuite(id uint16, supportedCipherSuites []uint16, version uint16, ellipticOk, ecdsaOk, pskOk bool) *cipherSuite {
+func (c *Conn) tryCipherSuite(id uint16, supportedCipherSuites []uint16, version uint16, ellipticOk, ecdsaOk bool) *cipherSuite {
 	for _, supported := range supportedCipherSuites {
 		if id == supported {
 			var candidate *cipherSuite
@@ -1634,27 +1769,26 @@ func (c *Conn) tryCipherSuite(id uint16, supportedCipherSuites []uint16, version
 			if candidate == nil {
 				continue
 			}
+
 			// Don't select a ciphersuite which we can't
 			// support for this client.
-			if !c.config.Bugs.EnableAllCiphers {
-				if (candidate.flags&suitePSK != 0) && !pskOk {
+			if version >= VersionTLS13 || candidate.flags&suiteTLS13 != 0 {
+				if version < VersionTLS13 || candidate.flags&suiteTLS13 == 0 {
 					continue
 				}
-				if (candidate.flags&suiteECDHE != 0) && !ellipticOk {
-					continue
-				}
-				if (candidate.flags&suiteECDSA != 0) != ecdsaOk {
-					continue
-				}
-				if version < VersionTLS12 && candidate.flags&suiteTLS12 != 0 {
-					continue
-				}
-				if version >= VersionTLS13 && candidate.flags&suiteTLS13 == 0 {
-					continue
-				}
-				if c.isDTLS && candidate.flags&suiteNoDTLS != 0 {
-					continue
-				}
+				return candidate
+			}
+			if (candidate.flags&suiteECDHE != 0) && !ellipticOk {
+				continue
+			}
+			if (candidate.flags&suiteECDSA != 0) != ecdsaOk {
+				continue
+			}
+			if version < VersionTLS12 && candidate.flags&suiteTLS12 != 0 {
+				continue
+			}
+			if c.isDTLS && candidate.flags&suiteNoDTLS != 0 {
+				continue
 			}
 			return candidate
 		}
@@ -1672,4 +1806,8 @@ func isTLS12Cipher(id uint16) bool {
 	}
 	// Unknown cipher.
 	return false
+}
+
+func isGREASEValue(val uint16) bool {
+	return val&0x0f0f == 0x0a0a && val&0xff == val>>8
 }

@@ -234,6 +234,9 @@ SSL_SESSION *SSL_SESSION_dup(SSL_SESSION *session, int dup_flags) {
   memcpy(new_session->peer_sha256, session->peer_sha256, SHA256_DIGEST_LENGTH);
   new_session->peer_sha256_valid = session->peer_sha256_valid;
 
+  new_session->timeout = session->timeout;
+  new_session->time = session->time;
+
   /* Copy non-authentication connection properties. */
   if (dup_flags & SSL_SESSION_INCLUDE_NONAUTH) {
     new_session->session_id_length = session->session_id_length;
@@ -241,8 +244,6 @@ SSL_SESSION *SSL_SESSION_dup(SSL_SESSION *session, int dup_flags) {
            session->session_id_length);
 
     new_session->key_exchange_info = session->key_exchange_info;
-    new_session->timeout = session->timeout;
-    new_session->time = session->time;
 
     if (session->tlsext_hostname != NULL) {
       new_session->tlsext_hostname = BUF_strdup(session->tlsext_hostname);
@@ -257,7 +258,6 @@ SSL_SESSION *SSL_SESSION_dup(SSL_SESSION *session, int dup_flags) {
     new_session->original_handshake_hash_len =
         session->original_handshake_hash_len;
     new_session->tlsext_tick_lifetime_hint = session->tlsext_tick_lifetime_hint;
-    new_session->ticket_flags = session->ticket_flags;
     new_session->ticket_age_add = session->ticket_age_add;
     new_session->extended_master_secret = session->extended_master_secret;
   }
@@ -547,8 +547,12 @@ int ssl_encrypt_ticket(SSL *ssl, CBB *out, const SSL_SESSION *session) {
     goto err;
   }
 
-  int len;
   size_t total = 0;
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
+  memcpy(ptr, session_buf, session_len);
+  total = session_len;
+#else
+  int len;
   if (!EVP_EncryptUpdate(&ctx, ptr + total, &len, session_buf, session_len)) {
     goto err;
   }
@@ -557,6 +561,7 @@ int ssl_encrypt_ticket(SSL *ssl, CBB *out, const SSL_SESSION *session) {
     goto err;
   }
   total += len;
+#endif
   if (!CBB_did_write(out, total)) {
     goto err;
   }
