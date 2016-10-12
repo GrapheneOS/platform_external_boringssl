@@ -124,6 +124,12 @@ type keyShareEntry struct {
 	keyExchange []byte
 }
 
+type pskIdentity struct {
+	keModes   []byte
+	authModes []byte
+	ticket    []uint8
+}
+
 type clientHelloMsg struct {
 	raw       []byte
 	isDTLS    bool
@@ -143,12 +149,13 @@ type clientHelloMsg struct {
 	hasKeyShares            bool
 	keyShares               []keyShareEntry
 	trailingKeyShareData    bool
-	pskIdentities           [][]uint8
+	pskIdentities           []pskIdentity
 	hasEarlyData            bool
 	earlyDataContext        []byte
 	ticketSupported         bool
 	sessionTicket           []uint8
 	signatureAlgorithms     []signatureAlgorithm
+	supportedVersions       []uint16
 	secureRenegotiation     []byte
 	alpnProtocols           []string
 	duplicateExtension      bool
@@ -159,6 +166,7 @@ type clientHelloMsg struct {
 	srtpMasterKeyIdentifier string
 	sctListSupported        bool
 	customExtension         string
+	hasGREASEExtension      bool
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -183,12 +191,13 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		m.hasKeyShares == m1.hasKeyShares &&
 		eqKeyShareEntryLists(m.keyShares, m1.keyShares) &&
 		m.trailingKeyShareData == m1.trailingKeyShareData &&
-		eqByteSlices(m.pskIdentities, m1.pskIdentities) &&
+		eqPSKIdentityLists(m.pskIdentities, m1.pskIdentities) &&
 		m.hasEarlyData == m1.hasEarlyData &&
 		bytes.Equal(m.earlyDataContext, m1.earlyDataContext) &&
 		m.ticketSupported == m1.ticketSupported &&
 		bytes.Equal(m.sessionTicket, m1.sessionTicket) &&
 		eqSignatureAlgorithms(m.signatureAlgorithms, m1.signatureAlgorithms) &&
+		eqUint16s(m.supportedVersions, m1.supportedVersions) &&
 		bytes.Equal(m.secureRenegotiation, m1.secureRenegotiation) &&
 		(m.secureRenegotiation == nil) == (m1.secureRenegotiation == nil) &&
 		eqStrings(m.alpnProtocols, m1.alpnProtocols) &&
@@ -199,7 +208,8 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		eqUint16s(m.srtpProtectionProfiles, m1.srtpProtectionProfiles) &&
 		m.srtpMasterKeyIdentifier == m1.srtpMasterKeyIdentifier &&
 		m.sctListSupported == m1.sctListSupported &&
-		m.customExtension == m1.customExtension
+		m.customExtension == m1.customExtension &&
+		m.hasGREASEExtension == m1.hasGREASEExtension
 }
 
 func (m *clientHelloMsg) marshal() []byte {
@@ -210,8 +220,7 @@ func (m *clientHelloMsg) marshal() []byte {
 	handshakeMsg := newByteBuilder()
 	handshakeMsg.addU8(typeClientHello)
 	hello := handshakeMsg.addU24LengthPrefixed()
-	vers := versionToWire(m.vers, m.isDTLS)
-	hello.addU16(vers)
+	hello.addU16(m.vers)
 	hello.addBytes(m.random)
 	sessionId := hello.addU8LengthPrefixed()
 	sessionId.addBytes(m.sessionId)
@@ -313,8 +322,9 @@ func (m *clientHelloMsg) marshal() []byte {
 
 		pskIdentities := pskExtension.addU16LengthPrefixed()
 		for _, psk := range m.pskIdentities {
-			pskIdentity := pskIdentities.addU16LengthPrefixed()
-			pskIdentity.addBytes(psk)
+			pskIdentities.addU8LengthPrefixed().addBytes(psk.keModes)
+			pskIdentities.addU8LengthPrefixed().addBytes(psk.authModes)
+			pskIdentities.addU16LengthPrefixed().addBytes(psk.ticket)
 		}
 	}
 	if m.hasEarlyData {
@@ -337,6 +347,14 @@ func (m *clientHelloMsg) marshal() []byte {
 		signatureAlgorithms := signatureAlgorithmsExtension.addU16LengthPrefixed()
 		for _, sigAlg := range m.signatureAlgorithms {
 			signatureAlgorithms.addU16(uint16(sigAlg))
+		}
+	}
+	if len(m.supportedVersions) > 0 {
+		extensions.addU16(extensionSupportedVersions)
+		supportedVersionsExtension := extensions.addU16LengthPrefixed()
+		supportedVersions := supportedVersionsExtension.addU8LengthPrefixed()
+		for _, version := range m.supportedVersions {
+			supportedVersions.addU16(uint16(version))
 		}
 	}
 	if m.secureRenegotiation != nil {
@@ -399,11 +417,6 @@ func (m *clientHelloMsg) marshal() []byte {
 		customExt := extensions.addU16LengthPrefixed()
 		customExt.addBytes([]byte(m.customExtension))
 	}
-	if m.vers == VersionTLS13 {
-		extensions.addU16(extensionTLS13Draft)
-		extValue := extensions.addU16LengthPrefixed()
-		extValue.addU16(tls13DraftVersion)
-	}
 
 	if extensions.len() == 0 {
 		hello.discardChild()
@@ -418,7 +431,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
-	m.vers = wireToVersion(uint16(data[4])<<8|uint16(data[5]), m.isDTLS)
+	m.vers = uint16(data[4])<<8 | uint16(data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
@@ -476,6 +489,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	m.ticketSupported = false
 	m.sessionTicket = nil
 	m.signatureAlgorithms = nil
+	m.supportedVersions = nil
 	m.alpnProtocols = nil
 	m.extendedMasterSecret = false
 	m.customExtension = ""
@@ -605,15 +619,39 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 			d := data[2:length]
 			for len(d) > 0 {
+				var psk pskIdentity
+
+				if len(d) < 1 {
+					return false
+				}
+				keModesLen := int(d[0])
+				d = d[1:]
+				if len(d) < keModesLen {
+					return false
+				}
+				psk.keModes = d[:keModesLen]
+				d = d[keModesLen:]
+
+				if len(d) < 1 {
+					return false
+				}
+				authModesLen := int(d[0])
+				d = d[1:]
+				if len(d) < authModesLen {
+					return false
+				}
+				psk.authModes = d[:authModesLen]
+				d = d[authModesLen:]
 				if len(d) < 2 {
 					return false
 				}
 				pskLen := int(d[0])<<8 | int(d[1])
 				d = d[2:]
+
 				if len(d) < pskLen {
 					return false
 				}
-				psk := d[:pskLen]
+				psk.ticket = d[:pskLen]
 				m.pskIdentities = append(m.pskIdentities, psk)
 				d = d[pskLen:]
 			}
@@ -642,6 +680,21 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.signatureAlgorithms = make([]signatureAlgorithm, n)
 			for i := range m.signatureAlgorithms {
 				m.signatureAlgorithms[i] = signatureAlgorithm(d[0])<<8 | signatureAlgorithm(d[1])
+				d = d[2:]
+			}
+		case extensionSupportedVersions:
+			if length < 1+2 {
+				return false
+			}
+			l := int(data[0])
+			if l != length-1 || l%2 == 1 || l < 2 {
+				return false
+			}
+			n := l / 2
+			d := data[1:]
+			m.supportedVersions = make([]uint16, n)
+			for i := range m.supportedVersions {
+				m.supportedVersions[i] = uint16(d[0])<<8 | uint16(d[1])
 				d = d[2:]
 			}
 		case extensionRenegotiationInfo:
@@ -705,6 +758,10 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.customExtension = string(data[:length])
 		}
 		data = data[length:]
+
+		if isGREASEValue(extension) {
+			m.hasGREASEExtension = true
+		}
 	}
 
 	return true
@@ -714,6 +771,7 @@ type serverHelloMsg struct {
 	raw                 []byte
 	isDTLS              bool
 	vers                uint16
+	versOverride        uint16
 	random              []byte
 	sessionId           []byte
 	cipherSuite         uint16
@@ -721,6 +779,7 @@ type serverHelloMsg struct {
 	keyShare            keyShareEntry
 	hasPSKIdentity      bool
 	pskIdentity         uint16
+	useCertAuth         bool
 	earlyDataIndication bool
 	compressionMethod   uint8
 	extensions          serverExtensions
@@ -734,21 +793,33 @@ func (m *serverHelloMsg) marshal() []byte {
 	handshakeMsg := newByteBuilder()
 	handshakeMsg.addU8(typeServerHello)
 	hello := handshakeMsg.addU24LengthPrefixed()
-	vers := versionToWire(m.vers, m.isDTLS)
-	hello.addU16(vers)
+
+	// m.vers is used both to determine the format of the rest of the
+	// ServerHello and to override the value, so include a second version
+	// field.
+	vers, ok := wireToVersion(m.vers, m.isDTLS)
+	if !ok {
+		panic("unknown version")
+	}
+	if m.versOverride != 0 {
+		hello.addU16(m.versOverride)
+	} else {
+		hello.addU16(m.vers)
+	}
+
 	hello.addBytes(m.random)
-	if m.vers < VersionTLS13 {
+	if vers < VersionTLS13 {
 		sessionId := hello.addU8LengthPrefixed()
 		sessionId.addBytes(m.sessionId)
 	}
 	hello.addU16(m.cipherSuite)
-	if m.vers < VersionTLS13 {
+	if vers < VersionTLS13 {
 		hello.addU8(m.compressionMethod)
 	}
 
 	extensions := hello.addU16LengthPrefixed()
 
-	if m.vers >= VersionTLS13 {
+	if vers >= VersionTLS13 {
 		if m.hasKeyShare {
 			extensions.addU16(extensionKeyShare)
 			keyShare := extensions.addU16LengthPrefixed()
@@ -761,12 +832,16 @@ func (m *serverHelloMsg) marshal() []byte {
 			extensions.addU16(2) // Length
 			extensions.addU16(m.pskIdentity)
 		}
+		if m.useCertAuth {
+			extensions.addU16(extensionSignatureAlgorithms)
+			extensions.addU16(0) // Length
+		}
 		if m.earlyDataIndication {
 			extensions.addU16(extensionEarlyData)
 			extensions.addU16(0) // Length
 		}
 	} else {
-		m.extensions.marshal(extensions, m.vers)
+		m.extensions.marshal(extensions, vers)
 		if extensions.len() == 0 {
 			hello.discardChild()
 		}
@@ -781,10 +856,14 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
-	m.vers = wireToVersion(uint16(data[4])<<8|uint16(data[5]), m.isDTLS)
+	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	vers, ok := wireToVersion(m.vers, m.isDTLS)
+	if !ok {
+		return false
+	}
 	m.random = data[6:38]
 	data = data[38:]
-	if m.vers < VersionTLS13 {
+	if vers < VersionTLS13 {
 		sessionIdLen := int(data[0])
 		if sessionIdLen > 32 || len(data) < 1+sessionIdLen {
 			return false
@@ -797,7 +876,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	}
 	m.cipherSuite = uint16(data[0])<<8 | uint16(data[1])
 	data = data[2:]
-	if m.vers < VersionTLS13 {
+	if vers < VersionTLS13 {
 		if len(data) < 1 {
 			return false
 		}
@@ -820,7 +899,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
-	if m.vers >= VersionTLS13 {
+	if vers >= VersionTLS13 {
 		for len(data) != 0 {
 			if len(data) < 4 {
 				return false
@@ -854,6 +933,11 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				}
 				m.pskIdentity = uint16(d[0])<<8 | uint16(d[1])
 				m.hasPSKIdentity = true
+			case extensionSignatureAlgorithms:
+				if len(d) != 0 {
+					return false
+				}
+				m.useCertAuth = true
 			case extensionEarlyData:
 				if len(d) != 0 {
 					return false
@@ -865,7 +949,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				return false
 			}
 		}
-	} else if !m.extensions.unmarshal(data, m.vers) {
+	} else if !m.extensions.unmarshal(data, vers) {
 		return false
 	}
 
@@ -1738,8 +1822,8 @@ type newSessionTicketMsg struct {
 	raw            []byte
 	version        uint16
 	ticketLifetime uint32
-	ticketFlags    uint32
-	ticketAgeAdd   uint32
+	keModes        []byte
+	authModes      []byte
 	ticket         []byte
 }
 
@@ -1754,16 +1838,20 @@ func (m *newSessionTicketMsg) marshal() []byte {
 	body := ticketMsg.addU24LengthPrefixed()
 	body.addU32(m.ticketLifetime)
 	if m.version >= VersionTLS13 {
-		body.addU32(m.ticketFlags)
-		body.addU32(m.ticketAgeAdd)
+		body.addU8LengthPrefixed().addBytes(m.keModes)
+		body.addU8LengthPrefixed().addBytes(m.authModes)
+	}
+
+	ticket := body.addU16LengthPrefixed()
+	ticket.addBytes(m.ticket)
+
+	if m.version >= VersionTLS13 {
 		// Send no extensions.
 		//
 		// TODO(davidben): Add an option to send a custom extension to
 		// test we correctly ignore unknown ones.
 		body.addU16(0)
 	}
-	ticket := body.addU16LengthPrefixed()
-	ticket.addBytes(m.ticket)
 
 	m.raw = ticketMsg.finish()
 	return m.raw
@@ -1779,31 +1867,58 @@ func (m *newSessionTicketMsg) unmarshal(data []byte) bool {
 	data = data[8:]
 
 	if m.version >= VersionTLS13 {
-		if len(data) < 10 {
+		if len(data) < 1 {
 			return false
 		}
-		m.ticketFlags = uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
-		m.ticketAgeAdd = uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
-		extsLength := int(data[8])<<8 + int(data[9])
-		data = data[10:]
-		if len(data) < extsLength {
+		keModesLength := int(data[0])
+		if len(data)-1 < keModesLength {
 			return false
 		}
-		data = data[extsLength:]
+		m.keModes = data[1 : 1+keModesLength]
+		data = data[1+keModesLength:]
+
+		if len(data) < 1 {
+			return false
+		}
+		authModesLength := int(data[0])
+		if len(data)-1 < authModesLength {
+			return false
+		}
+		m.authModes = data[1 : 1+authModesLength]
+		data = data[1+authModesLength:]
 	}
 
 	if len(data) < 2 {
 		return false
 	}
 	ticketLen := int(data[0])<<8 + int(data[1])
-	if len(data)-2 != ticketLen {
+	data = data[2:]
+	if len(data) < ticketLen {
 		return false
 	}
+
 	if m.version >= VersionTLS13 && ticketLen == 0 {
 		return false
 	}
 
-	m.ticket = data[2:]
+	m.ticket = data[:ticketLen]
+	data = data[ticketLen:]
+
+	if m.version >= VersionTLS13 {
+		if len(data) < 2 {
+			return false
+		}
+		extsLength := int(data[0])<<8 + int(data[1])
+		data = data[2:]
+		if len(data) < extsLength {
+			return false
+		}
+		data = data[extsLength:]
+	}
+
+	if len(data) > 0 {
+		return false
+	}
 
 	return true
 }
@@ -1867,7 +1982,7 @@ func (m *helloVerifyRequestMsg) marshal() []byte {
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	vers := versionToWire(m.vers, true)
+	vers := m.vers
 	x[4] = uint8(vers >> 8)
 	x[5] = uint8(vers)
 	x[6] = uint8(len(m.cookie))
@@ -1881,7 +1996,7 @@ func (m *helloVerifyRequestMsg) unmarshal(data []byte) bool {
 		return false
 	}
 	m.raw = data
-	m.vers = wireToVersion(uint16(data[4])<<8|uint16(data[5]), true)
+	m.vers = uint16(data[4])<<8 | uint16(data[5])
 	cookieLen := int(data[6])
 	if cookieLen > 32 || len(data) != 7+cookieLen {
 		return false
@@ -2022,6 +2137,19 @@ func eqKeyShareEntryLists(x, y []keyShareEntry) bool {
 	}
 	for i, v := range x {
 		if y[i].group != v.group || !bytes.Equal(y[i].keyExchange, v.keyExchange) {
+			return false
+		}
+	}
+	return true
+
+}
+
+func eqPSKIdentityLists(x, y []pskIdentity) bool {
+	if len(x) != len(y) {
+		return false
+	}
+	for i, v := range x {
+		if !bytes.Equal(y[i].keModes, v.keModes) || !bytes.Equal(y[i].authModes, v.authModes) || !bytes.Equal(y[i].ticket, v.ticket) {
 			return false
 		}
 	}

@@ -104,6 +104,8 @@ const Flag<bool> kBoolFlags[] = {
     &TestConfig::use_old_client_cert_callback },
   { "-use-null-client-ca-list", &TestConfig::use_null_client_ca_list },
   { "-send-alert", &TestConfig::send_alert },
+  { "-peek-then-read", &TestConfig::peek_then_read },
+  { "-enable-grease", &TestConfig::enable_grease },
 };
 
 const Flag<std::string> kStringFlags[] = {
@@ -153,6 +155,7 @@ const Flag<int> kIntFlags[] = {
   { "-expect-curve-id", &TestConfig::expect_curve_id },
   { "-expect-dhe-group-size", &TestConfig::expect_dhe_group_size },
   { "-initial-timeout-duration-ms", &TestConfig::initial_timeout_duration_ms },
+  { "-max-cert-list", &TestConfig::max_cert_list },
 };
 
 const Flag<std::vector<int>> kIntVectorFlags[] = {
