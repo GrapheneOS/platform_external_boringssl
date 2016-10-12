@@ -172,12 +172,14 @@ extern "C" {
 /* SSL_kPSK is only set for plain PSK, not ECDHE_PSK. */
 #define SSL_kPSK 0x00000008L
 #define SSL_kCECPQ1 0x00000010L
+#define SSL_kGENERIC 0x00000020L
 
 /* Bits for |algorithm_auth| (server authentication). */
 #define SSL_aRSA 0x00000001L
 #define SSL_aECDSA 0x00000002L
 /* SSL_aPSK is set for both PSK and ECDHE_PSK. */
 #define SSL_aPSK 0x00000004L
+#define SSL_aGENERIC 0x00000008L
 
 #define SSL_aCERT (SSL_aRSA | SSL_aECDSA)
 
@@ -240,11 +242,6 @@ ssl_create_cipher_list(const SSL_PROTOCOL_METHOD *ssl_method,
 
 /* ssl_cipher_get_value returns the cipher suite id of |cipher|. */
 uint16_t ssl_cipher_get_value(const SSL_CIPHER *cipher);
-
-/* ssl_cipher_get_resumption_cipher returns the cipher suite id of the cipher
- * matching |cipher| with PSK enabled. */
-int ssl_cipher_get_ecdhe_psk_cipher(const SSL_CIPHER *cipher,
-                                    uint16_t *out_cipher);
 
 /* ssl_cipher_get_key_type returns the |EVP_PKEY_*| value corresponding to the
  * server key used in |cipher| or |EVP_PKEY_NONE| if there is none. */
@@ -608,6 +605,11 @@ struct ssl_ecdh_method_st {
  * sets |*out_group_id| to the group ID and returns one. Otherwise, it returns
  * zero. */
 int ssl_nid_to_group_id(uint16_t *out_group_id, int nid);
+
+/* ssl_name_to_group_id looks up the group corresponding to the |name| string
+ * of length |len|. On success, it sets |*out_group_id| to the group ID and
+ * returns one. Otherwise, it returns zero. */
+int ssl_name_to_group_id(uint16_t *out_group_id, const char *name, size_t len);
 
 /* SSL_ECDH_CTX_init sets up |ctx| for use with curve |group_id|. It returns one
  * on success and zero on error. */
@@ -1014,6 +1016,23 @@ int ssl_client_cipher_list_contains_cipher(
     const struct ssl_early_callback_ctx *client_hello, uint16_t id);
 
 
+/* GREASE. */
+
+enum ssl_grease_index_t {
+  ssl_grease_cipher = 0,
+  ssl_grease_group,
+  ssl_grease_extension1,
+  ssl_grease_extension2,
+  ssl_grease_version,
+};
+
+/* ssl_get_grease_value returns a GREASE value for |ssl|. For a given
+ * connection, the values for each index will be deterministic. This allows the
+ * same ClientHello be sent twice for a HelloRetryRequest or the same group be
+ * advertised in both supported_groups and key_shares. */
+uint16_t ssl_get_grease_value(const SSL *ssl, enum ssl_grease_index_t index);
+
+
 /* Underdocumented functions.
  *
  * Functions below here haven't been touched up and may be underdocumented. */
@@ -1250,10 +1269,12 @@ typedef struct dtls1_state_st {
 extern const SSL3_ENC_METHOD TLSv1_enc_data;
 extern const SSL3_ENC_METHOD SSLv3_enc_data;
 
-/* From draft-ietf-tls-tls13-14, used in determining ticket validity. */
-#define SSL_TICKET_ALLOW_EARLY_DATA 1
-#define SSL_TICKET_ALLOW_DHE_RESUMPTION 2
-#define SSL_TICKET_ALLOW_PSK_RESUMPTION 4
+/* From draft-ietf-tls-tls13-15, used in determining PSK modes. */
+#define SSL_PSK_KE        0x0
+#define SSL_PSK_DHE_KE    0x1
+
+#define SSL_PSK_AUTH      0x0
+#define SSL_PSK_SIGN_AUTH 0x1
 
 CERT *ssl_cert_new(void);
 CERT *ssl_cert_dup(CERT *cert);
@@ -1454,6 +1475,13 @@ int tls1_get_shared_group(SSL *ssl, uint16_t *out_group_id);
  * |*out_group_ids_len|. Otherwise, it returns zero. */
 int tls1_set_curves(uint16_t **out_group_ids, size_t *out_group_ids_len,
                     const int *curves, size_t ncurves);
+
+/* tls1_set_curves_list converts the string of curves pointed to by |curves|
+ * into a newly allocated array of TLS group IDs. On success, the function
+ * returns one and writes the array to |*out_group_ids| and its size to
+ * |*out_group_ids_len|. Otherwise, it returns zero. */
+int tls1_set_curves_list(uint16_t **out_group_ids, size_t *out_group_ids_len,
+                         const char *curves);
 
 /* tls1_check_ec_cert returns one if |x| is an ECC certificate with curve and
  * point format compatible with the client's preferences. Otherwise it returns

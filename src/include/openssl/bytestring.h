@@ -190,6 +190,14 @@ OPENSSL_EXPORT int CBS_get_asn1_element(CBS *cbs, CBS *out, unsigned tag_value);
  * element is malformed. */
 OPENSSL_EXPORT int CBS_peek_asn1_tag(const CBS *cbs, unsigned tag_value);
 
+/* CBS_get_any_asn1 sets |*out| to contain the next ASN.1 element from |*cbs|
+ * (not including tag and length bytes), sets |*out_tag| to the tag number, and
+ * advances |*cbs|. It returns one on success and zero on error. Either of |out|
+ * and |out_tag| may be NULL to ignore the value.
+ *
+ * Tag numbers greater than 30 are not supported (i.e. short form only). */
+OPENSSL_EXPORT int CBS_get_any_asn1(CBS *cbs, CBS *out, unsigned *out_tag);
+
 /* CBS_get_any_asn1_element sets |*out| to contain the next ASN.1 element from
  * |*cbs| (including header bytes) and advances |*cbs|. It sets |*out_tag| to
  * the tag number and |*out_header_len| to the length of the ASN.1 header. Each
@@ -327,8 +335,10 @@ OPENSSL_EXPORT void CBB_cleanup(CBB *cbb);
 OPENSSL_EXPORT int CBB_finish(CBB *cbb, uint8_t **out_data, size_t *out_len);
 
 /* CBB_flush causes any pending length prefixes to be written out and any child
- * |CBB| objects of |cbb| to be invalidated. It returns one on success or zero
- * on error. */
+ * |CBB| objects of |cbb| to be invalidated. This allows |cbb| to continue to be
+ * used after the children go out of scope, e.g. when local |CBB| objects are
+ * added as children to a |CBB| that persists after a function returns. This
+ * function returns one on success or zero on error. */
 OPENSSL_EXPORT int CBB_flush(CBB *cbb);
 
 /* CBB_data returns a pointer to the bytes written to |cbb|. It does not flush
