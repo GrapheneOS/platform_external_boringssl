@@ -951,6 +951,10 @@ static int set_min_version(const SSL_PROTOCOL_METHOD *method, uint16_t *out,
     return 1;
   }
 
+  if (version == TLS1_3_VERSION) {
+    version = TLS1_3_DRAFT_VERSION;
+  }
+
   return method->version_from_wire(out, version);
 }
 
@@ -963,6 +967,10 @@ static int set_max_version(const SSL_PROTOCOL_METHOD *method, uint16_t *out,
       *out = TLS1_2_VERSION;
     }
     return 1;
+  }
+
+  if (version == TLS1_3_VERSION) {
+    version = TLS1_3_DRAFT_VERSION;
   }
 
   return method->version_from_wire(out, version);
@@ -1491,13 +1499,24 @@ int SSL_set1_curves(SSL *ssl, const int *curves, size_t curves_len) {
                          curves_len);
 }
 
+int SSL_CTX_set1_curves_list(SSL_CTX *ctx, const char *curves) {
+  return tls1_set_curves_list(&ctx->supported_group_list,
+                              &ctx->supported_group_list_len, curves);
+}
+
+int SSL_set1_curves_list(SSL *ssl, const char *curves) {
+  return tls1_set_curves_list(&ssl->supported_group_list,
+                              &ssl->supported_group_list_len, curves);
+}
+
 uint16_t SSL_get_curve_id(const SSL *ssl) {
   /* TODO(davidben): This checks the wrong session if there is a renegotiation in
    * progress. */
   SSL_SESSION *session = SSL_get_session(ssl);
   if (session == NULL ||
       session->cipher == NULL ||
-      !SSL_CIPHER_is_ECDHE(session->cipher)) {
+      (ssl3_protocol_version(ssl) < TLS1_3_VERSION &&
+       !SSL_CIPHER_is_ECDHE(session->cipher))) {
     return 0;
   }
 
@@ -2012,6 +2031,12 @@ size_t SSL_get0_certificate_types(SSL *ssl, const uint8_t **out_types) {
 
 void ssl_get_compatible_server_ciphers(SSL *ssl, uint32_t *out_mask_k,
                                        uint32_t *out_mask_a) {
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+    *out_mask_k = SSL_kGENERIC;
+    *out_mask_a = SSL_aGENERIC;
+    return;
+  }
+
   uint32_t mask_k = 0;
   uint32_t mask_a = 0;
 
@@ -2109,7 +2134,8 @@ void ssl_update_cache(SSL *ssl, int mode) {
 
 static const char *ssl_get_version(int version) {
   switch (version) {
-    case TLS1_3_VERSION:
+    /* Report TLS 1.3 draft version as TLS 1.3 in the public API. */
+    case TLS1_3_DRAFT_VERSION:
       return "TLSv1.3";
 
     case TLS1_2_VERSION:
@@ -2271,7 +2297,14 @@ int SSL_get_shutdown(const SSL *ssl) {
   return ret;
 }
 
-int SSL_version(const SSL *ssl) { return ssl->version; }
+int SSL_version(const SSL *ssl) {
+  /* Report TLS 1.3 draft version as TLS 1.3 in the public API. */
+  if (ssl->version == TLS1_3_DRAFT_VERSION) {
+    return TLS1_3_VERSION;
+  }
+
+  return ssl->version;
+}
 
 SSL_CTX *SSL_get_SSL_CTX(const SSL *ssl) { return ssl->ctx; }
 
@@ -2884,6 +2917,10 @@ void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx, int enabled) {
   ctx->retain_only_sha256_of_client_certs = !!enabled;
 }
 
+void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
+  ctx->grease_enabled = !!enabled;
+}
+
 int SSL_clear(SSL *ssl) {
   if (ssl->method == NULL) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_NO_METHOD_SPECIFIED);
@@ -2958,7 +2995,7 @@ void ssl_do_msg_callback(SSL *ssl, int is_write, int content_type,
       version = 0;
       break;
     default:
-      version = ssl->version;
+      version = SSL_version(ssl);
   }
 
   ssl->msg_callback(is_write, version, content_type, buf, len, ssl,
@@ -3013,7 +3050,10 @@ void ssl_get_current_time(const SSL *ssl, struct timeval *out_clock) {
     return;
   }
 
-#if defined(OPENSSL_WINDOWS)
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
+  out_clock->tv_sec = 1234;
+  out_clock->tv_usec = 1234;
+#elif defined(OPENSSL_WINDOWS)
   struct _timeb time;
   _ftime(&time);
   out_clock->tv_sec = time.time;
