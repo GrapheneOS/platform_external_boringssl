@@ -562,7 +562,7 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_VERSION 0xfeff
 #define DTLS1_2_VERSION 0xfefd
 
-#define TLS1_3_DRAFT_VERSION 14
+#define TLS1_3_DRAFT_VERSION 0x7f0f
 
 /* SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
  * |version|. If |version| is zero, the default minimum version is used. It
@@ -1197,7 +1197,8 @@ OPENSSL_EXPORT uint16_t SSL_CIPHER_get_max_version(const SSL_CIPHER *cipher);
 OPENSSL_EXPORT const char *SSL_CIPHER_get_name(const SSL_CIPHER *cipher);
 
 /* SSL_CIPHER_get_kx_name returns a string that describes the key-exchange
- * method used by |cipher|. For example, "ECDHE_ECDSA". */
+ * method used by |cipher|. For example, "ECDHE_ECDSA". TLS 1.3 AEAD-only
+ * ciphers return the string "GENERIC". */
 OPENSSL_EXPORT const char *SSL_CIPHER_get_kx_name(const SSL_CIPHER *cipher);
 
 /* SSL_CIPHER_get_rfc_name returns a newly-allocated string with the standard
@@ -1933,6 +1934,18 @@ OPENSSL_EXPORT int SSL_CTX_set1_curves(SSL_CTX *ctx, const int *curves,
  * values defined below. */
 OPENSSL_EXPORT int SSL_set1_curves(SSL *ssl, const int *curves,
                                    size_t curves_len);
+
+/* SSL_CTX_set1_curves_list sets the preferred curves for |ctx| to be the
+ * colon-separated list |curves|. Each element of |curves| should be a curve
+ * name (e.g. P-256, X25519, ...). It returns one on success and zero on
+ * failure. */
+OPENSSL_EXPORT int SSL_CTX_set1_curves_list(SSL_CTX *ctx, const char *curves);
+
+/* SSL_set1_curves_list sets the preferred curves for |ssl| to be the
+ * colon-separated list |curves|. Each element of |curves| should be a curve
+ * name (e.g. P-256, X25519, ...). It returns one on success and zero on
+ * failure. */
+OPENSSL_EXPORT int SSL_set1_curves_list(SSL *ssl, const char *curves);
 
 /* SSL_CURVE_* define TLS curve IDs. */
 #define SSL_CURVE_SECP256R1 23
@@ -3101,6 +3114,10 @@ OPENSSL_EXPORT const SSL_CIPHER *SSL_get_pending_cipher(const SSL *ssl);
 OPENSSL_EXPORT void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx,
                                                                    int enable);
 
+/* SSL_CTX_set_grease_enabled configures whether client sockets on |ctx| should
+ * enable GREASE. See draft-davidben-tls-grease-01. */
+OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
+
 
 /* Deprecated functions. */
 
@@ -3136,6 +3153,9 @@ OPENSSL_EXPORT int SSL_COMP_add_compression_method(int id, COMP_METHOD *cm);
 
 /* SSL_COMP_get_name returns NULL. */
 OPENSSL_EXPORT const char *SSL_COMP_get_name(const COMP_METHOD *comp);
+
+/* SSL_COMP_free_compression_methods does nothing. */
+OPENSSL_EXPORT void SSL_COMP_free_compression_methods(void);
 
 /* SSLv23_method calls |TLS_method|. */
 OPENSSL_EXPORT const SSL_METHOD *SSLv23_method(void);
@@ -3696,7 +3716,6 @@ struct ssl_session_st {
 
   uint32_t tlsext_tick_lifetime_hint; /* Session lifetime hint in seconds */
 
-  uint32_t ticket_flags;
   uint32_t ticket_age_add;
 
   /* extended_master_secret is true if the master secret in this session was
@@ -3992,10 +4011,14 @@ struct ssl_ctx_st {
   /* If true, a client will request certificate timestamps. */
   unsigned signed_cert_timestamps_enabled:1;
 
-  /* tlsext_channel_id_enabled is copied from the |SSL_CTX|. For a server,
-   * means that we'll accept Channel IDs from clients. For a client, means that
-   * we'll advertise support. */
+  /* tlsext_channel_id_enabled is one if Channel ID is enabled and zero
+   * otherwise. For a server, means that we'll accept Channel IDs from clients.
+   * For a client, means that we'll advertise support. */
   unsigned tlsext_channel_id_enabled:1;
+
+  /* grease_enabled is one if draft-davidben-tls-grease-01 is enabled and zero
+   * otherwise. */
+  unsigned grease_enabled:1;
 
   /* extra_certs is a dummy value included for compatibility.
    * TODO(agl): remove once node.js no longer references this. */
@@ -4506,6 +4529,7 @@ typedef struct ssl3_state_st {
 #define SSL_CTRL_SESS_NUMBER doesnt_exist
 #define SSL_CTRL_SET_CHANNEL_ID doesnt_exist
 #define SSL_CTRL_SET_CURVES doesnt_exist
+#define SSL_CTRL_SET_CURVES_LIST doesnt_exist
 #define SSL_CTRL_SET_MAX_CERT_LIST doesnt_exist
 #define SSL_CTRL_SET_MAX_SEND_FRAGMENT doesnt_exist
 #define SSL_CTRL_SET_MSG_CALLBACK doesnt_exist
@@ -4784,6 +4808,7 @@ BORINGSSL_MAKE_DELETER(SSL_SESSION, SSL_SESSION_free)
 #define SSL_R_RENEGOTIATION_EMS_MISMATCH 263
 #define SSL_R_DUPLICATE_KEY_SHARE 264
 #define SSL_R_NO_GROUPS_SPECIFIED 265
+#define SSL_R_NO_SHARED_GROUP 266
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020

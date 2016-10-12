@@ -83,8 +83,9 @@ extern "C" {
 #elif defined(__arm) || defined(__arm__) || defined(_M_ARM)
 #define OPENSSL_32_BIT
 #define OPENSSL_ARM
-#elif defined(__PPC64__) || defined(__powerpc64__)
+#elif (defined(__PPC64__) || defined(__powerpc64__)) && defined(_LITTLE_ENDIAN)
 #define OPENSSL_64_BIT
+#define OPENSSL_PPC64LE
 #elif defined(__mips__) && !defined(__LP64__)
 #define OPENSSL_32_BIT
 #define OPENSSL_MIPS
@@ -116,7 +117,7 @@ extern "C" {
 #define OPENSSL_IS_BORINGSSL
 #define BORINGSSL_201512
 #define BORINGSSL_201603
-#define OPENSSL_VERSION_NUMBER 0x10002000
+#define OPENSSL_VERSION_NUMBER 0x100020af
 #define SSLEAY_VERSION_NUMBER OPENSSL_VERSION_NUMBER
 
 /* BORINGSSL_API_VERSION is a positive integer that increments as BoringSSL
@@ -359,6 +360,9 @@ class StackAllocated {
  public:
   StackAllocated() { init(&ctx_); }
   ~StackAllocated() { cleanup(&ctx_); }
+
+  StackAllocated(const StackAllocated<T, CleanupRet, init, cleanup> &) = delete;
+  T& operator=(const StackAllocated<T, CleanupRet, init, cleanup> &) = delete;
 
   T *get() { return &ctx_; }
   const T *get() const { return &ctx_; }

@@ -15,9 +15,9 @@
 # This file is created by generate_build_files.py. Do not edit manually.
 
 crypto_sources := \
-  android_compat_keywrap.c\
   err_data.c\
   src/crypto/aes/aes.c\
+  src/crypto/aes/key_wrap.c\
   src/crypto/aes/mode_wrappers.c\
   src/crypto/asn1/a_bitstr.c\
   src/crypto/asn1/a_bool.c\
@@ -107,6 +107,7 @@ crypto_sources := \
   src/crypto/cpu-arm-linux.c\
   src/crypto/cpu-arm.c\
   src/crypto/cpu-intel.c\
+  src/crypto/cpu-ppc64le.c\
   src/crypto/crypto.c\
   src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\
@@ -310,6 +311,10 @@ linux_arm_sources := \
   linux-arm/crypto/sha/sha512-armv4.S\
   src/crypto/curve25519/asm/x25519-asm-arm.S\
   src/crypto/poly1305/poly1305_arm_asm.S\
+
+linux_ppc64le_sources := \
+  linux-ppc64le/crypto/aes/aesp8-ppc.S\
+  linux-ppc64le/crypto/modes/ghashp8-ppc.S\
 
 linux_x86_sources := \
   linux-x86/crypto/aes/aes-586.S\
