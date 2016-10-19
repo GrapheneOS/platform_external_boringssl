@@ -254,10 +254,11 @@ static enum ssl_hs_wait_t do_send_hello_retry_request(SSL *ssl,
   if (!ssl->method->init_message(ssl, &cbb, &body,
                                  SSL3_MT_HELLO_RETRY_REQUEST) ||
       !CBB_add_u16(&body, ssl->version) ||
-      !CBB_add_u16(&body, ssl_cipher_get_value(ssl->s3->tmp.new_cipher)) ||
       !tls1_get_shared_group(ssl, &group_id) ||
-      !CBB_add_u16(&body, group_id) ||
       !CBB_add_u16_length_prefixed(&body, &extensions) ||
+      !CBB_add_u16(&extensions, TLSEXT_TYPE_key_share) ||
+      !CBB_add_u16(&extensions, 2 /* length */) ||
+      !CBB_add_u16(&extensions, group_id) ||
       !ssl->method->finish_message(ssl, &cbb)) {
     CBB_cleanup(&cbb);
     return ssl_hs_error;
@@ -360,13 +361,13 @@ static enum ssl_hs_wait_t do_send_encrypted_extensions(SSL *ssl,
 static enum ssl_hs_wait_t do_send_certificate_request(SSL *ssl,
                                                       SSL_HANDSHAKE *hs) {
   /* Determine whether to request a client certificate. */
-  ssl->s3->tmp.cert_request = !!(ssl->verify_mode & SSL_VERIFY_PEER);
+  ssl->s3->hs->cert_request = !!(ssl->verify_mode & SSL_VERIFY_PEER);
   /* CertificateRequest may only be sent in non-resumption handshakes. */
   if (ssl->s3->session_reused) {
-    ssl->s3->tmp.cert_request = 0;
+    ssl->s3->hs->cert_request = 0;
   }
 
-  if (!ssl->s3->tmp.cert_request) {
+  if (!ssl->s3->hs->cert_request) {
     /* Skip this state. */
     hs->state = state_send_server_certificate;
     return ssl_hs_ok;
@@ -380,7 +381,7 @@ static enum ssl_hs_wait_t do_send_certificate_request(SSL *ssl,
   }
 
   const uint16_t *sigalgs;
-  size_t num_sigalgs = tls12_get_psigalgs(ssl, &sigalgs);
+  size_t num_sigalgs = tls12_get_verify_sigalgs(ssl, &sigalgs);
   if (!CBB_add_u16_length_prefixed(&body, &sigalgs_cbb)) {
     goto err;
   }
@@ -459,7 +460,7 @@ static enum ssl_hs_wait_t do_flush(SSL *ssl, SSL_HANDSHAKE *hs) {
   if (!tls13_advance_key_schedule(ssl, kZeroes, hs->hash_len) ||
       !tls13_derive_traffic_secret_0(ssl) ||
       !tls13_set_traffic_key(ssl, type_data, evp_aead_seal,
-                             hs->traffic_secret_0, hs->hash_len)) {
+                             hs->server_traffic_secret_0, hs->hash_len)) {
     return ssl_hs_error;
   }
 
@@ -469,7 +470,7 @@ static enum ssl_hs_wait_t do_flush(SSL *ssl, SSL_HANDSHAKE *hs) {
 
 static enum ssl_hs_wait_t do_process_client_certificate(SSL *ssl,
                                                         SSL_HANDSHAKE *hs) {
-  if (!ssl->s3->tmp.cert_request) {
+  if (!ssl->s3->hs->cert_request) {
     /* OpenSSL returns X509_V_OK when no certificates are requested. This is
      * classed by them as a bug, but it's assumed by at least NGINX. */
     ssl->s3->new_session->verify_result = X509_V_OK;
@@ -523,7 +524,7 @@ static enum ssl_hs_wait_t do_process_client_finished(SSL *ssl,
       !ssl->method->hash_current_message(ssl) ||
       /* evp_aead_seal keys have already been switched. */
       !tls13_set_traffic_key(ssl, type_data, evp_aead_open,
-                             hs->traffic_secret_0, hs->hash_len) ||
+                             hs->client_traffic_secret_0, hs->hash_len) ||
       !tls13_finalize_keys(ssl)) {
     return ssl_hs_error;
   }
@@ -541,7 +542,7 @@ static enum ssl_hs_wait_t do_send_new_session_ticket(SSL *ssl,
   /* TODO(svaldez): Add support for sending 0RTT through TicketEarlyDataInfo
    * extension. */
 
-  CBB cbb, body, ke_modes, auth_modes, ticket;
+  CBB cbb, body, ke_modes, auth_modes, ticket, extensions;
   if (!ssl->method->init_message(ssl, &cbb, &body,
                                  SSL3_MT_NEW_SESSION_TICKET) ||
       !CBB_add_u32(&body, session->tlsext_tick_lifetime_hint) ||
@@ -551,16 +552,31 @@ static enum ssl_hs_wait_t do_send_new_session_ticket(SSL *ssl,
       !CBB_add_u8(&auth_modes, SSL_PSK_AUTH) ||
       !CBB_add_u16_length_prefixed(&body, &ticket) ||
       !ssl_encrypt_ticket(ssl, &ticket, session) ||
-      !CBB_add_u16(&body, 0 /* no ticket extensions */) ||
-      !ssl->method->finish_message(ssl, &cbb)) {
-    CBB_cleanup(&cbb);
-    return ssl_hs_error;
+      !CBB_add_u16_length_prefixed(&body, &extensions)) {
+    goto err;
+  }
+
+  /* Add a fake extension. See draft-davidben-tls-grease-01. */
+  if (ssl->ctx->grease_enabled) {
+    if (!CBB_add_u16(&extensions,
+                     ssl_get_grease_value(ssl, ssl_grease_ticket_extension)) ||
+        !CBB_add_u16(&extensions, 0 /* empty */)) {
+      goto err;
+    }
+  }
+
+  if (!ssl->method->finish_message(ssl, &cbb)) {
+    goto err;
   }
 
   hs->session_tickets_sent++;
 
   hs->state = state_flush_new_session_ticket;
   return ssl_hs_write_message;
+
+err:
+  CBB_cleanup(&cbb);
+  return ssl_hs_error;
 }
 
 /* TLS 1.3 recommends single-use tickets, so issue multiple tickets in case the
