@@ -389,34 +389,41 @@ NextCipherSuite:
 	helloRetryRequest, haveHelloRetryRequest := msg.(*helloRetryRequestMsg)
 	var secondHelloBytes []byte
 	if haveHelloRetryRequest {
-		var hrrCurveFound bool
+		if len(helloRetryRequest.cookie) > 0 {
+			hello.tls13Cookie = helloRetryRequest.cookie
+		}
+
 		if c.config.Bugs.MisinterpretHelloRetryRequestCurve != 0 {
+			helloRetryRequest.hasSelectedGroup = true
 			helloRetryRequest.selectedGroup = c.config.Bugs.MisinterpretHelloRetryRequestCurve
 		}
-		group := helloRetryRequest.selectedGroup
-		for _, curveID := range hello.supportedCurves {
-			if group == curveID {
-				hrrCurveFound = true
-				break
+		if helloRetryRequest.hasSelectedGroup {
+			var hrrCurveFound bool
+			group := helloRetryRequest.selectedGroup
+			for _, curveID := range hello.supportedCurves {
+				if group == curveID {
+					hrrCurveFound = true
+					break
+				}
 			}
+			if !hrrCurveFound || keyShares[group] != nil {
+				c.sendAlert(alertHandshakeFailure)
+				return errors.New("tls: received invalid HelloRetryRequest")
+			}
+			curve, ok := curveForCurveID(group)
+			if !ok {
+				return errors.New("tls: Unable to get curve requested in HelloRetryRequest")
+			}
+			publicKey, err := curve.offer(c.config.rand())
+			if err != nil {
+				return err
+			}
+			keyShares[group] = curve
+			hello.keyShares = append(hello.keyShares, keyShareEntry{
+				group:       group,
+				keyExchange: publicKey,
+			})
 		}
-		if !hrrCurveFound || keyShares[group] != nil {
-			c.sendAlert(alertHandshakeFailure)
-			return errors.New("tls: received invalid HelloRetryRequest")
-		}
-		curve, ok := curveForCurveID(group)
-		if !ok {
-			return errors.New("tls: Unable to get curve requested in HelloRetryRequest")
-		}
-		publicKey, err := curve.offer(c.config.rand())
-		if err != nil {
-			return err
-		}
-		keyShares[group] = curve
-		hello.keyShares = append(hello.keyShares, keyShareEntry{
-			group:       group,
-			keyExchange: publicKey,
-		})
 
 		if c.config.Bugs.SecondClientHelloMissingKeyShare {
 			hello.hasKeyShares = false
@@ -448,7 +455,7 @@ NextCipherSuite:
 	}
 
 	// Check for downgrade signals in the server random, per
-	// draft-ietf-tls-tls13-14, section 6.3.1.2.
+	// draft-ietf-tls-tls13-16, section 4.1.3.
 	if c.vers <= VersionTLS12 && c.config.maxVersion(c.isDTLS) >= VersionTLS13 {
 		if bytes.Equal(serverHello.random[len(serverHello.random)-8:], downgradeTLS13) {
 			c.sendAlert(alertProtocolVersion)
@@ -468,7 +475,7 @@ NextCipherSuite:
 		return fmt.Errorf("tls: server selected an unsupported cipher suite")
 	}
 
-	if haveHelloRetryRequest && (helloRetryRequest.cipherSuite != serverHello.cipherSuite || helloRetryRequest.selectedGroup != serverHello.keyShare.group) {
+	if haveHelloRetryRequest && helloRetryRequest.hasSelectedGroup && helloRetryRequest.selectedGroup != serverHello.keyShare.group {
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: ServerHello parameters did not match HelloRetryRequest")
 	}
@@ -644,9 +651,10 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	handshakeSecret := hs.finishedHash.extractKey(earlySecret, ecdheSecret)
 
 	// Switch to handshake traffic keys.
-	handshakeTrafficSecret := hs.finishedHash.deriveSecret(handshakeSecret, handshakeTrafficLabel)
-	c.out.useTrafficSecret(c.vers, hs.suite, handshakeTrafficSecret, handshakePhase, clientWrite)
-	c.in.useTrafficSecret(c.vers, hs.suite, handshakeTrafficSecret, handshakePhase, serverWrite)
+	clientHandshakeTrafficSecret := hs.finishedHash.deriveSecret(handshakeSecret, clientHandshakeTrafficLabel)
+	c.out.useTrafficSecret(c.vers, hs.suite, clientHandshakeTrafficSecret, handshakePhase, clientWrite)
+	serverHandshakeTrafficSecret := hs.finishedHash.deriveSecret(handshakeSecret, serverHandshakeTrafficLabel)
+	c.in.useTrafficSecret(c.vers, hs.suite, serverHandshakeTrafficSecret, handshakePhase, serverWrite)
 
 	msg, err := c.readHandshake()
 	if err != nil {
@@ -756,7 +764,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return unexpectedMessageError(serverFinished, msg)
 	}
 
-	verify := hs.finishedHash.serverSum(handshakeTrafficSecret)
+	verify := hs.finishedHash.serverSum(serverHandshakeTrafficSecret)
 	if len(verify) != len(serverFinished.verifyData) ||
 		subtle.ConstantTimeCompare(verify, serverFinished.verifyData) != 1 {
 		c.sendAlert(alertHandshakeFailure)
@@ -768,7 +776,8 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	// The various secrets do not incorporate the client's final leg, so
 	// derive them now before updating the handshake context.
 	masterSecret := hs.finishedHash.extractKey(handshakeSecret, zeroSecret)
-	trafficSecret := hs.finishedHash.deriveSecret(masterSecret, applicationTrafficLabel)
+	clientTrafficSecret := hs.finishedHash.deriveSecret(masterSecret, clientApplicationTrafficLabel)
+	serverTrafficSecret := hs.finishedHash.deriveSecret(masterSecret, serverApplicationTrafficLabel)
 
 	if certReq != nil && !c.config.Bugs.SkipClientCertificate {
 		certMsg := &certificateMsg{
@@ -813,7 +822,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 
 	// Send a client Finished message.
 	finished := new(finishedMsg)
-	finished.verifyData = hs.finishedHash.clientSum(handshakeTrafficSecret)
+	finished.verifyData = hs.finishedHash.clientSum(clientHandshakeTrafficSecret)
 	if c.config.Bugs.BadFinished {
 		finished.verifyData[0]++
 	}
@@ -830,8 +839,8 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	c.flushHandshake()
 
 	// Switch to application data keys.
-	c.out.useTrafficSecret(c.vers, hs.suite, trafficSecret, applicationPhase, clientWrite)
-	c.in.useTrafficSecret(c.vers, hs.suite, trafficSecret, applicationPhase, serverWrite)
+	c.out.useTrafficSecret(c.vers, hs.suite, clientTrafficSecret, applicationPhase, clientWrite)
+	c.in.useTrafficSecret(c.vers, hs.suite, serverTrafficSecret, applicationPhase, serverWrite)
 
 	c.exporterSecret = hs.finishedHash.deriveSecret(masterSecret, exporterLabel)
 	c.resumptionSecret = hs.finishedHash.deriveSecret(masterSecret, resumptionLabel)

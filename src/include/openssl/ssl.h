@@ -562,7 +562,7 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_VERSION 0xfeff
 #define DTLS1_2_VERSION 0xfefd
 
-#define TLS1_3_DRAFT_VERSION 0x7f0f
+#define TLS1_3_DRAFT_VERSION 0x7f10
 
 /* SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
  * |version|. If |version| is zero, the default minimum version is used. It
@@ -2708,6 +2708,7 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
 #define SSL_AD_PROTOCOL_VERSION TLS1_AD_PROTOCOL_VERSION
 #define SSL_AD_INSUFFICIENT_SECURITY TLS1_AD_INSUFFICIENT_SECURITY
 #define SSL_AD_INTERNAL_ERROR TLS1_AD_INTERNAL_ERROR
+#define SSL_AD_INAPPROPRIATE_FALLBACK SSL3_AD_INAPPROPRIATE_FALLBACK
 #define SSL_AD_USER_CANCELLED TLS1_AD_USER_CANCELLED
 #define SSL_AD_NO_RENEGOTIATION TLS1_AD_NO_RENEGOTIATION
 #define SSL_AD_MISSING_EXTENSION TLS1_AD_MISSING_EXTENSION
@@ -2718,7 +2719,7 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
   TLS1_AD_BAD_CERTIFICATE_STATUS_RESPONSE
 #define SSL_AD_BAD_CERTIFICATE_HASH_VALUE TLS1_AD_BAD_CERTIFICATE_HASH_VALUE
 #define SSL_AD_UNKNOWN_PSK_IDENTITY TLS1_AD_UNKNOWN_PSK_IDENTITY
-#define SSL_AD_INAPPROPRIATE_FALLBACK SSL3_AD_INAPPROPRIATE_FALLBACK
+#define SSL_AD_CERTIFICATE_REQUIRED TLS1_AD_CERTIFICATE_REQUIRED
 
 /* SSL_alert_type_string_long returns a string description of |value| as an
  * alert type (warning or fatal). */
@@ -2897,7 +2898,7 @@ OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
 /* SSL_MAX_CERT_LIST_DEFAULT is the default maximum length, in bytes, of a peer
  * certificate chain. */
-#define SSL_MAX_CERT_LIST_DEFAULT 1024 * 100
+#define SSL_MAX_CERT_LIST_DEFAULT (1024 * 100)
 
 /* SSL_CTX_get_max_cert_list returns the maximum length, in bytes, of a peer
  * certificate chain accepted by |ctx|. */
@@ -3114,8 +3115,8 @@ OPENSSL_EXPORT const SSL_CIPHER *SSL_get_pending_cipher(const SSL *ssl);
 OPENSSL_EXPORT void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx,
                                                                    int enable);
 
-/* SSL_CTX_set_grease_enabled configures whether client sockets on |ctx| should
- * enable GREASE. See draft-davidben-tls-grease-01. */
+/* SSL_CTX_set_grease_enabled configures whether sockets on |ctx| should enable
+ * GREASE. See draft-davidben-tls-grease-01. */
 OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
 
 
@@ -3342,14 +3343,14 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *s);
 /* SSL_get_server_tmp_key returns zero. */
 OPENSSL_EXPORT int *SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key);
 
-#define SSL_set_app_data(s, arg) (SSL_set_ex_data(s, 0, (char *)arg))
+#define SSL_set_app_data(s, arg) (SSL_set_ex_data(s, 0, (char *)(arg)))
 #define SSL_get_app_data(s) (SSL_get_ex_data(s, 0))
 #define SSL_SESSION_set_app_data(s, a) \
-  (SSL_SESSION_set_ex_data(s, 0, (char *)a))
+  (SSL_SESSION_set_ex_data(s, 0, (char *)(a)))
 #define SSL_SESSION_get_app_data(s) (SSL_SESSION_get_ex_data(s, 0))
 #define SSL_CTX_get_app_data(ctx) (SSL_CTX_get_ex_data(ctx, 0))
 #define SSL_CTX_set_app_data(ctx, arg) \
-  (SSL_CTX_set_ex_data(ctx, 0, (char *)arg))
+  (SSL_CTX_set_ex_data(ctx, 0, (char *)(arg)))
 
 #define OpenSSL_add_ssl_algorithms() SSL_library_init()
 #define SSLeay_add_ssl_algorithms() SSL_library_init()
@@ -3471,14 +3472,15 @@ OPENSSL_EXPORT int SSL_want(const SSL *ssl);
 
  /* SSL_get_finished writes up to |count| bytes of the Finished message sent by
   * |ssl| to |buf|. It returns the total untruncated length or zero if none has
-  * been sent yet.
+  * been sent yet. At SSL 3.0 or TLS 1.3 and later, it returns zero.
   *
   * Use |SSL_get_tls_unique| instead. */
 OPENSSL_EXPORT size_t SSL_get_finished(const SSL *ssl, void *buf, size_t count);
 
  /* SSL_get_peer_finished writes up to |count| bytes of the Finished message
   * received from |ssl|'s peer to |buf|. It returns the total untruncated length
-  * or zero if none has been received yet.
+  * or zero if none has been received yet. At SSL 3.0 or TLS 1.3 and later, it
+  * returns zero.
   *
   * Use |SSL_get_tls_unique| instead. */
 OPENSSL_EXPORT size_t SSL_get_peer_finished(const SSL *ssl, void *buf,
@@ -4200,283 +4202,6 @@ struct ssl_st {
   int tlsext_status_type;
 };
 
-typedef struct ssl3_record_st {
-  /* type is the record type. */
-  uint8_t type;
-  /* length is the number of unconsumed bytes in the record. */
-  uint16_t length;
-  /* data is a non-owning pointer to the first unconsumed byte of the record. */
-  uint8_t *data;
-} SSL3_RECORD;
-
-typedef struct ssl3_buffer_st {
-  /* buf is the memory allocated for this buffer. */
-  uint8_t *buf;
-  /* offset is the offset into |buf| which the buffer contents start at. */
-  uint16_t offset;
-  /* len is the length of the buffer contents from |buf| + |offset|. */
-  uint16_t len;
-  /* cap is how much memory beyond |buf| + |offset| is available. */
-  uint16_t cap;
-} SSL3_BUFFER;
-
-/* An ssl_shutdown_t describes the shutdown state of one end of the connection,
- * whether it is alive or has been shutdown via close_notify or fatal alert. */
-enum ssl_shutdown_t {
-  ssl_shutdown_none = 0,
-  ssl_shutdown_close_notify = 1,
-  ssl_shutdown_fatal_alert = 2,
-};
-
-typedef struct ssl3_state_st {
-  uint8_t read_sequence[8];
-  uint8_t write_sequence[8];
-
-  uint8_t server_random[SSL3_RANDOM_SIZE];
-  uint8_t client_random[SSL3_RANDOM_SIZE];
-
-  /* have_version is true if the connection's final version is known. Otherwise
-   * the version has not been negotiated yet. */
-  unsigned have_version:1;
-
-  /* v2_hello_done is true if the peer's V2ClientHello, if any, has been handled
-   * and future messages should use the record layer. */
-  unsigned v2_hello_done:1;
-
-  /* initial_handshake_complete is true if the initial handshake has
-   * completed. */
-  unsigned initial_handshake_complete:1;
-
-  /* read_buffer holds data from the transport to be processed. */
-  SSL3_BUFFER read_buffer;
-  /* write_buffer holds data to be written to the transport. */
-  SSL3_BUFFER write_buffer;
-
-  SSL3_RECORD rrec; /* each decoded record goes in here */
-
-  /* partial write - check the numbers match */
-  unsigned int wnum; /* number of bytes sent so far */
-  int wpend_tot;     /* number bytes written */
-  int wpend_type;
-  int wpend_ret; /* number of bytes submitted */
-  const uint8_t *wpend_buf;
-
-  /* handshake_buffer, if non-NULL, contains the handshake transcript. */
-  BUF_MEM *handshake_buffer;
-  /* handshake_hash, if initialized with an |EVP_MD|, maintains the handshake
-   * hash. For TLS 1.1 and below, it is the SHA-1 half. */
-  EVP_MD_CTX handshake_hash;
-  /* handshake_md5, if initialized with an |EVP_MD|, maintains the MD5 half of
-   * the handshake hash for TLS 1.1 and below. */
-  EVP_MD_CTX handshake_md5;
-
-  /* recv_shutdown is the shutdown state for the receive half of the
-   * connection. */
-  enum ssl_shutdown_t recv_shutdown;
-
-  /* recv_shutdown is the shutdown state for the send half of the connection. */
-  enum ssl_shutdown_t send_shutdown;
-
-  int alert_dispatch;
-  uint8_t send_alert[2];
-
-  int total_renegotiations;
-
-  /* empty_record_count is the number of consecutive empty records received. */
-  uint8_t empty_record_count;
-
-  /* warning_alert_count is the number of consecutive warning alerts
-   * received. */
-  uint8_t warning_alert_count;
-
-  /* key_update_count is the number of consecutive KeyUpdates received. */
-  uint8_t key_update_count;
-
-  /* aead_read_ctx is the current read cipher state. */
-  SSL_AEAD_CTX *aead_read_ctx;
-
-  /* aead_write_ctx is the current write cipher state. */
-  SSL_AEAD_CTX *aead_write_ctx;
-
-  /* enc_method is the method table corresponding to the current protocol
-   * version. */
-  const SSL3_ENC_METHOD *enc_method;
-
-  /* pending_message is the current outgoing handshake message. */
-  uint8_t *pending_message;
-  uint32_t pending_message_len;
-
-  /* hs is the handshake state for the current handshake or NULL if there isn't
-   * one. */
-  SSL_HANDSHAKE *hs;
-
-  uint8_t write_traffic_secret[EVP_MAX_MD_SIZE];
-  uint8_t write_traffic_secret_len;
-  uint8_t read_traffic_secret[EVP_MAX_MD_SIZE];
-  uint8_t read_traffic_secret_len;
-  uint8_t exporter_secret[EVP_MAX_MD_SIZE];
-  uint8_t exporter_secret_len;
-
-  /* State pertaining to the pending handshake.
-   *
-   * TODO(davidben): Move everything not needed after the handshake completes to
-   * |hs| and remove this. */
-  struct {
-    uint8_t finish_md[EVP_MAX_MD_SIZE];
-    uint8_t finish_md_len;
-    uint8_t peer_finish_md[EVP_MAX_MD_SIZE];
-    uint8_t peer_finish_md_len;
-
-    int message_type;
-
-    /* used to hold the new cipher we are going to use */
-    const SSL_CIPHER *new_cipher;
-
-    /* used when SSL_ST_FLUSH_DATA is entered */
-    int next_state;
-
-    int reuse_message;
-
-    union {
-      /* sent is a bitset where the bits correspond to elements of kExtensions
-       * in t1_lib.c. Each bit is set if that extension was sent in a
-       * ClientHello. It's not used by servers. */
-      uint32_t sent;
-      /* received is a bitset, like |sent|, but is used by servers to record
-       * which extensions were received from a client. */
-      uint32_t received;
-    } extensions;
-
-    union {
-      /* sent is a bitset where the bits correspond to elements of
-       * |client_custom_extensions| in the |SSL_CTX|. Each bit is set if that
-       * extension was sent in a ClientHello. It's not used by servers. */
-      uint16_t sent;
-      /* received is a bitset, like |sent|, but is used by servers to record
-       * which custom extensions were received from a client. The bits here
-       * correspond to |server_custom_extensions|. */
-      uint16_t received;
-    } custom_extensions;
-
-    /* should_ack_sni is used by a server and indicates that the SNI extension
-     * should be echoed in the ServerHello. */
-    unsigned should_ack_sni:1;
-
-    /* Client-only: ca_names contains the list of CAs received in a
-     * CertificateRequest message. */
-    STACK_OF(X509_NAME) *ca_names;
-
-    /* Client-only: certificate_types contains the set of certificate types
-     * received in a CertificateRequest message. */
-    uint8_t *certificate_types;
-    size_t num_certificate_types;
-
-    uint8_t *key_block;
-    uint8_t key_block_length;
-
-    uint8_t new_mac_secret_len;
-    uint8_t new_key_len;
-    uint8_t new_fixed_iv_len;
-
-    /* cert_request is true if a client certificate was requested and false
-     * otherwise. */
-    unsigned cert_request:1;
-
-    /* certificate_status_expected is true if OCSP stapling was negotiated and
-     * the server is expected to send a CertificateStatus message. (This is
-     * used on both the client and server sides.) */
-    unsigned certificate_status_expected:1;
-
-    /* ocsp_stapling_requested is true if a client requested OCSP stapling. */
-    unsigned ocsp_stapling_requested:1;
-
-    /* Server-only: peer_supported_group_list contains the supported group IDs
-     * advertised by the peer. This is only set on the server's end. The server
-     * does not advertise this extension to the client. */
-    uint16_t *peer_supported_group_list;
-    size_t peer_supported_group_list_len;
-
-    /* extended_master_secret indicates whether the extended master secret
-     * computation is used in this handshake. Note that this is different from
-     * whether it was used for the current session. If this is a resumption
-     * handshake then EMS might be negotiated in the client and server hello
-     * messages, but it doesn't matter if the session that's being resumed
-     * didn't use it to create the master secret initially. */
-    char extended_master_secret;
-
-    /* Client-only: in_false_start is one if there is a pending handshake in
-     * False Start. The client may write data at this point. */
-    char in_false_start;
-
-    /* peer_signature_algorithm is the signature algorithm used to authenticate
-     * the peer, or zero if not applicable. */
-    uint16_t peer_signature_algorithm;
-
-    /* ecdh_ctx is the current ECDH instance. */
-    SSL_ECDH_CTX ecdh_ctx;
-
-    /* peer_key is the peer's ECDH key. */
-    uint8_t *peer_key;
-    uint16_t peer_key_len;
-
-    /* server_params stores the ServerKeyExchange parameters to be signed while
-     * the signature is being computed. */
-    uint8_t *server_params;
-    uint32_t server_params_len;
-  } tmp;
-
-  /* new_session is the new mutable session being established by the current
-   * handshake. It should not be cached. */
-  SSL_SESSION *new_session;
-
-  /* established_session is the session established by the connection. This
-   * session is only filled upon the completion of the handshake and is
-   * immutable. */
-  SSL_SESSION *established_session;
-
-  /* session_reused indicates whether a session was resumed. */
-  unsigned session_reused:1;
-
-  /* Connection binding to prevent renegotiation attacks */
-  uint8_t previous_client_finished[EVP_MAX_MD_SIZE];
-  uint8_t previous_client_finished_len;
-  uint8_t previous_server_finished[EVP_MAX_MD_SIZE];
-  uint8_t previous_server_finished_len;
-  int send_connection_binding;
-
-  /* Set if we saw the Next Protocol Negotiation extension from our peer. */
-  int next_proto_neg_seen;
-
-  /* Next protocol negotiation. For the client, this is the protocol that we
-   * sent in NextProtocol and is set when handling ServerHello extensions.
-   *
-   * For a server, this is the client's selected_protocol from NextProtocol and
-   * is set when handling the NextProtocol message, before the Finished
-   * message. */
-  uint8_t *next_proto_negotiated;
-  size_t next_proto_negotiated_len;
-
-  /* ALPN information
-   * (we are in the process of transitioning from NPN to ALPN.) */
-
-  /* In a server these point to the selected ALPN protocol after the
-   * ClientHello has been processed. In a client these contain the protocol
-   * that the server selected once the ServerHello has been processed. */
-  uint8_t *alpn_selected;
-  size_t alpn_selected_len;
-
-  /* In a client, this means that the server supported Channel ID and that a
-   * Channel ID was sent. In a server it means that we echoed support for
-   * Channel IDs and that tlsext_channel_id will be valid after the
-   * handshake. */
-  char tlsext_channel_id_valid;
-  /* For a server:
-   *     If |tlsext_channel_id_valid| is true, then this contains the
-   *     verified Channel ID from the client: a P256 point, (x,y), where
-   *     each are big-endian values. */
-  uint8_t tlsext_channel_id[64];
-} SSL3_STATE;
-
 
 /* Nodejs compatibility section (hidden).
  *
@@ -4839,5 +4564,7 @@ BORINGSSL_MAKE_DELETER(SSL_SESSION, SSL_SESSION_free)
 #define SSL_R_TLSV1_UNRECOGNIZED_NAME 1112
 #define SSL_R_TLSV1_BAD_CERTIFICATE_STATUS_RESPONSE 1113
 #define SSL_R_TLSV1_BAD_CERTIFICATE_HASH_VALUE 1114
+#define SSL_R_TLSV1_UNKNOWN_PSK_IDENTITY 1115
+#define SSL_R_TLSV1_CERTIFICATE_REQUIRED 1116
 
 #endif /* OPENSSL_HEADER_SSL_H */
