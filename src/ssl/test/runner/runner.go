@@ -359,6 +359,8 @@ type testCase struct {
 	// sendKeyUpdates is the number of consecutive key updates to send
 	// before and after the test message.
 	sendKeyUpdates int
+	// keyUpdateRequest is the KeyUpdateRequest value to send in KeyUpdate messages.
+	keyUpdateRequest byte
 	// expectMessageDropped, if true, means the test message is expected to
 	// be dropped by the client rather than echoed back.
 	expectMessageDropped bool
@@ -616,7 +618,7 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, nu
 	}
 
 	for i := 0; i < test.sendKeyUpdates; i++ {
-		if err := tlsConn.SendKeyUpdate(); err != nil {
+		if err := tlsConn.SendKeyUpdate(test.keyUpdateRequest); err != nil {
 			return err
 		}
 	}
@@ -678,7 +680,7 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, nu
 		tlsConn.Write(testMessage)
 
 		for i := 0; i < test.sendKeyUpdates; i++ {
-			tlsConn.SendKeyUpdate()
+			tlsConn.SendKeyUpdate(test.keyUpdateRequest)
 		}
 
 		for i := 0; i < test.sendEmptyRecords; i++ {
@@ -1981,13 +1983,14 @@ func addBasicTests() {
 			expectedError:     ":TOO_MANY_WARNING_ALERTS:",
 		},
 		{
-			name: "SendKeyUpdates",
+			name: "TooManyKeyUpdates",
 			config: Config{
 				MaxVersion: VersionTLS13,
 			},
-			sendKeyUpdates: 33,
-			shouldFail:     true,
-			expectedError:  ":TOO_MANY_KEY_UPDATES:",
+			sendKeyUpdates:   33,
+			keyUpdateRequest: keyUpdateNotRequested,
+			shouldFail:       true,
+			expectedError:    ":TOO_MANY_KEY_UPDATES:",
 		},
 		{
 			name: "EmptySessionID",
@@ -2195,14 +2198,22 @@ func addBasicTests() {
 			expectedError: ":WRONG_VERSION_NUMBER:",
 		},
 		{
-			testType: clientTest,
-			name:     "KeyUpdate",
+			name: "KeyUpdate",
 			config: Config{
 				MaxVersion: VersionTLS13,
-				Bugs: ProtocolBugs{
-					SendKeyUpdateBeforeEveryAppDataRecord: true,
-				},
 			},
+			sendKeyUpdates:   1,
+			keyUpdateRequest: keyUpdateNotRequested,
+		},
+		{
+			name: "KeyUpdate-InvalidRequestMode",
+			config: Config{
+				MaxVersion: VersionTLS13,
+			},
+			sendKeyUpdates:   1,
+			keyUpdateRequest: 42,
+			shouldFail:       true,
+			expectedError:    ":DECODE_ERROR:",
 		},
 		{
 			name: "SendSNIWarningAlert",
@@ -2263,7 +2274,7 @@ func addBasicTests() {
 			expectedLocalError: "remote error: illegal parameter",
 		},
 		{
-			name: "GREASE-TLS12",
+			name: "GREASE-Client-TLS12",
 			config: Config{
 				MaxVersion: VersionTLS12,
 				Bugs: ProtocolBugs{
@@ -2273,7 +2284,18 @@ func addBasicTests() {
 			flags: []string{"-enable-grease"},
 		},
 		{
-			name: "GREASE-TLS13",
+			name: "GREASE-Client-TLS13",
+			config: Config{
+				MaxVersion: VersionTLS13,
+				Bugs: ProtocolBugs{
+					ExpectGREASE: true,
+				},
+			},
+			flags: []string{"-enable-grease"},
+		},
+		{
+			testType: serverTest,
+			name:     "GREASE-Server-TLS13",
 			config: Config{
 				MaxVersion: VersionTLS13,
 				Bugs: ProtocolBugs{
@@ -2920,9 +2942,7 @@ func addClientAuthTests() {
 			flags: []string{
 				"-expect-verify-result",
 			},
-			// TODO(davidben): Switch this to true when TLS 1.3
-			// supports session resumption.
-			resumeSession: ver.version < VersionTLS13,
+			resumeSession: true,
 		})
 
 		testCases = append(testCases, testCase{
@@ -2938,11 +2958,15 @@ func addClientAuthTests() {
 				"-expect-verify-result",
 				"-verify-peer",
 			},
-			// TODO(davidben): Switch this to true when TLS 1.3
-			// supports session resumption.
-			resumeSession: ver.version < VersionTLS13,
+			resumeSession: true,
 		})
 
+		certificateRequired := "remote error: certificate required"
+		if ver.version < VersionTLS13 {
+			// Prior to TLS 1.3, the generic handshake_failure alert
+			// was used.
+			certificateRequired = "remote error: handshake failure"
+		}
 		testCases = append(testCases, testCase{
 			testType: serverTest,
 			name:     "RequireAnyClientCertificate-" + ver.name,
@@ -2950,9 +2974,10 @@ func addClientAuthTests() {
 				MinVersion: ver.version,
 				MaxVersion: ver.version,
 			},
-			flags:         []string{"-require-any-client-certificate"},
-			shouldFail:    true,
-			expectedError: ":PEER_DID_NOT_RETURN_A_CERTIFICATE:",
+			flags:              []string{"-require-any-client-certificate"},
+			shouldFail:         true,
+			expectedError:      ":PEER_DID_NOT_RETURN_A_CERTIFICATE:",
+			expectedLocalError: certificateRequired,
 		})
 
 		if ver.version != VersionSSL30 {
@@ -3356,10 +3381,8 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 			config: Config{
 				MaxVersion: VersionTLS13,
 				MinVersion: VersionTLS13,
-				// P-384 requires a HelloRetryRequest against
-				// BoringSSL's default configuration. Assert
-				// that we do indeed test this with
-				// ExpectMissingKeyShare.
+				// P-384 requires a HelloRetryRequest against BoringSSL's default
+				// configuration. Assert this with ExpectMissingKeyShare.
 				CurvePreferences: []CurveID{CurveP384},
 				Bugs: ProtocolBugs{
 					ExpectMissingKeyShare: true,
@@ -5678,6 +5701,22 @@ func addRenegotiationTests() {
 		},
 	})
 
+	// Renegotiation is not allowed at SSL 3.0.
+	testCases = append(testCases, testCase{
+		name: "Renegotiate-Client-SSL3",
+		config: Config{
+			MaxVersion: VersionSSL30,
+		},
+		renegotiate: 1,
+		flags: []string{
+			"-renegotiate-freely",
+			"-expect-total-renegotiations", "1",
+		},
+		shouldFail:         true,
+		expectedError:      ":NO_RENEGOTIATION:",
+		expectedLocalError: "remote error: no renegotiation",
+	})
+
 	// Stray HelloRequests during the handshake are ignored in TLS 1.2.
 	testCases = append(testCases, testCase{
 		name: "StrayHelloRequest",
@@ -5845,19 +5884,28 @@ func addSignatureAlgorithmTests() {
 				continue
 			}
 
-			var shouldFail bool
+			var shouldSignFail, shouldVerifyFail bool
 			// ecdsa_sha1 does not exist in TLS 1.3.
 			if ver.version >= VersionTLS13 && alg.id == signatureECDSAWithSHA1 {
-				shouldFail = true
+				shouldSignFail = true
+				shouldVerifyFail = true
 			}
 			// RSA-PKCS1 does not exist in TLS 1.3.
 			if ver.version == VersionTLS13 && hasComponent(alg.name, "PKCS1") {
-				shouldFail = true
+				shouldSignFail = true
+				shouldVerifyFail = true
+			}
+
+			// BoringSSL will sign SHA-1 and SHA-512 with ECDSA but not accept them.
+			if alg.id == signatureECDSAWithSHA1 || alg.id == signatureECDSAWithP521AndSHA512 {
+				shouldVerifyFail = true
 			}
 
 			var signError, verifyError string
-			if shouldFail {
+			if shouldSignFail {
 				signError = ":NO_COMMON_SIGNATURE_ALGORITHMS:"
+			}
+			if shouldVerifyFail {
 				verifyError = ":WRONG_SIGNATURE_TYPE:"
 			}
 
@@ -5879,7 +5927,7 @@ func addSignatureAlgorithmTests() {
 					"-key-file", path.Join(*resourceDir, getShimKey(alg.cert)),
 					"-enable-all-curves",
 				},
-				shouldFail:                     shouldFail,
+				shouldFail:                     shouldSignFail,
 				expectedError:                  signError,
 				expectedPeerSignatureAlgorithm: alg.id,
 			})
@@ -5894,11 +5942,10 @@ func addSignatureAlgorithmTests() {
 						alg.id,
 					},
 					Bugs: ProtocolBugs{
-						SkipECDSACurveCheck:          shouldFail,
-						IgnoreSignatureVersionChecks: shouldFail,
-						// The client won't advertise 1.3-only algorithms after
-						// version negotiation.
-						IgnorePeerSignatureAlgorithmPreferences: shouldFail,
+						SkipECDSACurveCheck:          shouldVerifyFail,
+						IgnoreSignatureVersionChecks: shouldVerifyFail,
+						// Some signature algorithms may not be advertised.
+						IgnorePeerSignatureAlgorithmPreferences: shouldVerifyFail,
 					},
 				},
 				flags: []string{
@@ -5906,7 +5953,7 @@ func addSignatureAlgorithmTests() {
 					"-expect-peer-signature-algorithm", strconv.Itoa(int(alg.id)),
 					"-enable-all-curves",
 				},
-				shouldFail:    shouldFail,
+				shouldFail:    shouldVerifyFail,
 				expectedError: verifyError,
 			})
 
@@ -5927,7 +5974,7 @@ func addSignatureAlgorithmTests() {
 					"-key-file", path.Join(*resourceDir, getShimKey(alg.cert)),
 					"-enable-all-curves",
 				},
-				shouldFail:                     shouldFail,
+				shouldFail:                     shouldSignFail,
 				expectedError:                  signError,
 				expectedPeerSignatureAlgorithm: alg.id,
 			})
@@ -5942,19 +5989,21 @@ func addSignatureAlgorithmTests() {
 						alg.id,
 					},
 					Bugs: ProtocolBugs{
-						SkipECDSACurveCheck:          shouldFail,
-						IgnoreSignatureVersionChecks: shouldFail,
+						SkipECDSACurveCheck:          shouldVerifyFail,
+						IgnoreSignatureVersionChecks: shouldVerifyFail,
+						// Some signature algorithms may not be advertised.
+						IgnorePeerSignatureAlgorithmPreferences: shouldVerifyFail,
 					},
 				},
 				flags: []string{
 					"-expect-peer-signature-algorithm", strconv.Itoa(int(alg.id)),
 					"-enable-all-curves",
 				},
-				shouldFail:    shouldFail,
+				shouldFail:    shouldVerifyFail,
 				expectedError: verifyError,
 			})
 
-			if !shouldFail {
+			if !shouldVerifyFail {
 				testCases = append(testCases, testCase{
 					testType: serverTest,
 					name:     "ClientAuth-InvalidSignature" + suffix,
@@ -5995,7 +6044,7 @@ func addSignatureAlgorithmTests() {
 				})
 			}
 
-			if ver.version >= VersionTLS12 && !shouldFail {
+			if ver.version >= VersionTLS12 && !shouldSignFail {
 				testCases = append(testCases, testCase{
 					name: "ClientAuth-Sign-Negotiate" + suffix,
 					config: Config{
@@ -7079,6 +7128,39 @@ func addCustomExtensionTests() {
 		shouldFail:         true,
 		expectedError:      ":UNEXPECTED_EXTENSION:",
 		expectedLocalError: "remote error: unsupported extension",
+	})
+	testCases = append(testCases, testCase{
+		testType: clientTest,
+		name:     "UnknownUnencryptedExtension-Client-TLS13",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				CustomUnencryptedExtension: expectedContents,
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":UNEXPECTED_EXTENSION:",
+		// The shim must send an alert, but alerts at this point do not
+		// get successfully decrypted by the runner.
+		expectedLocalError: "local error: bad record MAC",
+	})
+	testCases = append(testCases, testCase{
+		testType: clientTest,
+		name:     "UnexpectedUnencryptedExtension-Client-TLS13",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendUnencryptedALPN: "foo",
+			},
+		},
+		flags: []string{
+			"-advertise-alpn", "\x03foo\x03bar",
+		},
+		shouldFail:    true,
+		expectedError: ":UNEXPECTED_EXTENSION:",
+		// The shim must send an alert, but alerts at this point do not
+		// get successfully decrypted by the runner.
+		expectedLocalError: "local error: bad record MAC",
 	})
 
 	// Test a known but unoffered extension from the server.
@@ -8431,9 +8513,10 @@ func addTLS13HandshakeTests() {
 	testCases = append(testCases, testCase{
 		name: "UnnecessaryHelloRetryRequest",
 		config: Config{
-			MaxVersion: VersionTLS13,
+			MaxVersion:       VersionTLS13,
+			CurvePreferences: []CurveID{CurveX25519},
 			Bugs: ProtocolBugs{
-				UnnecessaryHelloRetryRequest: true,
+				SendHelloRetryRequestCurve: CurveX25519,
 			},
 		},
 		shouldFail:    true,
@@ -8452,6 +8535,97 @@ func addTLS13HandshakeTests() {
 		},
 		shouldFail:    true,
 		expectedError: ":UNEXPECTED_MESSAGE:",
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-Empty",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				AlwaysSendHelloRetryRequest: true,
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":DECODE_ERROR:",
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-DuplicateCurve",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			// P-384 requires a HelloRetryRequest against BoringSSL's default
+			// configuration. Assert this ExpectMissingKeyShare.
+			CurvePreferences: []CurveID{CurveP384},
+			Bugs: ProtocolBugs{
+				ExpectMissingKeyShare:                true,
+				DuplicateHelloRetryRequestExtensions: true,
+			},
+		},
+		shouldFail:         true,
+		expectedError:      ":DUPLICATE_EXTENSION:",
+		expectedLocalError: "remote error: illegal parameter",
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-Cookie",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendHelloRetryRequestCookie: []byte("cookie"),
+			},
+		},
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-DuplicateCookie",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendHelloRetryRequestCookie:          []byte("cookie"),
+				DuplicateHelloRetryRequestExtensions: true,
+			},
+		},
+		shouldFail:         true,
+		expectedError:      ":DUPLICATE_EXTENSION:",
+		expectedLocalError: "remote error: illegal parameter",
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-EmptyCookie",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendHelloRetryRequestCookie: []byte{},
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":DECODE_ERROR:",
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-Cookie-Curve",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			// P-384 requires HelloRetryRequest in BoringSSL.
+			CurvePreferences: []CurveID{CurveP384},
+			Bugs: ProtocolBugs{
+				SendHelloRetryRequestCookie: []byte("cookie"),
+				ExpectMissingKeyShare:       true,
+			},
+		},
+	})
+
+	testCases = append(testCases, testCase{
+		name: "HelloRetryRequest-Unknown",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				CustomHelloRetryRequestExtension: "extension",
+			},
+		},
+		shouldFail:         true,
+		expectedError:      ":UNEXPECTED_EXTENSION:",
+		expectedLocalError: "remote error: unsupported extension",
 	})
 
 	testCases = append(testCases, testCase{
@@ -8584,6 +8758,17 @@ func addTLS13HandshakeTests() {
 		shouldFail:    true,
 		expectedError: ":PSK_IDENTITY_NOT_FOUND:",
 	})
+
+	// Test that unknown NewSessionTicket extensions are tolerated.
+	testCases = append(testCases, testCase{
+		name: "TLS13-CustomTicketExtension",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				CustomTicketExtension: "1234",
+			},
+		},
+	})
 }
 
 func addPeekTests() {
@@ -8649,11 +8834,10 @@ func addPeekTests() {
 		name: "Peek-KeyUpdate",
 		config: Config{
 			MaxVersion: VersionTLS13,
-			Bugs: ProtocolBugs{
-				SendKeyUpdateBeforeEveryAppDataRecord: true,
-			},
 		},
-		flags: []string{"-peek-then-read"},
+		sendKeyUpdates:   1,
+		keyUpdateRequest: keyUpdateNotRequested,
+		flags:            []string{"-peek-then-read"},
 	})
 }
 

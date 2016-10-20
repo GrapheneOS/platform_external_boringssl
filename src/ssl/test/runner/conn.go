@@ -92,6 +92,8 @@ type Conn struct {
 	handMsgLen       int      // handshake message length, not including the header
 	pendingFragments [][]byte // pending outgoing handshake fragments.
 
+	keyUpdateRequested bool
+
 	tmp [16]byte
 }
 
@@ -159,8 +161,7 @@ type halfConn struct {
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
 
-	trafficSecret       []byte
-	keyUpdateGeneration int
+	trafficSecret []byte
 
 	config *Config
 }
@@ -223,7 +224,6 @@ func (hc *halfConn) doKeyUpdate(c *Conn, isOutgoing bool) {
 		side = clientWrite
 	}
 	hc.useTrafficSecret(hc.version, c.cipherSuite, updateTrafficSecret(c.cipherSuite.hash(), hc.trafficSecret), applicationPhase, side)
-	hc.keyUpdateGeneration++
 }
 
 // incSeq increments the sequence number.
@@ -1328,11 +1328,11 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return 0, alertInternalError
 	}
 
-	// Catch up with KeyUpdates from the peer.
-	for c.out.keyUpdateGeneration < c.in.keyUpdateGeneration {
-		if err := c.sendKeyUpdateLocked(); err != nil {
+	if c.keyUpdateRequested {
+		if err := c.sendKeyUpdateLocked(keyUpdateNotRequested); err != nil {
 			return 0, err
 		}
+		c.keyUpdateRequested = false
 	}
 
 	if c.config.Bugs.SendSpuriousAlert != 0 {
@@ -1342,12 +1342,6 @@ func (c *Conn) Write(b []byte) (int, error) {
 	if c.config.Bugs.SendHelloRequestBeforeEveryAppDataRecord {
 		c.writeRecord(recordTypeHandshake, []byte{typeHelloRequest, 0, 0, 0})
 		c.flushHandshake()
-	}
-
-	if c.config.Bugs.SendKeyUpdateBeforeEveryAppDataRecord {
-		if err := c.sendKeyUpdateLocked(); err != nil {
-			return 0, err
-		}
 	}
 
 	// SSL 3.0 and TLS 1.0 are susceptible to a chosen-plaintext
@@ -1398,6 +1392,10 @@ func (c *Conn) handlePostHandshakeMessage() error {
 
 	if c.isClient {
 		if newSessionTicket, ok := msg.(*newSessionTicketMsg); ok {
+			if c.config.Bugs.ExpectGREASE && !newSessionTicket.hasGREASEExtension {
+				return errors.New("tls: no GREASE ticket extension found")
+			}
+
 			if c.config.ClientSessionCache == nil || newSessionTicket.ticketLifetime == 0 {
 				return nil
 			}
@@ -1437,8 +1435,11 @@ func (c *Conn) handlePostHandshakeMessage() error {
 		}
 	}
 
-	if _, ok := msg.(*keyUpdateMsg); ok {
+	if keyUpdate, ok := msg.(*keyUpdateMsg); ok {
 		c.in.doKeyUpdate(c, false)
+		if keyUpdate.keyUpdateRequest == keyUpdateRequested {
+			c.keyUpdateRequested = true
+		}
 		return nil
 	}
 
@@ -1710,10 +1711,11 @@ func (c *Conn) SendNewSessionTicket() error {
 
 	// TODO(davidben): Allow configuring these values.
 	m := &newSessionTicketMsg{
-		version:        c.vers,
-		ticketLifetime: uint32(24 * time.Hour / time.Second),
-		keModes:        []byte{pskDHEKEMode},
-		authModes:      []byte{pskAuthMode},
+		version:         c.vers,
+		ticketLifetime:  uint32(24 * time.Hour / time.Second),
+		keModes:         []byte{pskDHEKEMode},
+		authModes:       []byte{pskAuthMode},
+		customExtension: c.config.Bugs.CustomTicketExtension,
 	}
 
 	if len(c.config.Bugs.SendPSKKeyExchangeModes) != 0 {
@@ -1746,18 +1748,20 @@ func (c *Conn) SendNewSessionTicket() error {
 	return err
 }
 
-func (c *Conn) SendKeyUpdate() error {
+func (c *Conn) SendKeyUpdate(keyUpdateRequest byte) error {
 	c.out.Lock()
 	defer c.out.Unlock()
-	return c.sendKeyUpdateLocked()
+	return c.sendKeyUpdateLocked(keyUpdateRequest)
 }
 
-func (c *Conn) sendKeyUpdateLocked() error {
+func (c *Conn) sendKeyUpdateLocked(keyUpdateRequest byte) error {
 	if c.vers < VersionTLS13 {
 		return errors.New("tls: attempted to send KeyUpdate before TLS 1.3")
 	}
 
-	m := new(keyUpdateMsg)
+	m := keyUpdateMsg{
+		keyUpdateRequest: keyUpdateRequest,
+	}
 	if _, err := c.writeRecord(recordTypeHandshake, m.marshal()); err != nil {
 		return err
 	}
