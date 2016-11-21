@@ -442,62 +442,73 @@ int tls1_check_group_id(SSL *ssl, uint16_t group_id) {
 }
 
 /* kVerifySignatureAlgorithms is the default list of accepted signature
- * algorithms for verifying. */
+ * algorithms for verifying.
+ *
+ * For now, RSA-PSS signature algorithms are not enabled on Android's system
+ * BoringSSL. Once the change in Chrome has stuck and the values are finalized,
+ * restore them. */
 static const uint16_t kVerifySignatureAlgorithms[] = {
-    /* For now, do not enable RSA-PSS signature algorithms on Android's system
-     * BoringSSL. Once TLS 1.3 is finalized and the change in Chrome has stuck,
-     * restore them. */
+    /* Prefer SHA-256 algorithms. */
+    SSL_SIGN_ECDSA_SECP256R1_SHA256,
 #if !defined(BORINGSSL_ANDROID_SYSTEM)
-    SSL_SIGN_RSA_PSS_SHA512,
+    SSL_SIGN_RSA_PSS_SHA256,
 #endif
-    SSL_SIGN_RSA_PKCS1_SHA512,
+    SSL_SIGN_RSA_PKCS1_SHA256,
+
+    /* Larger hashes are acceptable. */
+    SSL_SIGN_ECDSA_SECP384R1_SHA384,
+#if !defined(BORINGSSL_ANDROID_SYSTEM)
+    SSL_SIGN_RSA_PSS_SHA384,
+#endif
+    SSL_SIGN_RSA_PKCS1_SHA384,
+
     /* TODO(davidben): Remove this entry and SSL_CURVE_SECP521R1 from
      * kDefaultGroups. */
 #if defined(BORINGSSL_ANDROID_SYSTEM)
     SSL_SIGN_ECDSA_SECP521R1_SHA512,
 #endif
-
-#if !defined(BORINGSSL_ANDROID_SYSTEM)
-    SSL_SIGN_RSA_PSS_SHA384,
-#endif
-    SSL_SIGN_RSA_PKCS1_SHA384,
-    SSL_SIGN_ECDSA_SECP384R1_SHA384,
-
-#if !defined(BORINGSSL_ANDROID_SYSTEM)
-    SSL_SIGN_RSA_PSS_SHA256,
-#endif
-    SSL_SIGN_RSA_PKCS1_SHA256,
-    SSL_SIGN_ECDSA_SECP256R1_SHA256,
-
-    SSL_SIGN_RSA_PKCS1_SHA1,
-};
-
-/* kSignSignatureAlgorithms is the default list of supported signature
- * algorithms for signing. */
-static const uint16_t kSignSignatureAlgorithms[] = {
-    /* For now, do not enable RSA-PSS signature algorithms on Android's system
-     * BoringSSL. Once TLS 1.3 is finalized and the change in Chrome has stuck,
-     * restore them. */
 #if !defined(BORINGSSL_ANDROID_SYSTEM)
     SSL_SIGN_RSA_PSS_SHA512,
 #endif
     SSL_SIGN_RSA_PKCS1_SHA512,
-    SSL_SIGN_ECDSA_SECP521R1_SHA512,
 
-#if !defined(BORINGSSL_ANDROID_SYSTEM)
-    SSL_SIGN_RSA_PSS_SHA384,
-#endif
-    SSL_SIGN_RSA_PKCS1_SHA384,
-    SSL_SIGN_ECDSA_SECP384R1_SHA384,
+    /* For now, SHA-1 is still accepted but least preferable. */
+    SSL_SIGN_RSA_PKCS1_SHA1,
 
+};
+
+/* kSignSignatureAlgorithms is the default list of supported signature
+ * algorithms for signing.
+ *
+ * For now, RSA-PSS signature algorithms are not enabled on Android's system
+ * BoringSSL. Once the change in Chrome has stuck and the values are finalized,
+ * restore them. */
+static const uint16_t kSignSignatureAlgorithms[] = {
+    /* Prefer SHA-256 algorithms. */
+    SSL_SIGN_ECDSA_SECP256R1_SHA256,
 #if !defined(BORINGSSL_ANDROID_SYSTEM)
     SSL_SIGN_RSA_PSS_SHA256,
 #endif
     SSL_SIGN_RSA_PKCS1_SHA256,
-    SSL_SIGN_ECDSA_SECP256R1_SHA256,
 
-    SSL_SIGN_RSA_PKCS1_SHA1,
+    /* If needed, sign larger hashes.
+     *
+     * TODO(davidben): Determine which of these may be pruned. */
+    SSL_SIGN_ECDSA_SECP384R1_SHA384,
+#if !defined(BORINGSSL_ANDROID_SYSTEM)
+    SSL_SIGN_RSA_PSS_SHA384,
+#endif
+    SSL_SIGN_RSA_PKCS1_SHA384,
+
+    SSL_SIGN_ECDSA_SECP521R1_SHA512,
+#if !defined(BORINGSSL_ANDROID_SYSTEM)
+    SSL_SIGN_RSA_PSS_SHA512,
+#endif
+    SSL_SIGN_RSA_PKCS1_SHA512,
+
+    /* If the peer supports nothing else, sign with SHA-1. */
     SSL_SIGN_ECDSA_SHA1,
+    SSL_SIGN_RSA_PKCS1_SHA1,
 };
 
 size_t tls12_get_verify_sigalgs(const SSL *ssl, const uint16_t **out) {
@@ -694,28 +705,19 @@ static int ext_sni_parse_clienthello(SSL *ssl, uint8_t *out_alert,
     return 0;
   }
 
-  /* TODO(davidben): SNI should be resolved before resumption. We have the
-   * early callback as a replacement, but we should fix the current callback
-   * and avoid the need for |SSL_CTX_set_session_id_context|. */
-  if (ssl->session == NULL) {
-    assert(ssl->s3->new_session->tlsext_hostname == NULL);
-
-    /* Copy the hostname as a string. */
-    if (!CBS_strdup(&host_name, &ssl->s3->new_session->tlsext_hostname)) {
-      *out_alert = SSL_AD_INTERNAL_ERROR;
-      return 0;
-    }
-
-    ssl->s3->hs->should_ack_sni = 1;
+  /* Copy the hostname as a string. */
+  if (!CBS_strdup(&host_name, &ssl->s3->hs->hostname)) {
+    *out_alert = SSL_AD_INTERNAL_ERROR;
+    return 0;
   }
 
+  ssl->s3->hs->should_ack_sni = 1;
   return 1;
 }
 
 static int ext_sni_add_serverhello(SSL *ssl, CBB *out) {
-  if (ssl->session != NULL ||
-      !ssl->s3->hs->should_ack_sni ||
-      ssl->s3->new_session->tlsext_hostname == NULL) {
+  if (ssl->s3->session_reused ||
+      !ssl->s3->hs->should_ack_sni) {
     return 1;
   }
 
@@ -1019,8 +1021,6 @@ static int ext_ticket_add_clienthello(SSL *ssl, CBB *out) {
 
 static int ext_ticket_parse_serverhello(SSL *ssl, uint8_t *out_alert,
                                         CBS *contents) {
-  ssl->tlsext_ticket_expected = 0;
-
   if (contents == NULL) {
     return 1;
   }
@@ -1038,17 +1038,16 @@ static int ext_ticket_parse_serverhello(SSL *ssl, uint8_t *out_alert,
     return 0;
   }
 
-  ssl->tlsext_ticket_expected = 1;
+  ssl->s3->hs->ticket_expected = 1;
   return 1;
 }
 
 static int ext_ticket_add_serverhello(SSL *ssl, CBB *out) {
-  if (!ssl->tlsext_ticket_expected) {
+  if (!ssl->s3->hs->ticket_expected) {
     return 1;
   }
 
-  /* If |SSL_OP_NO_TICKET| is set, |tlsext_ticket_expected| should never be
-   * true. */
+  /* If |SSL_OP_NO_TICKET| is set, |ticket_expected| should never be true. */
   assert((SSL_get_options(ssl) & SSL_OP_NO_TICKET) == 0);
 
   if (!CBB_add_u16(out, TLSEXT_TYPE_session_ticket) ||
@@ -1152,42 +1151,22 @@ static int ext_ocsp_parse_serverhello(SSL *ssl, uint8_t *out_alert,
     return 1;
   }
 
-  if (ssl3_protocol_version(ssl) < TLS1_3_VERSION) {
-    /* OCSP stapling is forbidden on non-certificate ciphers. */
-    if (CBS_len(contents) != 0 ||
-        !ssl_cipher_uses_certificate_auth(ssl->s3->tmp.new_cipher)) {
-      return 0;
-    }
-
-    /* Note this does not check for resumption in TLS 1.2. Sending
-     * status_request here does not make sense, but OpenSSL does so and the
-     * specification does not say anything. Tolerate it but ignore it. */
-
-    ssl->s3->hs->certificate_status_expected = 1;
-    return 1;
-  }
-
-  /* In TLS 1.3, OCSP stapling is forbidden on resumption. */
-  if (ssl->s3->session_reused) {
+  /* TLS 1.3 OCSP responses are included in the Certificate extensions. */
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
     return 0;
   }
 
-  uint8_t status_type;
-  CBS ocsp_response;
-  if (!CBS_get_u8(contents, &status_type) ||
-      status_type != TLSEXT_STATUSTYPE_ocsp ||
-      !CBS_get_u24_length_prefixed(contents, &ocsp_response) ||
-      CBS_len(&ocsp_response) == 0 ||
-      CBS_len(contents) != 0) {
+  /* OCSP stapling is forbidden on non-certificate ciphers. */
+  if (CBS_len(contents) != 0 ||
+      !ssl_cipher_uses_certificate_auth(ssl->s3->tmp.new_cipher)) {
     return 0;
   }
 
-  if (!CBS_stow(&ocsp_response, &ssl->s3->new_session->ocsp_response,
-                &ssl->s3->new_session->ocsp_response_length)) {
-    *out_alert = SSL_AD_INTERNAL_ERROR;
-    return 0;
-  }
+  /* Note this does not check for resumption in TLS 1.2. Sending
+   * status_request here does not make sense, but OpenSSL does so and the
+   * specification does not say anything. Tolerate it but ignore it. */
 
+  ssl->s3->hs->certificate_status_expected = 1;
   return 1;
 }
 
@@ -1210,34 +1189,18 @@ static int ext_ocsp_parse_clienthello(SSL *ssl, uint8_t *out_alert,
 }
 
 static int ext_ocsp_add_serverhello(SSL *ssl, CBB *out) {
-  if (!ssl->s3->hs->ocsp_stapling_requested ||
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION ||
+      !ssl->s3->hs->ocsp_stapling_requested ||
       ssl->ctx->ocsp_response_length == 0 ||
       ssl->s3->session_reused ||
-      (ssl3_protocol_version(ssl) < TLS1_3_VERSION &&
-       !ssl_cipher_uses_certificate_auth(ssl->s3->tmp.new_cipher))) {
+      !ssl_cipher_uses_certificate_auth(ssl->s3->tmp.new_cipher)) {
     return 1;
   }
 
-  if (ssl3_protocol_version(ssl) < TLS1_3_VERSION) {
-    /* The extension shouldn't be sent when resuming sessions. */
-    if (ssl->session != NULL) {
-      return 1;
-    }
+  ssl->s3->hs->certificate_status_expected = 1;
 
-    ssl->s3->hs->certificate_status_expected = 1;
-
-    return CBB_add_u16(out, TLSEXT_TYPE_status_request) &&
-           CBB_add_u16(out, 0 /* length */);
-  }
-
-  CBB body, ocsp_response;
   return CBB_add_u16(out, TLSEXT_TYPE_status_request) &&
-         CBB_add_u16_length_prefixed(out, &body) &&
-         CBB_add_u8(&body, TLSEXT_STATUSTYPE_ocsp) &&
-         CBB_add_u24_length_prefixed(&body, &ocsp_response) &&
-         CBB_add_bytes(&ocsp_response, ssl->ctx->ocsp_response,
-                       ssl->ctx->ocsp_response_length) &&
-         CBB_flush(out);
+         CBB_add_u16(out, 0 /* length */);
 }
 
 
@@ -1331,10 +1294,6 @@ static int ext_npn_parse_clienthello(SSL *ssl, uint8_t *out_alert,
 
   if (contents == NULL ||
       ssl->s3->initial_handshake_complete ||
-      /* If the ALPN extension is seen before NPN, ignore it. (If ALPN is seen
-       * afterwards, parsing the ALPN extension will clear
-       * |next_proto_neg_seen|. */
-      ssl->s3->alpn_selected != NULL ||
       ssl->ctx->next_protos_advertised_cb == NULL ||
       SSL_is_dtls(ssl)) {
     return 1;
@@ -1396,11 +1355,17 @@ static int ext_sct_parse_serverhello(SSL *ssl, uint8_t *out_alert,
     return 1;
   }
 
+  /* TLS 1.3 SCTs are included in the Certificate extensions. */
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+    *out_alert = SSL_AD_DECODE_ERROR;
+    return 0;
+  }
+
   /* If this is false then we should never have sent the SCT extension in the
    * ClientHello and thus this function should never have been called. */
   assert(ssl->signed_cert_timestamps_enabled);
 
-  if (CBS_len(contents) == 0) {
+  if (!ssl_is_sct_list_valid(contents)) {
     *out_alert = SSL_AD_DECODE_ERROR;
     return 0;
   }
@@ -1424,12 +1389,22 @@ static int ext_sct_parse_serverhello(SSL *ssl, uint8_t *out_alert,
 
 static int ext_sct_parse_clienthello(SSL *ssl, uint8_t *out_alert,
                                      CBS *contents) {
-  return contents == NULL || CBS_len(contents) == 0;
+  if (contents == NULL) {
+    return 1;
+  }
+
+  if (CBS_len(contents) != 0) {
+    return 0;
+  }
+
+  ssl->s3->hs->scts_requested = 1;
+  return 1;
 }
 
 static int ext_sct_add_serverhello(SSL *ssl, CBB *out) {
   /* The extension shouldn't be sent when resuming sessions. */
-  if (ssl->s3->session_reused ||
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION ||
+      ssl->s3->session_reused ||
       ssl->ctx->signed_cert_timestamp_list_length == 0) {
     return 1;
   }
@@ -1446,11 +1421,6 @@ static int ext_sct_add_serverhello(SSL *ssl, CBB *out) {
 /* Application-level Protocol Negotiation.
  *
  * https://tools.ietf.org/html/rfc7301 */
-
-static void ext_alpn_init(SSL *ssl) {
-  OPENSSL_free(ssl->s3->alpn_selected);
-  ssl->s3->alpn_selected = NULL;
-}
 
 static int ext_alpn_add_clienthello(SSL *ssl, CBB *out) {
   if (ssl->alpn_client_proto_list == NULL ||
@@ -1534,14 +1504,14 @@ static int ext_alpn_parse_serverhello(SSL *ssl, uint8_t *out_alert,
   return 1;
 }
 
-static int ext_alpn_parse_clienthello(SSL *ssl, uint8_t *out_alert,
-                                      CBS *contents) {
-  if (contents == NULL) {
-    return 1;
-  }
-
+int ssl_negotiate_alpn(SSL *ssl, uint8_t *out_alert,
+                       const struct ssl_early_callback_ctx *client_hello) {
+  CBS contents;
   if (ssl->ctx->alpn_select_cb == NULL ||
-      ssl->s3->initial_handshake_complete) {
+      !ssl_early_callback_get_extension(
+          client_hello, &contents,
+          TLSEXT_TYPE_application_layer_protocol_negotiation)) {
+    /* Ignore ALPN if not configured or no extension was supplied. */
     return 1;
   }
 
@@ -1549,9 +1519,11 @@ static int ext_alpn_parse_clienthello(SSL *ssl, uint8_t *out_alert,
   ssl->s3->hs->next_proto_neg_seen = 0;
 
   CBS protocol_name_list;
-  if (!CBS_get_u16_length_prefixed(contents, &protocol_name_list) ||
-      CBS_len(contents) != 0 ||
+  if (!CBS_get_u16_length_prefixed(&contents, &protocol_name_list) ||
+      CBS_len(&contents) != 0 ||
       CBS_len(&protocol_name_list) < 2) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_PARSE_TLSEXT);
+    *out_alert = SSL_AD_DECODE_ERROR;
     return 0;
   }
 
@@ -1563,6 +1535,8 @@ static int ext_alpn_parse_clienthello(SSL *ssl, uint8_t *out_alert,
     if (!CBS_get_u8_length_prefixed(&protocol_name_list_copy, &protocol_name) ||
         /* Empty protocol names are forbidden. */
         CBS_len(&protocol_name) == 0) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_PARSE_TLSEXT);
+      *out_alert = SSL_AD_DECODE_ERROR;
       return 0;
     }
   }
@@ -1633,10 +1607,6 @@ static int ext_channel_id_parse_serverhello(SSL *ssl, uint8_t *out_alert,
     return 1;
   }
 
-  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
-    return 0;
-  }
-
   assert(!SSL_is_dtls(ssl));
   assert(ssl->tlsext_channel_id_enabled);
 
@@ -1665,10 +1635,6 @@ static int ext_channel_id_parse_clienthello(SSL *ssl, uint8_t *out_alert,
 }
 
 static int ext_channel_id_add_serverhello(SSL *ssl, CBB *out) {
-  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
-    return 1;
-  }
-
   if (!ssl->s3->tlsext_channel_id_valid) {
     return 1;
   }
@@ -1836,26 +1802,6 @@ static int ext_srtp_add_serverhello(SSL *ssl, CBB *out) {
  *
  * https://tools.ietf.org/html/rfc4492#section-5.1.2 */
 
-static int ssl_any_ec_cipher_suites_enabled(const SSL *ssl) {
-  if (ssl->version < TLS1_VERSION && !SSL_is_dtls(ssl)) {
-    return 0;
-  }
-
-  const STACK_OF(SSL_CIPHER) *cipher_stack = SSL_get_ciphers(ssl);
-
-  for (size_t i = 0; i < sk_SSL_CIPHER_num(cipher_stack); i++) {
-    const SSL_CIPHER *cipher = sk_SSL_CIPHER_value(cipher_stack, i);
-
-    const uint32_t alg_k = cipher->algorithm_mkey;
-    const uint32_t alg_a = cipher->algorithm_auth;
-    if ((alg_k & SSL_kECDHE) || (alg_a & SSL_aECDSA)) {
-      return 1;
-    }
-  }
-
-  return 0;
-}
-
 static int ext_ec_point_add_extension(SSL *ssl, CBB *out) {
   CBB contents, formats;
   if (!CBB_add_u16(out, TLSEXT_TYPE_ec_point_formats) ||
@@ -1870,7 +1816,13 @@ static int ext_ec_point_add_extension(SSL *ssl, CBB *out) {
 }
 
 static int ext_ec_point_add_clienthello(SSL *ssl, CBB *out) {
-  if (!ssl_any_ec_cipher_suites_enabled(ssl)) {
+  uint16_t min_version, max_version;
+  if (!ssl_get_version_range(ssl, &min_version, &max_version)) {
+    return 0;
+  }
+
+  /* The point format extension is unneccessary in TLS 1.3. */
+  if (min_version >= TLS1_3_VERSION) {
     return 1;
   }
 
@@ -1929,9 +1881,30 @@ static int ext_ec_point_add_serverhello(SSL *ssl, CBB *out) {
   return ext_ec_point_add_extension(ssl, out);
 }
 
+
 /* Pre Shared Key
  *
- * https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.6 */
+ * https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6 */
+
+static size_t ext_pre_shared_key_clienthello_length(SSL *ssl) {
+  uint16_t min_version, max_version;
+  if (!ssl_get_version_range(ssl, &min_version, &max_version)) {
+    return 0;
+  }
+
+  uint16_t session_version;
+  if (max_version < TLS1_3_VERSION || ssl->session == NULL ||
+      !ssl->method->version_from_wire(&session_version,
+                                      ssl->session->ssl_version) ||
+      session_version < TLS1_3_VERSION) {
+    return 0;
+  }
+
+  const EVP_MD *digest =
+      ssl_get_handshake_digest(ssl->session->cipher->algorithm_prf);
+  size_t binder_len = EVP_MD_size(digest);
+  return 15 + ssl->session->tlsext_ticklen + binder_len;
+}
 
 static int ext_pre_shared_key_add_clienthello(SSL *ssl, CBB *out) {
   uint16_t min_version, max_version;
@@ -1947,20 +1920,33 @@ static int ext_pre_shared_key_add_clienthello(SSL *ssl, CBB *out) {
     return 1;
   }
 
-  CBB contents, identity, ke_modes, auth_modes, ticket;
+  struct timeval now;
+  ssl_get_current_time(ssl, &now);
+  uint32_t ticket_age = 1000 * (now.tv_sec - ssl->session->time);
+  uint32_t obfuscated_ticket_age = ticket_age + ssl->session->ticket_age_add;
+
+  /* Fill in a placeholder zero binder of the appropriate length. It will be
+   * computed and filled in later after length prefixes are computed. */
+  uint8_t zero_binder[EVP_MAX_MD_SIZE] = {0};
+  const EVP_MD *digest =
+      ssl_get_handshake_digest(ssl->session->cipher->algorithm_prf);
+  size_t binder_len = EVP_MD_size(digest);
+
+  CBB contents, identity, ticket, binders, binder;
   if (!CBB_add_u16(out, TLSEXT_TYPE_pre_shared_key) ||
       !CBB_add_u16_length_prefixed(out, &contents) ||
       !CBB_add_u16_length_prefixed(&contents, &identity) ||
-      !CBB_add_u8_length_prefixed(&identity, &ke_modes) ||
-      !CBB_add_u8(&ke_modes, SSL_PSK_DHE_KE) ||
-      !CBB_add_u8_length_prefixed(&identity, &auth_modes) ||
-      !CBB_add_u8(&auth_modes, SSL_PSK_AUTH) ||
       !CBB_add_u16_length_prefixed(&identity, &ticket) ||
       !CBB_add_bytes(&ticket, ssl->session->tlsext_tick,
-                     ssl->session->tlsext_ticklen)) {
+                     ssl->session->tlsext_ticklen) ||
+      !CBB_add_u32(&identity, obfuscated_ticket_age) ||
+      !CBB_add_u16_length_prefixed(&contents, &binders) ||
+      !CBB_add_u8_length_prefixed(&binders, &binder) ||
+      !CBB_add_bytes(&binder, zero_binder, binder_len)) {
     return 0;
   }
 
+  ssl->s3->hs->needs_psk_binder = 1;
   return CBB_flush(out);
 }
 
@@ -1974,6 +1960,7 @@ int ssl_ext_pre_shared_key_parse_serverhello(SSL *ssl, uint8_t *out_alert,
     return 0;
   }
 
+  /* We only advertise one PSK identity, so the only legal index is zero. */
   if (psk_id != 0) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_PSK_IDENTITY_NOT_FOUND);
     *out_alert = SSL_AD_UNKNOWN_PSK_IDENTITY;
@@ -1985,32 +1972,45 @@ int ssl_ext_pre_shared_key_parse_serverhello(SSL *ssl, uint8_t *out_alert,
 
 int ssl_ext_pre_shared_key_parse_clienthello(SSL *ssl,
                                              SSL_SESSION **out_session,
+                                             CBS *out_binders,
                                              uint8_t *out_alert,
                                              CBS *contents) {
   /* We only process the first PSK identity since we don't support pure PSK. */
-  CBS identity, ke_modes, auth_modes, ticket;
+  uint32_t obfuscated_ticket_age;
+  CBS identity, ticket, binders;
   if (!CBS_get_u16_length_prefixed(contents, &identity) ||
-      !CBS_get_u8_length_prefixed(&identity, &ke_modes) ||
-      !CBS_get_u8_length_prefixed(&identity, &auth_modes) ||
       !CBS_get_u16_length_prefixed(&identity, &ticket) ||
-      CBS_len(&identity) != 0) {
+      !CBS_get_u32(&identity, &obfuscated_ticket_age) ||
+      !CBS_get_u16_length_prefixed(contents, &binders) ||
+      CBS_len(contents) != 0) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
     *out_alert = SSL_AD_DECODE_ERROR;
     return 0;
   }
 
-  /* We only support tickets with PSK_DHE_KE and PSK_AUTH. */
-  if (memchr(CBS_data(&ke_modes), SSL_PSK_DHE_KE, CBS_len(&ke_modes)) == NULL ||
-      memchr(CBS_data(&auth_modes), SSL_PSK_AUTH, CBS_len(&auth_modes)) ==
-          NULL) {
-    *out_session = NULL;
-    return 1;
+  *out_binders = binders;
+
+  /* The PSK identity must have a corresponding binder. */
+  CBS binder;
+  if (!CBS_get_u8_length_prefixed(&binders, &binder)) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
+    *out_alert = SSL_AD_DECODE_ERROR;
+    return 0;
   }
+
+  /* TODO(svaldez): Check that the ticket_age is valid when attempting to use
+   * the PSK for 0-RTT. http://crbug.com/boringssl/113 */
 
   /* TLS 1.3 session tickets are renewed separately as part of the
    * NewSessionTicket. */
-  int renew;
-  return tls_process_ticket(ssl, out_session, &renew, CBS_data(&ticket),
-                            CBS_len(&ticket), NULL, 0);
+  int unused_renew;
+  if (!tls_process_ticket(ssl, out_session, &unused_renew, CBS_data(&ticket),
+                          CBS_len(&ticket), NULL, 0)) {
+    *out_alert = SSL_AD_INTERNAL_ERROR;
+    return 0;
+  }
+
+  return 1;
 }
 
 int ssl_ext_pre_shared_key_add_serverhello(SSL *ssl, CBB *out) {
@@ -2026,6 +2026,53 @@ int ssl_ext_pre_shared_key_add_serverhello(SSL *ssl, CBB *out) {
       !CBB_flush(out)) {
     return 0;
   }
+
+  return 1;
+}
+
+
+/* Pre-Shared Key Exchange Modes
+ *
+ * https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.7 */
+static int ext_psk_key_exchange_modes_add_clienthello(SSL *ssl, CBB *out) {
+  uint16_t min_version, max_version;
+  if (!ssl_get_version_range(ssl, &min_version, &max_version)) {
+    return 0;
+  }
+
+  if (max_version < TLS1_3_VERSION) {
+    return 1;
+  }
+
+  CBB contents, ke_modes;
+  if (!CBB_add_u16(out, TLSEXT_TYPE_psk_key_exchange_modes) ||
+      !CBB_add_u16_length_prefixed(out, &contents) ||
+      !CBB_add_u8_length_prefixed(&contents, &ke_modes) ||
+      !CBB_add_u8(&ke_modes, SSL_PSK_DHE_KE)) {
+    return 0;
+  }
+
+  return CBB_flush(out);
+}
+
+static int ext_psk_key_exchange_modes_parse_clienthello(SSL *ssl,
+                                                        uint8_t *out_alert,
+                                                        CBS *contents) {
+  if (contents == NULL) {
+    return 1;
+  }
+
+  CBS ke_modes;
+  if (!CBS_get_u8_length_prefixed(contents, &ke_modes) ||
+      CBS_len(&ke_modes) == 0 ||
+      CBS_len(contents) != 0) {
+    *out_alert = SSL_AD_DECODE_ERROR;
+    return 0;
+  }
+
+  /* We only support tickets with PSK_DHE_KE. */
+  ssl->s3->hs->accept_psk_mode =
+      memchr(CBS_data(&ke_modes), SSL_PSK_DHE_KE, CBS_len(&ke_modes)) != NULL;
 
   return 1;
 }
@@ -2052,21 +2099,18 @@ static int ext_key_share_add_clienthello(SSL *ssl, CBB *out) {
     return 0;
   }
 
-  uint16_t group_id;
+  uint16_t group_id = ssl->s3->hs->retry_group;
   if (ssl->s3->hs->received_hello_retry_request) {
-    /* Replay the old key shares. */
-    if (!CBB_add_bytes(&kse_bytes, ssl->s3->hs->key_share_bytes,
+    /* We received a HelloRetryRequest without a new curve, so there is no new
+     * share to append. Leave |ecdh_ctx| as-is. */
+    if (group_id == 0 &&
+        !CBB_add_bytes(&kse_bytes, ssl->s3->hs->key_share_bytes,
                        ssl->s3->hs->key_share_bytes_len)) {
       return 0;
     }
     OPENSSL_free(ssl->s3->hs->key_share_bytes);
     ssl->s3->hs->key_share_bytes = NULL;
     ssl->s3->hs->key_share_bytes_len = 0;
-
-    group_id = ssl->s3->hs->retry_group;
-
-    /* We received a HelloRetryRequest without a new curve, so there is no new
-     * share to append. Leave |ecdh_ctx| as-is. */
     if (group_id == 0) {
       return CBB_flush(out);
     }
@@ -2319,10 +2363,6 @@ static int ext_cookie_add_clienthello(SSL *ssl, CBB *out) {
  * https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.4 */
 
 static int ext_supported_groups_add_clienthello(SSL *ssl, CBB *out) {
-  if (!ssl_any_ec_cipher_suites_enabled(ssl)) {
-    return 1;
-  }
-
   CBB contents, groups_bytes;
   if (!CBB_add_u16(out, TLSEXT_TYPE_supported_groups) ||
       !CBB_add_u16_length_prefixed(out, &contents) ||
@@ -2473,10 +2513,11 @@ static const struct tls_extension kExtensions[] = {
   },
   {
     TLSEXT_TYPE_application_layer_protocol_negotiation,
-    ext_alpn_init,
+    NULL,
     ext_alpn_add_clienthello,
     ext_alpn_parse_serverhello,
-    ext_alpn_parse_clienthello,
+    /* ALPN is negotiated late in |ssl_negotiate_alpn|. */
+    ignore_parse_clienthello,
     ext_alpn_add_serverhello,
   },
   {
@@ -2512,11 +2553,11 @@ static const struct tls_extension kExtensions[] = {
     dont_add_serverhello,
   },
   {
-    TLSEXT_TYPE_pre_shared_key,
+    TLSEXT_TYPE_psk_key_exchange_modes,
     NULL,
-    ext_pre_shared_key_add_clienthello,
+    ext_psk_key_exchange_modes_add_clienthello,
     forbid_parse_serverhello,
-    ignore_parse_clienthello,
+    ext_psk_key_exchange_modes_parse_clienthello,
     dont_add_serverhello,
   },
   {
@@ -2611,7 +2652,7 @@ int ssl_add_clienthello_tlsext(SSL *ssl, CBB *out, size_t header_len) {
     const size_t len_before = CBB_len(&extensions);
     if (!kExtensions[i].add_clienthello(ssl, &extensions)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
-      ERR_add_error_dataf("extension: %u", (unsigned)kExtensions[i].value);
+      ERR_add_error_dataf("extension %u", (unsigned)kExtensions[i].value);
       goto err;
     }
 
@@ -2643,7 +2684,8 @@ int ssl_add_clienthello_tlsext(SSL *ssl, CBB *out, size_t header_len) {
   }
 
   if (!SSL_is_dtls(ssl)) {
-    header_len += 2 + CBB_len(&extensions);
+    size_t psk_extension_len = ext_pre_shared_key_clienthello_length(ssl);
+    header_len += 2 + CBB_len(&extensions) + psk_extension_len;
     if (header_len > 0xff && header_len < 0x200) {
       /* Add padding to workaround bugs in F5 terminators. See RFC 7685.
        *
@@ -2669,6 +2711,11 @@ int ssl_add_clienthello_tlsext(SSL *ssl, CBB *out, size_t header_len) {
 
       memset(padding_bytes, 0, padding_len);
     }
+  }
+
+  /* The PSK extension must be last, including after the padding. */
+  if (!ext_pre_shared_key_add_clienthello(ssl, &extensions)) {
+    goto err;
   }
 
   /* Discard empty extensions blocks. */
@@ -2698,7 +2745,7 @@ int ssl_add_serverhello_tlsext(SSL *ssl, CBB *out) {
 
     if (!kExtensions[i].add_serverhello(ssl, &extensions)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
-      ERR_add_error_dataf("extension: %u", (unsigned)kExtensions[i].value);
+      ERR_add_error_dataf("extension %u", (unsigned)kExtensions[i].value);
       goto err;
     }
   }
@@ -2768,7 +2815,7 @@ static int ssl_scan_clienthello_tlsext(
     if (!ext->parse_clienthello(ssl, &alert, &extension)) {
       *out_alert = alert;
       OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_PARSING_EXTENSION);
-      ERR_add_error_dataf("extension: %u", (unsigned)type);
+      ERR_add_error_dataf("extension %u", (unsigned)type);
       return 0;
     }
   }
@@ -2796,7 +2843,7 @@ static int ssl_scan_clienthello_tlsext(
     uint8_t alert = SSL_AD_DECODE_ERROR;
     if (!kExtensions[i].parse_clienthello(ssl, &alert, contents)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_MISSING_EXTENSION);
-      ERR_add_error_dataf("extension: %u", (unsigned)kExtensions[i].value);
+      ERR_add_error_dataf("extension %u", (unsigned)kExtensions[i].value);
       *out_alert = alert;
       return 0;
     }
@@ -2875,7 +2922,7 @@ static int ssl_scan_serverhello_tlsext(SSL *ssl, CBS *cbs, int *out_alert) {
     uint8_t alert = SSL_AD_DECODE_ERROR;
     if (!ext->parse_serverhello(ssl, &alert, &extension)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_PARSING_EXTENSION);
-      ERR_add_error_dataf("extension: %u", (unsigned)type);
+      ERR_add_error_dataf("extension %u", (unsigned)type);
       *out_alert = alert;
       return 0;
     }
@@ -2888,7 +2935,7 @@ static int ssl_scan_serverhello_tlsext(SSL *ssl, CBS *cbs, int *out_alert) {
       uint8_t alert = SSL_AD_DECODE_ERROR;
       if (!kExtensions[i].parse_serverhello(ssl, &alert, NULL)) {
         OPENSSL_PUT_ERROR(SSL, SSL_R_MISSING_EXTENSION);
-        ERR_add_error_dataf("extension: %u", (unsigned)kExtensions[i].value);
+        ERR_add_error_dataf("extension %u", (unsigned)kExtensions[i].value);
         *out_alert = alert;
         return 0;
       }
@@ -3090,12 +3137,6 @@ int tls_process_ticket(SSL *ssl, SSL_SESSION **out_session,
   memcpy(session->session_id, session_id, session_id_len);
   session->session_id_length = session_id_len;
 
-  if (!ssl_session_is_context_valid(ssl, session) ||
-      !ssl_session_is_time_valid(ssl, session)) {
-    SSL_SESSION_free(session);
-    session = NULL;
-  }
-
   *out_session = session;
 
 done:
@@ -3207,45 +3248,184 @@ int tls1_choose_signature_algorithm(SSL *ssl, uint16_t *out) {
   return 0;
 }
 
-int tls1_channel_id_hash(SSL *ssl, uint8_t *out, size_t *out_len) {
+int tls1_verify_channel_id(SSL *ssl) {
   int ret = 0;
-  EVP_MD_CTX ctx;
+  uint16_t extension_type;
+  CBS extension, channel_id;
 
-  EVP_MD_CTX_init(&ctx);
-  if (!EVP_DigestInit_ex(&ctx, EVP_sha256(), NULL)) {
+  /* A Channel ID handshake message is structured to contain multiple
+   * extensions, but the only one that can be present is Channel ID. */
+  CBS_init(&channel_id, ssl->init_msg, ssl->init_num);
+  if (!CBS_get_u16(&channel_id, &extension_type) ||
+      !CBS_get_u16_length_prefixed(&channel_id, &extension) ||
+      CBS_len(&channel_id) != 0 ||
+      extension_type != TLSEXT_TYPE_channel_id ||
+      CBS_len(&extension) != TLSEXT_CHANNEL_ID_SIZE) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
+    ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
+    return 0;
+  }
+
+  EC_GROUP *p256 = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
+  if (!p256) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_P256_SUPPORT);
+    return 0;
+  }
+
+  EC_KEY *key = NULL;
+  EC_POINT *point = NULL;
+  BIGNUM x, y;
+  ECDSA_SIG sig;
+  BN_init(&x);
+  BN_init(&y);
+  sig.r = BN_new();
+  sig.s = BN_new();
+  if (sig.r == NULL || sig.s == NULL) {
     goto err;
   }
 
+  const uint8_t *p = CBS_data(&extension);
+  if (BN_bin2bn(p + 0, 32, &x) == NULL ||
+      BN_bin2bn(p + 32, 32, &y) == NULL ||
+      BN_bin2bn(p + 64, 32, sig.r) == NULL ||
+      BN_bin2bn(p + 96, 32, sig.s) == NULL) {
+    goto err;
+  }
+
+  point = EC_POINT_new(p256);
+  if (point == NULL ||
+      !EC_POINT_set_affine_coordinates_GFp(p256, point, &x, &y, NULL)) {
+    goto err;
+  }
+
+  key = EC_KEY_new();
+  if (key == NULL ||
+      !EC_KEY_set_group(key, p256) ||
+      !EC_KEY_set_public_key(key, point)) {
+    goto err;
+  }
+
+  uint8_t digest[EVP_MAX_MD_SIZE];
+  size_t digest_len;
+  if (!tls1_channel_id_hash(ssl, digest, &digest_len)) {
+    goto err;
+  }
+
+  int sig_ok = ECDSA_do_verify(digest, digest_len, &sig, key);
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
+  sig_ok = 1;
+#endif
+  if (!sig_ok) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_CHANNEL_ID_SIGNATURE_INVALID);
+    ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
+    ssl->s3->tlsext_channel_id_valid = 0;
+    goto err;
+  }
+
+  memcpy(ssl->s3->tlsext_channel_id, p, 64);
+  ret = 1;
+
+err:
+  BN_free(&x);
+  BN_free(&y);
+  BN_free(sig.r);
+  BN_free(sig.s);
+  EC_KEY_free(key);
+  EC_POINT_free(point);
+  EC_GROUP_free(p256);
+  return ret;
+}
+
+int tls1_write_channel_id(SSL *ssl, CBB *cbb) {
+  uint8_t digest[EVP_MAX_MD_SIZE];
+  size_t digest_len;
+  if (!tls1_channel_id_hash(ssl, digest, &digest_len)) {
+    return 0;
+  }
+
+  EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(ssl->tlsext_channel_id_private);
+  if (ec_key == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return 0;
+  }
+
+  int ret = 0;
+  BIGNUM *x = BN_new();
+  BIGNUM *y = BN_new();
+  ECDSA_SIG *sig = NULL;
+  if (x == NULL || y == NULL ||
+      !EC_POINT_get_affine_coordinates_GFp(EC_KEY_get0_group(ec_key),
+                                           EC_KEY_get0_public_key(ec_key),
+                                           x, y, NULL)) {
+    goto err;
+  }
+
+  sig = ECDSA_do_sign(digest, digest_len, ec_key);
+  if (sig == NULL) {
+    goto err;
+  }
+
+  CBB child;
+  if (!CBB_add_u16(cbb, TLSEXT_TYPE_channel_id) ||
+      !CBB_add_u16_length_prefixed(cbb, &child) ||
+      !BN_bn2cbb_padded(&child, 32, x) ||
+      !BN_bn2cbb_padded(&child, 32, y) ||
+      !BN_bn2cbb_padded(&child, 32, sig->r) ||
+      !BN_bn2cbb_padded(&child, 32, sig->s) ||
+      !CBB_flush(cbb)) {
+    goto err;
+  }
+
+  ret = 1;
+
+err:
+  BN_free(x);
+  BN_free(y);
+  ECDSA_SIG_free(sig);
+  return ret;
+}
+
+int tls1_channel_id_hash(SSL *ssl, uint8_t *out, size_t *out_len) {
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+    uint8_t *msg;
+    size_t msg_len;
+    if (!tls13_get_cert_verify_signature_input(ssl, &msg, &msg_len,
+                                               ssl_cert_verify_channel_id)) {
+      return 0;
+    }
+    SHA256(msg, msg_len, out);
+    *out_len = SHA256_DIGEST_LENGTH;
+    OPENSSL_free(msg);
+    return 1;
+  }
+
+  SHA256_CTX ctx;
+
+  SHA256_Init(&ctx);
   static const char kClientIDMagic[] = "TLS Channel ID signature";
-  EVP_DigestUpdate(&ctx, kClientIDMagic, sizeof(kClientIDMagic));
+  SHA256_Update(&ctx, kClientIDMagic, sizeof(kClientIDMagic));
 
   if (ssl->session != NULL) {
     static const char kResumptionMagic[] = "Resumption";
-    EVP_DigestUpdate(&ctx, kResumptionMagic, sizeof(kResumptionMagic));
+    SHA256_Update(&ctx, kResumptionMagic, sizeof(kResumptionMagic));
     if (ssl->session->original_handshake_hash_len == 0) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
-      goto err;
+      return 0;
     }
-    EVP_DigestUpdate(&ctx, ssl->session->original_handshake_hash,
-                     ssl->session->original_handshake_hash_len);
+    SHA256_Update(&ctx, ssl->session->original_handshake_hash,
+                  ssl->session->original_handshake_hash_len);
   }
 
   uint8_t handshake_hash[EVP_MAX_MD_SIZE];
   int handshake_hash_len = tls1_handshake_digest(ssl, handshake_hash,
                                                  sizeof(handshake_hash));
   if (handshake_hash_len < 0) {
-    goto err;
+    return 0;
   }
-  EVP_DigestUpdate(&ctx, handshake_hash, (size_t)handshake_hash_len);
-  unsigned len_u;
-  EVP_DigestFinal_ex(&ctx, out, &len_u);
-  *out_len = len_u;
-
-  ret = 1;
-
-err:
-  EVP_MD_CTX_cleanup(&ctx);
-  return ret;
+  SHA256_Update(&ctx, handshake_hash, (size_t)handshake_hash_len);
+  SHA256_Final(out, &ctx);
+  *out_len = SHA256_DIGEST_LENGTH;
+  return 1;
 }
 
 /* tls1_record_handshake_hashes_for_channel_id records the current handshake
@@ -3269,6 +3449,47 @@ int tls1_record_handshake_hashes_for_channel_id(SSL *ssl) {
   }
 
   ssl->s3->new_session->original_handshake_hash_len = digest_len;
+
+  return 1;
+}
+
+int ssl_do_channel_id_callback(SSL *ssl) {
+  if (ssl->tlsext_channel_id_private != NULL ||
+      ssl->ctx->channel_id_cb == NULL) {
+    return 1;
+  }
+
+  EVP_PKEY *key = NULL;
+  ssl->ctx->channel_id_cb(ssl, &key);
+  if (key == NULL) {
+    /* The caller should try again later. */
+    return 1;
+  }
+
+  int ret = SSL_set1_tls_channel_id(ssl, key);
+  EVP_PKEY_free(key);
+  return ret;
+}
+
+int ssl_is_sct_list_valid(const CBS *contents) {
+  /* Shallow parse the SCT list for sanity. By the RFC
+   * (https://tools.ietf.org/html/rfc6962#section-3.3) neither the list nor any
+   * of the SCTs may be empty. */
+  CBS copy = *contents;
+  CBS sct_list;
+  if (!CBS_get_u16_length_prefixed(&copy, &sct_list) ||
+      CBS_len(&copy) != 0 ||
+      CBS_len(&sct_list) == 0) {
+    return 0;
+  }
+
+  while (CBS_len(&sct_list) > 0) {
+    CBS sct;
+    if (!CBS_get_u16_length_prefixed(&sct_list, &sct) ||
+        CBS_len(&sct) == 0) {
+      return 0;
+    }
+  }
 
   return 1;
 }

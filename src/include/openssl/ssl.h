@@ -562,7 +562,7 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_VERSION 0xfeff
 #define DTLS1_2_VERSION 0xfefd
 
-#define TLS1_3_DRAFT_VERSION 0x7f10
+#define TLS1_3_DRAFT_VERSION 0x7f12
 
 /* SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
  * |version|. If |version| is zero, the default minimum version is used. It
@@ -670,8 +670,9 @@ OPENSSL_EXPORT uint32_t SSL_get_options(const SSL *ssl);
 #define SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER 0x00000002L
 
 /* SSL_MODE_NO_AUTO_CHAIN disables automatically building a certificate chain
- * before sending certificates to the peer.
- * TODO(davidben): Remove this behavior. https://crbug.com/486295. */
+ * before sending certificates to the peer. This flag is set (and the feature
+ * disabled) by default.
+ * TODO(davidben): Remove this behavior. https://crbug.com/boringssl/42. */
 #define SSL_MODE_NO_AUTO_CHAIN 0x00000008L
 
 /* SSL_MODE_ENABLE_FALSE_START allows clients to send application data before
@@ -1306,7 +1307,12 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
  *   [ECDHE-ECDSA-CHACHA20-POLY1305|ECDHE-ECDSA-AES128-GCM-SHA256]
  *
  * Once an equal-preference group is used, future directives must be
- * opcode-less. */
+ * opcode-less.
+ *
+ * TLS 1.3 ciphers do not participate in this mechanism and instead have a
+ * built-in preference order. Functions to set cipher lists do not affect TLS
+ * 1.3, and functions to query the cipher list do not include TLS 1.3
+ * ciphers. */
 
 /* SSL_DEFAULT_CIPHER_LIST is the default cipher suite configuration. It is
  * substituted when a cipher string starts with 'DEFAULT'. */
@@ -2331,9 +2337,9 @@ OPENSSL_EXPORT int SSL_get_servername_type(const SSL *ssl);
 
 /* SSL_CTX_set_tlsext_servername_callback configures |callback| to be called on
  * the server after ClientHello extensions have been parsed and returns one.
- * The callback may use |SSL_get_servername| to examine the server_name extension
- * and returns a |SSL_TLSEXT_ERR_*| value. The value of |arg| may be set by
- * calling |SSL_CTX_set_tlsext_servername_arg|.
+ * The callback may use |SSL_get_servername| to examine the server_name
+ * extension and returns a |SSL_TLSEXT_ERR_*| value. The value of |arg| may be
+ * set by calling |SSL_CTX_set_tlsext_servername_arg|.
  *
  * If the callback returns |SSL_TLSEXT_ERR_NOACK|, the server_name extension is
  * not acknowledged in the ServerHello. If the return value is
@@ -2389,7 +2395,10 @@ OPENSSL_EXPORT int SSL_set_alpn_protos(SSL *ssl, const uint8_t *protos,
  * |*out_len| to the selected protocol and return |SSL_TLSEXT_ERR_OK| on
  * success. It does not pass ownership of the buffer. Otherwise, it should
  * return |SSL_TLSEXT_ERR_NOACK|. Other |SSL_TLSEXT_ERR_*| values are
- * unimplemented and will be treated as |SSL_TLSEXT_ERR_NOACK|. */
+ * unimplemented and will be treated as |SSL_TLSEXT_ERR_NOACK|.
+ *
+ * The cipher suite is selected before negotiating ALPN. The callback may use
+ * |SSL_get_pending_cipher| to query the cipher suite. */
 OPENSSL_EXPORT void SSL_CTX_set_alpn_select_cb(
     SSL_CTX *ctx, int (*cb)(SSL *ssl, const uint8_t **out, uint8_t *out_len,
                             const uint8_t *in, unsigned in_len, void *arg),
@@ -3107,6 +3116,14 @@ OPENSSL_EXPORT size_t SSL_get_server_random(const SSL *ssl, uint8_t *out,
  * NULL if one has not been negotiated yet or there is no pending handshake. */
 OPENSSL_EXPORT const SSL_CIPHER *SSL_get_pending_cipher(const SSL *ssl);
 
+/* SSL_set_retain_only_sha256_of_client_certs, on a server, sets whether only
+ * the SHA-256 hash of peer's certificate should be saved in memory and in the
+ * session. This can save memory, ticket size and session cache space. If
+ * enabled, |SSL_get_peer_certificate| will return NULL after the handshake
+ * completes. See the |peer_sha256| field of |SSL_SESSION| for the hash. */
+OPENSSL_EXPORT void SSL_set_retain_only_sha256_of_client_certs(SSL *ssl,
+                                                               int enable);
+
 /* SSL_CTX_set_retain_only_sha256_of_client_certs, on a server, sets whether
  * only the SHA-256 hash of peer's certificate should be saved in memory and in
  * the session. This can save memory, ticket size and session cache space. If
@@ -3118,6 +3135,10 @@ OPENSSL_EXPORT void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx,
 /* SSL_CTX_set_grease_enabled configures whether sockets on |ctx| should enable
  * GREASE. See draft-davidben-tls-grease-01. */
 OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
+
+/* SSL_max_seal_overhead returns the maximum overhead, in bytes, of sealing a
+ * record with |ssl|. */
+OPENSSL_EXPORT size_t SSL_max_seal_overhead(const SSL *ssl);
 
 
 /* Deprecated functions. */
@@ -3613,9 +3634,6 @@ OPENSSL_EXPORT int SSL_set_max_version(SSL *ssl, uint16_t version);
  * deprecated. */
 
 typedef struct ssl_protocol_method_st SSL_PROTOCOL_METHOD;
-typedef struct ssl3_enc_method SSL3_ENC_METHOD;
-typedef struct ssl_aead_ctx_st SSL_AEAD_CTX;
-typedef struct ssl_handshake_st SSL_HANDSHAKE;
 
 struct ssl_cipher_st {
   /* name is the OpenSSL name for the cipher. */
@@ -3630,12 +3648,6 @@ struct ssl_cipher_st {
   uint32_t algorithm_mac;
   uint32_t algorithm_prf;
 };
-
-typedef struct ssl_ecdh_method_st SSL_ECDH_METHOD;
-typedef struct ssl_ecdh_ctx_st {
-  const SSL_ECDH_METHOD *method;
-  void *data;
-} SSL_ECDH_CTX;
 
 #define SSL_MAX_SSL_SESSION_ID_LENGTH 32
 #define SSL_MAX_SID_CTX_LENGTH 32
@@ -3671,19 +3683,23 @@ struct ssl_session_st {
   uint8_t sid_ctx[SSL_MAX_SID_CTX_LENGTH];
 
   char *psk_identity;
-  /* peer is the peer's certificate. */
-  X509 *peer;
+  /* x509_peer is the peer's certificate. */
+  X509 *x509_peer;
 
-  /* cert_chain is the certificate chain sent by the peer. NOTE: for historical
+  /* x509_chain is the certificate chain sent by the peer. NOTE: for historical
    * reasons, when a client (so the peer is a server), the chain includes
    * |peer|, but when a server it does not. */
-  STACK_OF(X509) *cert_chain;
+  STACK_OF(X509) *x509_chain;
 
   /* verify_result is the result of certificate verification in the case of
    * non-fatal certificate errors. */
   long verify_result;
 
+  /* timeout is the lifetime of the session in seconds, measured from |time|. */
   long timeout;
+
+  /* time is the time the session was issued, measured in seconds from the UNIX
+   * epoch. */
   long time;
 
   const SSL_CIPHER *cipher;
@@ -3788,8 +3804,6 @@ struct ssl_ctx_st {
   uint16_t min_version;
 
   struct ssl_cipher_preference_list_st *cipher_list;
-  /* same as above but sorted for lookup */
-  STACK_OF(SSL_CIPHER) *cipher_list_by_id;
 
   /* cipher_list_tls10 is the list of ciphers when TLS 1.0 or greater is in
    * use. This only applies to server connections as, for clients, the version
@@ -4091,7 +4105,6 @@ struct ssl_st {
 
   /* crypto */
   struct ssl_cipher_preference_list_st *cipher_list;
-  STACK_OF(SSL_CIPHER) *cipher_list_by_id;
 
   /* session info */
 
@@ -4195,8 +4208,10 @@ struct ssl_st {
    * we'll advertise support. */
   unsigned tlsext_channel_id_enabled:1;
 
-  /* RFC4507 session ticket expected to be received or sent */
-  unsigned tlsext_ticket_expected:1;
+  /* retain_only_sha256_of_client_certs is true if we should compute the SHA256
+   * hash of the peer's certificate and then discard it to save memory and
+   * session space. Only effective on the server side. */
+  unsigned retain_only_sha256_of_client_certs:1;
 
   /* TODO(agl): remove once node.js not longer references this. */
   int tlsext_status_type;
@@ -4534,6 +4549,9 @@ BORINGSSL_MAKE_DELETER(SSL_SESSION, SSL_SESSION_free)
 #define SSL_R_DUPLICATE_KEY_SHARE 264
 #define SSL_R_NO_GROUPS_SPECIFIED 265
 #define SSL_R_NO_SHARED_GROUP 266
+#define SSL_R_PRE_SHARED_KEY_MUST_BE_LAST 267
+#define SSL_R_OLD_SESSION_PRF_HASH_MISMATCH 268
+#define SSL_R_INVALID_SCT_LIST 269
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020

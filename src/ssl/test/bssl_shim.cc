@@ -40,6 +40,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include <inttypes.h>
 #include <string.h>
 
+#include <openssl/aead.h>
 #include <openssl/bio.h>
 #include <openssl/buf.h>
 #include <openssl/bytestring.h>
@@ -137,12 +138,46 @@ static TestState *GetTestState(const SSL *ssl) {
   return (TestState *)SSL_get_ex_data(ssl, g_state_index);
 }
 
-static bssl::UniquePtr<X509> LoadCertificate(const std::string &file) {
+static bool LoadCertificate(bssl::UniquePtr<X509> *out_x509,
+                            bssl::UniquePtr<STACK_OF(X509)> *out_chain,
+                            const std::string &file) {
   bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_file()));
   if (!bio || !BIO_read_filename(bio.get(), file.c_str())) {
-    return nullptr;
+    return false;
   }
-  return bssl::UniquePtr<X509>(PEM_read_bio_X509(bio.get(), NULL, NULL, NULL));
+
+  out_x509->reset(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+  if (!*out_x509) {
+    return false;
+  }
+
+  out_chain->reset(sk_X509_new_null());
+  if (!*out_chain) {
+    return false;
+  }
+
+  // Keep reading the certificate chain.
+  for (;;) {
+    bssl::UniquePtr<X509> cert(
+        PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+    if (!cert) {
+      break;
+    }
+
+    if (!sk_X509_push(out_chain->get(), cert.get())) {
+      return false;
+    }
+    cert.release();  // sk_X509_push takes ownership.
+  }
+
+  uint32_t err = ERR_peek_last_error();
+  if (ERR_GET_LIB(err) != ERR_LIB_PEM ||
+      ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
+    return false;
+}
+
+  ERR_clear_error();
+  return true;
 }
 
 static bssl::UniquePtr<EVP_PKEY> LoadPrivateKey(const std::string &file) {
@@ -320,6 +355,7 @@ struct Free {
 };
 
 static bool GetCertificate(SSL *ssl, bssl::UniquePtr<X509> *out_x509,
+                           bssl::UniquePtr<STACK_OF(X509)> *out_chain,
                            bssl::UniquePtr<EVP_PKEY> *out_pkey) {
   const TestConfig *config = GetTestConfig(ssl);
 
@@ -358,14 +394,12 @@ static bool GetCertificate(SSL *ssl, bssl::UniquePtr<X509> *out_x509,
       return false;
     }
   }
-  if (!config->cert_file.empty()) {
-    *out_x509 = LoadCertificate(config->cert_file.c_str());
-    if (!*out_x509) {
-      return false;
-    }
+  if (!config->cert_file.empty() &&
+      !LoadCertificate(out_x509, out_chain, config->cert_file.c_str())) {
+    return false;
   }
   if (!config->ocsp_response.empty() &&
-      !SSL_CTX_set_ocsp_response(ssl->ctx,
+      !SSL_CTX_set_ocsp_response(SSL_get_SSL_CTX(ssl),
                                  (const uint8_t *)config->ocsp_response.data(),
                                  config->ocsp_response.size())) {
     return false;
@@ -375,8 +409,9 @@ static bool GetCertificate(SSL *ssl, bssl::UniquePtr<X509> *out_x509,
 
 static bool InstallCertificate(SSL *ssl) {
   bssl::UniquePtr<X509> x509;
+  bssl::UniquePtr<STACK_OF(X509)> chain;
   bssl::UniquePtr<EVP_PKEY> pkey;
-  if (!GetCertificate(ssl, &x509, &pkey)) {
+  if (!GetCertificate(ssl, &x509, &chain, &pkey)) {
     return false;
   }
 
@@ -392,6 +427,11 @@ static bool InstallCertificate(SSL *ssl) {
   }
 
   if (x509 && !SSL_use_certificate(ssl, x509.get())) {
+    return false;
+  }
+
+  if (sk_X509_num(chain.get()) > 0 &&
+      !SSL_set1_chain(ssl, chain.get())) {
     return false;
   }
 
@@ -456,8 +496,9 @@ static int ClientCertCallback(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey) {
   }
 
   bssl::UniquePtr<X509> x509;
+  bssl::UniquePtr<STACK_OF(X509)> chain;
   bssl::UniquePtr<EVP_PKEY> pkey;
-  if (!GetCertificate(ssl, &x509, &pkey)) {
+  if (!GetCertificate(ssl, &x509, &chain, &pkey)) {
     return -1;
   }
 
@@ -466,7 +507,7 @@ static int ClientCertCallback(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey) {
     return 0;
   }
 
-  // Asynchronous private keys are not supported with client_cert_cb.
+  // Chains and asynchronous private keys are not supported with client_cert_cb.
   *out_x509 = x509.release();
   *out_pkey = pkey.release();
   return 1;
@@ -594,8 +635,10 @@ static unsigned PskServerCallback(SSL *ssl, const char *identity,
   return config->psk.size();
 }
 
+static timeval g_clock;
+
 static void CurrentTimeCallback(const SSL *ssl, timeval *out_clock) {
-  *out_clock = PacketedBioGetClock(GetTestState(ssl)->packeted_bio);
+  *out_clock = g_clock;
 }
 
 static void ChannelIdCallback(SSL *ssl, EVP_PKEY **out_pkey) {
@@ -620,6 +663,10 @@ static int CertCallback(SSL *ssl, void *arg) {
       fprintf(stderr, "certificate types mismatch\n");
       return 0;
     }
+  }
+
+  if (config->fail_cert_callback) {
+    return 0;
   }
 
   // The certificate will be installed via other means.
@@ -774,6 +821,20 @@ static int CustomExtensionParseCallback(SSL *ssl, unsigned extension_value,
   return 1;
 }
 
+static int ServerNameCallback(SSL *ssl, int *out_alert, void *arg) {
+  // SNI must be accessible from the SNI callback.
+  const TestConfig *config = GetTestConfig(ssl);
+  const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+  if (server_name == nullptr ||
+      std::string(server_name) != config->expected_server_name) {
+    fprintf(stderr, "servername mismatch (got %s; want %s)\n", server_name,
+            config->expected_server_name.c_str());
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+  }
+
+  return SSL_TLSEXT_ERR_OK;
+}
+
 // Connect returns a new socket connected to localhost on |port| or -1 on
 // error.
 static int Connect(uint16_t port) {
@@ -923,9 +984,7 @@ static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
   SSL_CTX_enable_tls_channel_id(ssl_ctx.get());
   SSL_CTX_set_channel_id_cb(ssl_ctx.get(), ChannelIdCallback);
 
-  if (config->is_dtls) {
-    SSL_CTX_set_current_time_cb(ssl_ctx.get(), CurrentTimeCallback);
-  }
+  SSL_CTX_set_current_time_cb(ssl_ctx.get(), CurrentTimeCallback);
 
   SSL_CTX_set_info_callback(ssl_ctx.get(), InfoCallback);
   SSL_CTX_sess_set_new_cb(ssl_ctx.get(), NewSessionCallback);
@@ -969,6 +1028,16 @@ static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
 
   if (config->enable_grease) {
     SSL_CTX_set_grease_enabled(ssl_ctx.get(), 1);
+  }
+
+  if (!config->expected_server_name.empty()) {
+    SSL_CTX_set_tlsext_servername_callback(ssl_ctx.get(), ServerNameCallback);
+  }
+
+  if (!config->ticket_key.empty() &&
+      !SSL_CTX_set_tlsext_ticket_keys(ssl_ctx.get(), config->ticket_key.data(),
+                                      config->ticket_key.size())) {
+    return nullptr;
   }
 
   return ssl_ctx;
@@ -1053,6 +1122,16 @@ static int DoRead(SSL *ssl, uint8_t *out, size_t max_out) {
                                  : SSL_read(ssl, out, max_out);
     if (config->async) {
       AsyncBioEnforceWriteQuota(test_state->async_bio, true);
+    }
+
+    // Run the exporter after each read. This is to test that the exporter fails
+    // during a renegotiation.
+    if (config->use_exporter_between_reads) {
+      uint8_t buf;
+      if (!SSL_export_keying_material(ssl, &buf, 1, NULL, 0, NULL, 0, 0)) {
+        fprintf(stderr, "failed to export keying material\n");
+        return -1;
+      }
     }
   } while (config->async && RetryAsync(ssl, ret));
 
@@ -1171,7 +1250,8 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
   if (!config->expected_server_name.empty()) {
     const char *server_name =
         SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-    if (server_name != config->expected_server_name) {
+    if (server_name == nullptr ||
+        server_name != config->expected_server_name) {
       fprintf(stderr, "servername mismatch (got %s; want %s)\n",
               server_name, config->expected_server_name.c_str());
       return false;
@@ -1285,6 +1365,25 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
     }
   }
 
+  uint16_t cipher_id =
+      static_cast<uint16_t>(SSL_CIPHER_get_id(SSL_get_current_cipher(ssl)));
+  if (config->expect_cipher_aes != 0 &&
+      EVP_has_aes_hardware() &&
+      static_cast<uint16_t>(config->expect_cipher_aes) != cipher_id) {
+    fprintf(stderr, "Cipher ID was %04x, wanted %04x (has AES hardware)\n",
+            cipher_id, static_cast<uint16_t>(config->expect_cipher_aes));
+    return false;
+  }
+
+  if (config->expect_cipher_no_aes != 0 &&
+      !EVP_has_aes_hardware() &&
+      static_cast<uint16_t>(config->expect_cipher_no_aes) != cipher_id) {
+    fprintf(stderr, "Cipher ID was %04x, wanted %04x (no AES hardware)\n",
+            cipher_id, static_cast<uint16_t>(config->expect_cipher_no_aes));
+    return false;
+  }
+
+
   if (!config->psk.empty()) {
     if (SSL_get_peer_cert_chain(ssl) != nullptr) {
       fprintf(stderr, "Received peer certificate on a PSK cipher.\n");
@@ -1295,6 +1394,65 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
       fprintf(stderr, "Received no peer certificate but expected one.\n");
       return false;
     }
+  }
+
+  if (!config->expect_peer_cert_file.empty()) {
+    bssl::UniquePtr<X509> expect_leaf;
+    bssl::UniquePtr<STACK_OF(X509)> expect_chain;
+    if (!LoadCertificate(&expect_leaf, &expect_chain,
+                         config->expect_peer_cert_file)) {
+      return false;
+    }
+
+    // For historical reasons, clients report a chain with a leaf and servers
+    // without.
+    if (!config->is_server) {
+      if (!sk_X509_insert(expect_chain.get(), expect_leaf.get(), 0)) {
+        return false;
+      }
+      X509_up_ref(expect_leaf.get());  // sk_X509_push takes ownership.
+    }
+
+    bssl::UniquePtr<X509> leaf(SSL_get_peer_certificate(ssl));
+    STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
+    if (X509_cmp(leaf.get(), expect_leaf.get()) != 0) {
+      fprintf(stderr, "Received a different leaf certificate than expected.\n");
+      return false;
+    }
+
+    if (sk_X509_num(chain) != sk_X509_num(expect_chain.get())) {
+      fprintf(stderr, "Received a chain of length %zu instead of %zu.\n",
+              sk_X509_num(chain), sk_X509_num(expect_chain.get()));
+      return false;
+    }
+
+    for (size_t i = 0; i < sk_X509_num(chain); i++) {
+      if (X509_cmp(sk_X509_value(chain, i),
+                   sk_X509_value(expect_chain.get(), i)) != 0) {
+        fprintf(stderr, "Chain certificate %zu did not match.\n",
+                i + 1);
+        return false;
+      }
+    }
+  }
+
+  bool expected_sha256_client_cert = config->expect_sha256_client_cert_initial;
+  if (is_resume) {
+    expected_sha256_client_cert = config->expect_sha256_client_cert_resume;
+  }
+
+  if (SSL_get_session(ssl)->peer_sha256_valid != expected_sha256_client_cert) {
+    fprintf(stderr,
+            "Unexpected SHA-256 client cert state: expected:%d is_resume:%d.\n",
+            expected_sha256_client_cert, is_resume);
+    return false;
+  }
+
+  if (expected_sha256_client_cert &&
+      SSL_get_session(ssl)->x509_peer != nullptr) {
+    fprintf(stderr, "Have both client cert and SHA-256 hash: is_resume:%d.\n",
+            is_resume);
+    return false;
   }
 
   return true;
@@ -1456,6 +1614,12 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
   if (config->max_cert_list > 0) {
     SSL_set_max_cert_list(ssl.get(), config->max_cert_list);
   }
+  if (!is_resume && config->retain_only_sha256_client_cert_initial) {
+    SSL_set_retain_only_sha256_of_client_certs(ssl.get(), 1);
+  }
+  if (is_resume && config->retain_only_sha256_client_cert_resume) {
+    SSL_set_retain_only_sha256_of_client_certs(ssl.get(), 1);
+  }
 
   int sock = Connect(config->port);
   if (sock == -1) {
@@ -1468,7 +1632,7 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
     return false;
   }
   if (config->is_dtls) {
-    bssl::UniquePtr<BIO> packeted = PacketedBioCreate(!config->async);
+    bssl::UniquePtr<BIO> packeted = PacketedBioCreate(&g_clock, !config->async);
     if (!packeted) {
       return false;
     }
@@ -1743,6 +1907,11 @@ static int Main(int argc, char **argv) {
     return Usage(argv[0]);
   }
 
+  // Some code treats the zero time special, so initialize the clock to a
+  // non-zero time.
+  g_clock.tv_sec = 1234;
+  g_clock.tv_usec = 1234;
+
   bssl::UniquePtr<SSL_CTX> ssl_ctx = SetupCtx(&config);
   if (!ssl_ctx) {
     ERR_print_errors_fp(stderr);
@@ -1763,6 +1932,10 @@ static int Main(int argc, char **argv) {
       fprintf(stderr, "Connection %d failed.\n", i + 1);
       ERR_print_errors_fp(stderr);
       return 1;
+    }
+
+    if (config.resumption_delay != 0) {
+      g_clock.tv_sec += config.resumption_delay;
     }
   }
 
