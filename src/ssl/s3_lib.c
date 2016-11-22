@@ -200,7 +200,6 @@ void ssl3_free(SSL *ssl) {
     return;
   }
 
-  ssl3_cleanup_key_block(ssl);
   ssl_read_buffer_clear(ssl);
   ssl_write_buffer_clear(ssl);
 
@@ -220,7 +219,8 @@ void ssl3_free(SSL *ssl) {
   ssl->s3 = NULL;
 }
 
-struct ssl_cipher_preference_list_st *ssl_get_cipher_preferences(SSL *ssl) {
+const struct ssl_cipher_preference_list_st *ssl_get_cipher_preferences(
+    const SSL *ssl) {
   if (ssl->cipher_list != NULL) {
     return ssl->cipher_list;
   }
