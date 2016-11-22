@@ -73,6 +73,7 @@ struct TestConfig {
   bool install_ddos_callback = false;
   bool fail_ddos_callback = false;
   bool fail_second_ddos_callback = false;
+  bool fail_cert_callback = false;
   std::string cipher;
   std::string cipher_tls10;
   std::string cipher_tls11;
@@ -115,6 +116,16 @@ struct TestConfig {
   bool peek_then_read = false;
   bool enable_grease = false;
   int max_cert_list = 0;
+  std::string ticket_key;
+  bool use_exporter_between_reads = false;
+  int expect_cipher_aes = 0;
+  int expect_cipher_no_aes = 0;
+  std::string expect_peer_cert_file;
+  int resumption_delay = 0;
+  bool retain_only_sha256_client_cert_initial = false;
+  bool retain_only_sha256_client_cert_resume = false;
+  bool expect_sha256_client_cert_initial = false;
+  bool expect_sha256_client_cert_resume = false;
 };
 
 bool ParseConfig(int argc, char **argv, TestConfig *out_config);
