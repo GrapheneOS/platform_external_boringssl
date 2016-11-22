@@ -31,55 +31,15 @@
 #include <openssl/err.h>
 
 #include "../bn/internal.h"
-#include "../ec/internal.h"
 #include "../internal.h"
+#include "internal.h"
+#include "p256-x86_64.h"
 
 
 #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
     !defined(OPENSSL_SMALL)
 
-
-#define P256_LIMBS (256 / BN_BITS2)
-
-typedef struct {
-  BN_ULONG X[P256_LIMBS];
-  BN_ULONG Y[P256_LIMBS];
-  BN_ULONG Z[P256_LIMBS];
-} P256_POINT;
-
-typedef struct {
-  BN_ULONG X[P256_LIMBS];
-  BN_ULONG Y[P256_LIMBS];
-} P256_POINT_AFFINE;
-
 typedef P256_POINT_AFFINE PRECOMP256_ROW[64];
-
-/* Arithmetic on field elements using Almost Montgomery Multiplication. The
- * "almost" means, in particular, that the inputs and outputs of these
- * functions are in the range [0, 2**BN_BITS2), not [0, P). Only
- * |ecp_nistz256_from_mont| outputs a fully reduced value in [0, P). Almost
- * Montgomery Arithmetic is described clearly in "Efficient Software
- * Implementations of Modular Exponentiation" by Shay Gueron. */
-
-/* Modular neg: res = -a mod P, where res is not fully reduced. */
-void ecp_nistz256_neg(BN_ULONG res[P256_LIMBS], const BN_ULONG a[P256_LIMBS]);
-/* Montgomery mul: res = a*b*2^-256 mod P, where res is not fully reduced. */
-void ecp_nistz256_mul_mont(BN_ULONG res[P256_LIMBS],
-                           const BN_ULONG a[P256_LIMBS],
-                           const BN_ULONG b[P256_LIMBS]);
-/* Montgomery sqr: res = a*a*2^-256 mod P, where res is not fully reduced. */
-void ecp_nistz256_sqr_mont(BN_ULONG res[P256_LIMBS],
-                           const BN_ULONG a[P256_LIMBS]);
-/* Convert a number from Montgomery domain, by multiplying with 1, where res
- * will be fully reduced mod P. */
-void ecp_nistz256_from_mont(BN_ULONG res[P256_LIMBS],
-                            const BN_ULONG in[P256_LIMBS]);
-
-
-/* Functions that perform constant time access to the precomputed tables */
-void ecp_nistz256_select_w5(P256_POINT *val, const P256_POINT *in_t, int index);
-void ecp_nistz256_select_w7(P256_POINT_AFFINE *val,
-                            const P256_POINT_AFFINE *in_t, int index);
 
 /* One converted into the Montgomery domain */
 static const BN_ULONG ONE[P256_LIMBS] = {
@@ -90,7 +50,7 @@ static const BN_ULONG ONE[P256_LIMBS] = {
 /* Precomputed tables for the default generator */
 #include "p256-x86_64-table.h"
 
-/* Recode window to a signed digit, see ecp_nistputil.c for details */
+/* Recode window to a signed digit, see util-64.c for details */
 static unsigned booth_recode_w5(unsigned in) {
   unsigned s, d;
 
@@ -113,6 +73,11 @@ static unsigned booth_recode_w7(unsigned in) {
   return (d << 1) + (s & 1);
 }
 
+/* copy_conditional copies |src| to |dst| if |move| is one and leaves it as-is
+ * if |move| is zero.
+ *
+ * WARNING: this breaks the usual convention of constant-time functions
+ * returning masks. */
 static void copy_conditional(BN_ULONG dst[P256_LIMBS],
                              const BN_ULONG src[P256_LIMBS], BN_ULONG move) {
   BN_ULONG mask1 = ((BN_ULONG)0) - move;
@@ -130,15 +95,34 @@ static void copy_conditional(BN_ULONG dst[P256_LIMBS],
   }
 }
 
-void ecp_nistz256_point_double(P256_POINT *r, const P256_POINT *a);
-void ecp_nistz256_point_add(P256_POINT *r, const P256_POINT *a,
-                            const P256_POINT *b);
-void ecp_nistz256_point_add_affine(P256_POINT *r, const P256_POINT *a,
-                                   const P256_POINT_AFFINE *b);
+/* is_not_zero returns one iff in != 0 and zero otherwise.
+ *
+ * WARNING: this breaks the usual convention of constant-time functions
+ * returning masks.
+ *
+ * (define-fun is_not_zero ((in (_ BitVec 64))) (_ BitVec 64)
+ *   (bvlshr (bvor in (bvsub #x0000000000000000 in)) #x000000000000003f)
+ * )
+ *
+ * (declare-fun x () (_ BitVec 64))
+ *
+ * (assert (and (= x #x0000000000000000) (= (is_not_zero x) #x0000000000000001)))
+ * (check-sat)
+ *
+ * (assert (and (not (= x #x0000000000000000)) (= (is_not_zero x) #x0000000000000000)))
+ * (check-sat)
+ * */
+static BN_ULONG is_not_zero(BN_ULONG in) {
+  in |= (0 - in);
+  in >>= BN_BITS2 - 1;
+  return in;
+}
 
-/* r = in^-1 mod p */
-static void ecp_nistz256_mod_inverse(BN_ULONG r[P256_LIMBS],
-                                     const BN_ULONG in[P256_LIMBS]) {
+/* ecp_nistz256_mod_inverse_mont sets |r| to (|in| * 2^-256)^-1 * 2^256 mod p.
+ * That is, |r| is the modular inverse of |in| for input and output in the
+ * Montgomery domain. */
+static void ecp_nistz256_mod_inverse_mont(BN_ULONG r[P256_LIMBS],
+                                          const BN_ULONG in[P256_LIMBS]) {
   /* The poly is ffffffff 00000001 00000000 00000000 00000000 ffffffff ffffffff
      ffffffff
      We use FLT and used poly-2 as exponent */
@@ -454,7 +438,11 @@ static int ecp_nistz256_points_mul(
     ecp_nistz256_neg(p.p.Z, p.p.Y);
     copy_conditional(p.p.Y, p.p.Z, wvalue & 1);
 
-    memcpy(p.p.Z, ONE, sizeof(ONE));
+    /* Convert |p| from affine to Jacobian coordinates. We set Z to zero if |p|
+     * is infinity and |ONE| otherwise. |p| was computed from the table, so it
+     * is infinity iff |wvalue >> 1| is zero.  */
+    memset(p.p.Z, 0, sizeof(p.p.Z));
+    copy_conditional(p.p.Z, ONE, is_not_zero(wvalue >> 1));
 
     for (i = 1; i < 37; i++) {
       unsigned off = (index - 1) / 8;
@@ -524,13 +512,11 @@ static int ecp_nistz256_get_affine(const EC_GROUP *group, const EC_POINT *point,
     return 0;
   }
 
-  ecp_nistz256_mod_inverse(z_inv3, point_z);
+  ecp_nistz256_mod_inverse_mont(z_inv3, point_z);
   ecp_nistz256_sqr_mont(z_inv2, z_inv3);
 
-  /* Unlike the |BN_mod_mul_montgomery|-based implementation, we cannot factor
-   * out the two calls to |ecp_nistz256_from_mont| into one call, because
-   * |ecp_nistz256_from_mont| must be the last operation to ensure that the
-   * result is fully reduced mod P. */
+  /* TODO(davidben): The two calls to |ecp_nistz256_from_mont| may be factored
+   * into one call now that other operations also reduce mod P. */
 
   if (x != NULL) {
     BN_ULONG x_aff[P256_LIMBS];

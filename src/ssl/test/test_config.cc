@@ -75,6 +75,7 @@ const Flag<bool> kBoolFlags[] = {
   { "-install-ddos-callback", &TestConfig::install_ddos_callback },
   { "-fail-ddos-callback", &TestConfig::fail_ddos_callback },
   { "-fail-second-ddos-callback", &TestConfig::fail_second_ddos_callback },
+  { "-fail-cert-callback", &TestConfig::fail_cert_callback },
   { "-handshake-never-done", &TestConfig::handshake_never_done },
   { "-use-export-context", &TestConfig::use_export_context },
   { "-tls-unique", &TestConfig::tls_unique },
@@ -106,6 +107,15 @@ const Flag<bool> kBoolFlags[] = {
   { "-send-alert", &TestConfig::send_alert },
   { "-peek-then-read", &TestConfig::peek_then_read },
   { "-enable-grease", &TestConfig::enable_grease },
+  { "-use-exporter-between-reads", &TestConfig::use_exporter_between_reads },
+  { "-retain-only-sha256-client-cert-initial",
+    &TestConfig::retain_only_sha256_client_cert_initial },
+  { "-retain-only-sha256-client-cert-resume",
+    &TestConfig::retain_only_sha256_client_cert_resume },
+  { "-expect-sha256-client-cert-initial",
+    &TestConfig::expect_sha256_client_cert_initial },
+  { "-expect-sha256-client-cert-resume",
+    &TestConfig::expect_sha256_client_cert_resume },
 };
 
 const Flag<std::string> kStringFlags[] = {
@@ -130,6 +140,7 @@ const Flag<std::string> kStringFlags[] = {
   { "-cipher-tls11", &TestConfig::cipher_tls11 },
   { "-export-label", &TestConfig::export_label },
   { "-export-context", &TestConfig::export_context },
+  { "-expect-peer-cert-file", &TestConfig::expect_peer_cert_file },
 };
 
 const Flag<std::string> kBase64Flags[] = {
@@ -140,6 +151,7 @@ const Flag<std::string> kBase64Flags[] = {
     &TestConfig::expected_signed_cert_timestamps },
   { "-ocsp-response", &TestConfig::ocsp_response },
   { "-signed-cert-timestamps", &TestConfig::signed_cert_timestamps },
+  { "-ticket-key", &TestConfig::ticket_key },
 };
 
 const Flag<int> kIntFlags[] = {
@@ -156,6 +168,9 @@ const Flag<int> kIntFlags[] = {
   { "-expect-dhe-group-size", &TestConfig::expect_dhe_group_size },
   { "-initial-timeout-duration-ms", &TestConfig::initial_timeout_duration_ms },
   { "-max-cert-list", &TestConfig::max_cert_list },
+  { "-expect-cipher-aes", &TestConfig::expect_cipher_aes },
+  { "-expect-cipher-no-aes", &TestConfig::expect_cipher_no_aes },
+  { "-resumption-delay", &TestConfig::resumption_delay },
 };
 
 const Flag<std::vector<int>> kIntVectorFlags[] = {

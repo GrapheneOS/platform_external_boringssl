@@ -184,6 +184,7 @@ crypto_sources := \
   src/crypto/poly1305/poly1305.c\
   src/crypto/poly1305/poly1305_arm.c\
   src/crypto/poly1305/poly1305_vec.c\
+  src/crypto/pool/pool.c\
   src/crypto/rand/deterministic.c\
   src/crypto/rand/rand.c\
   src/crypto/rand/urandom.c\
@@ -196,6 +197,7 @@ crypto_sources := \
   src/crypto/rsa/rsa.c\
   src/crypto/rsa/rsa_asn1.c\
   src/crypto/rsa/rsa_impl.c\
+  src/crypto/sha/sha1-altivec.c\
   src/crypto/sha/sha1.c\
   src/crypto/sha/sha256.c\
   src/crypto/sha/sha512.c\

@@ -1024,14 +1024,12 @@ static bool TestASN1() {
     }
 
     // Test the value serializes correctly.
-    CBB cbb;
+    bssl::ScopedCBB cbb;
     uint8_t *der;
     size_t der_len;
-    CBB_zero(&cbb);
-    if (!CBB_init(&cbb, 0) ||
-        !BN_marshal_asn1(&cbb, bn.get()) ||
-        !CBB_finish(&cbb, &der, &der_len)) {
-      CBB_cleanup(&cbb);
+    if (!CBB_init(cbb.get(), 0) ||
+        !BN_marshal_asn1(cbb.get(), bn.get()) ||
+        !CBB_finish(cbb.get(), &der, &der_len)) {
       return false;
     }
     bssl::UniquePtr<uint8_t> delete_der(der);
@@ -1114,16 +1112,13 @@ static bool TestASN1() {
   if (!bn) {
     return false;
   }
-  CBB cbb;
-  CBB_zero(&cbb);
-  if (!CBB_init(&cbb, 0) ||
-      BN_marshal_asn1(&cbb, bn.get())) {
+  bssl::ScopedCBB cbb;
+  if (!CBB_init(cbb.get(), 0) ||
+      BN_marshal_asn1(cbb.get(), bn.get())) {
     fprintf(stderr, "Serialized negative number.\n");
-    CBB_cleanup(&cbb);
     return false;
   }
   ERR_clear_error();
-  CBB_cleanup(&cbb);
 
   return true;
 }
@@ -1205,6 +1200,37 @@ static bool TestNegativeZero(BN_CTX *ctx) {
       strcmp(dec.get(), "-0") != 0 ||
       strcmp(hex.get(), "-0") != 0) {
     fprintf(stderr, "BN_bn2dec or BN_bn2hex failed with negative zero.\n");
+    return false;
+  }
+
+  // Test that |BN_rshift| and |BN_rshift1| will not produce a negative zero.
+  if (!BN_set_word(a.get(), 1)) {
+    return false;
+  }
+
+  BN_set_negative(a.get(), 1);
+  if (!BN_rshift(b.get(), a.get(), 1) ||
+      !BN_rshift1(c.get(), a.get())) {
+    return false;
+  }
+
+  if (!BN_is_zero(b.get()) || BN_is_negative(b.get())) {
+    fprintf(stderr, "BN_rshift(-1, 1) produced the wrong result.\n");
+    return false;
+  }
+
+  if (!BN_is_zero(c.get()) || BN_is_negative(c.get())) {
+    fprintf(stderr, "BN_rshift1(-1) produced the wrong result.\n");
+    return false;
+  }
+
+  // Test that |BN_div_word| will not produce a negative zero.
+  if (BN_div_word(a.get(), 2) == (BN_ULONG)-1) {
+    return false;
+  }
+
+  if (!BN_is_zero(a.get()) || BN_is_negative(a.get())) {
+    fprintf(stderr, "BN_div_word(-1, 2) produced the wrong result.\n");
     return false;
   }
 

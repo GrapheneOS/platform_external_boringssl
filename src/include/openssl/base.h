@@ -114,6 +114,10 @@ extern "C" {
 #define OPENSSL_WINDOWS
 #endif
 
+#if defined(__linux__)
+#define OPENSSL_LINUX
+#endif
+
 #if defined(TRUSTY)
 #define OPENSSL_TRUSTY
 #define OPENSSL_NO_THREADS
@@ -185,6 +189,10 @@ extern "C" {
 #define OPENSSL_MSVC_PRAGMA(arg)
 #endif
 
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE) && \
+    !defined(BORINGSSL_UNSAFE_DETERMINISTIC_MODE)
+#define BORINGSSL_UNSAFE_DETERMINISTIC_MODE
+#endif
 
 /* CRYPTO_THREADID is a dummy value. */
 typedef int CRYPTO_THREADID;
@@ -255,6 +263,8 @@ typedef struct cbs_st CBS;
 typedef struct cmac_ctx_st CMAC_CTX;
 typedef struct conf_st CONF;
 typedef struct conf_value_st CONF_VALUE;
+typedef struct crypto_buffer_pool_st CRYPTO_BUFFER_POOL;
+typedef struct crypto_buffer_st CRYPTO_BUFFER;
 typedef struct dh_st DH;
 typedef struct dsa_st DSA;
 typedef struct ec_group_st EC_GROUP;
