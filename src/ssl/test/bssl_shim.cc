@@ -65,7 +65,6 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include "packeted_bio.h"
 #include "test_config.h"
 
-namespace bssl {
 
 #if !defined(OPENSSL_WINDOWS)
 static int closesocket(int sock) {
@@ -246,7 +245,7 @@ static ssl_private_key_result_t AsyncPrivateKeySign(
       return ssl_private_key_failure;
   }
 
-  ScopedEVP_MD_CTX ctx;
+  bssl::ScopedEVP_MD_CTX ctx;
   EVP_PKEY_CTX *pctx;
   if (!EVP_DigestSignInit(ctx.get(), &pctx, md, nullptr,
                           test_state->private_key.get())) {
@@ -438,9 +437,9 @@ static bool InstallCertificate(SSL *ssl) {
   return true;
 }
 
-static int SelectCertificateCallback(const struct ssl_early_callback_ctx *ctx) {
-  const TestConfig *config = GetTestConfig(ctx->ssl);
-  GetTestState(ctx->ssl)->early_callback_called = true;
+static int SelectCertificateCallback(const SSL_CLIENT_HELLO *client_hello) {
+  const TestConfig *config = GetTestConfig(client_hello->ssl);
+  GetTestState(client_hello->ssl)->early_callback_called = true;
 
   if (!config->expected_server_name.empty()) {
     const uint8_t *extension_data;
@@ -448,9 +447,9 @@ static int SelectCertificateCallback(const struct ssl_early_callback_ctx *ctx) {
     CBS extension, server_name_list, host_name;
     uint8_t name_type;
 
-    if (!SSL_early_callback_ctx_extension_get(ctx, TLSEXT_TYPE_server_name,
-                                              &extension_data,
-                                              &extension_len)) {
+    if (!SSL_early_callback_ctx_extension_get(
+            client_hello, TLSEXT_TYPE_server_name, &extension_data,
+            &extension_len)) {
       fprintf(stderr, "Could not find server_name extension.\n");
       return -1;
     }
@@ -483,7 +482,7 @@ static int SelectCertificateCallback(const struct ssl_early_callback_ctx *ctx) {
       // Install the certificate asynchronously.
       return 0;
     }
-    if (!InstallCertificate(ctx->ssl)) {
+    if (!InstallCertificate(client_hello->ssl)) {
       return -1;
     }
   }
@@ -697,8 +696,8 @@ static SSL_SESSION *GetSessionCallback(SSL *ssl, uint8_t *data, int len,
   }
 }
 
-static int DDoSCallback(const struct ssl_early_callback_ctx *early_context) {
-  const TestConfig *config = GetTestConfig(early_context->ssl);
+static int DDoSCallback(const SSL_CLIENT_HELLO *client_hello) {
+  const TestConfig *config = GetTestConfig(client_hello->ssl);
   static int callback_num = 0;
 
   callback_num++;
@@ -981,7 +980,7 @@ static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
     SSL_CTX_set_alpn_select_cb(ssl_ctx.get(), AlpnSelectCallback, NULL);
   }
 
-  SSL_CTX_enable_tls_channel_id(ssl_ctx.get());
+  SSL_CTX_set_tls_channel_id_enabled(ssl_ctx.get(), 1);
   SSL_CTX_set_channel_id_cb(ssl_ctx.get(), ChannelIdCallback);
 
   SSL_CTX_set_current_time_cb(ssl_ctx.get(), CurrentTimeCallback);
@@ -1520,10 +1519,10 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
   }
   if (!config->expected_channel_id.empty() ||
       config->enable_channel_id) {
-    SSL_enable_tls_channel_id(ssl.get());
+    SSL_set_tls_channel_id_enabled(ssl.get(), 1);
   }
   if (!config->send_channel_id.empty()) {
-    SSL_enable_tls_channel_id(ssl.get());
+    SSL_set_tls_channel_id_enabled(ssl.get(), 1);
     if (!config->async) {
       // The async case will be supplied by |ChannelIdCallback|.
       bssl::UniquePtr<EVP_PKEY> pkey = LoadPrivateKey(config->send_channel_id);
@@ -1588,9 +1587,6 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
   }
   if (!config->check_close_notify) {
     SSL_set_quiet_shutdown(ssl.get(), 1);
-  }
-  if (config->disable_npn) {
-    SSL_set_options(ssl.get(), SSL_OP_DISABLE_NPN);
   }
   if (config->p384_only) {
     int nid = NID_secp384r1;
@@ -1873,7 +1869,7 @@ class StderrDelimiter {
   ~StderrDelimiter() { fprintf(stderr, "--- DONE ---\n"); }
 };
 
-static int Main(int argc, char **argv) {
+int main(int argc, char **argv) {
   // To distinguish ASan's output from ours, add a trailing message to stderr.
   // Anything following this line will be considered an error.
   StderrDelimiter delimiter;
@@ -1940,10 +1936,4 @@ static int Main(int argc, char **argv) {
   }
 
   return 0;
-}
-
-}  // namespace bssl
-
-int main(int argc, char **argv) {
-  return bssl::Main(argc, argv);
 }
