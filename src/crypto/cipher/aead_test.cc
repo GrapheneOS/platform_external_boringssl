@@ -23,7 +23,15 @@
 
 #include "../test/file_test.h"
 
-namespace bssl {
+
+#if defined(OPENSSL_SMALL)
+const EVP_AEAD* EVP_aead_aes_128_gcm_siv(void) {
+  return nullptr;
+}
+const EVP_AEAD* EVP_aead_aes_256_gcm_siv(void) {
+  return nullptr;
+}
+#endif
 
 // This program tests an AEAD against a series of test vectors from a file,
 // using the FileTest format. As an example, here's a valid test case:
@@ -48,7 +56,7 @@ static bool TestAEAD(FileTest *t, void *arg) {
     return false;
   }
 
-  ScopedEVP_AEAD_CTX ctx;
+  bssl::ScopedEVP_AEAD_CTX ctx;
   if (!EVP_AEAD_CTX_init_with_direction(ctx.get(), aead, key.data(), key.size(),
                                         tag.size(), evp_aead_seal)) {
     t->PrintLine("Failed to init AEAD.");
@@ -198,7 +206,7 @@ static bool TestWithAliasedBuffers(const EVP_AEAD *aead) {
   const size_t max_overhead = EVP_AEAD_max_overhead(aead);
 
   std::vector<uint8_t> key(key_len, 'a');
-  ScopedEVP_AEAD_CTX ctx;
+  bssl::ScopedEVP_AEAD_CTX ctx;
   if (!EVP_AEAD_CTX_init(ctx.get(), aead, key.data(), key_len,
                          EVP_AEAD_DEFAULT_TAG_LENGTH, nullptr)) {
     return false;
@@ -302,6 +310,8 @@ struct KnownAEAD {
 static const struct KnownAEAD kAEADs[] = {
   { "aes-128-gcm", EVP_aead_aes_128_gcm, false },
   { "aes-256-gcm", EVP_aead_aes_256_gcm, false },
+  { "aes-128-gcm-siv", EVP_aead_aes_128_gcm_siv, false },
+  { "aes-256-gcm-siv", EVP_aead_aes_256_gcm_siv, false },
   { "chacha20-poly1305", EVP_aead_chacha20_poly1305, false },
   { "chacha20-poly1305-old", EVP_aead_chacha20_poly1305_old, false },
   { "aes-128-cbc-sha1-tls", EVP_aead_aes_128_cbc_sha1_tls, true },
@@ -321,7 +331,7 @@ static const struct KnownAEAD kAEADs[] = {
   { "", NULL, false },
 };
 
-static int Main(int argc, char **argv) {
+int main(int argc, char **argv) {
   CRYPTO_library_init();
 
   if (argc != 3) {
@@ -342,6 +352,11 @@ static int Main(int argc, char **argv) {
   }
 
   const EVP_AEAD *const aead = known_aead->func();
+  if (aead == NULL) {
+    // AEAD is not compiled in this configuration.
+    printf("PASS\n");
+    return 0;
+  }
 
   if (!TestCleanupAfterInitFailure(aead)) {
     return 1;
@@ -353,10 +368,4 @@ static int Main(int argc, char **argv) {
   }
 
   return FileTestMain(TestAEAD, const_cast<EVP_AEAD*>(aead), argv[2]);
-}
-
-}  // namespace bssl
-
-int main(int argc, char **argv) {
-  return bssl::Main(argc, argv);
 }
