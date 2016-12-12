@@ -161,6 +161,7 @@ crypto_sources := \
   src/crypto/modes/ctr.c\
   src/crypto/modes/gcm.c\
   src/crypto/modes/ofb.c\
+  src/crypto/modes/polyval.c\
   src/crypto/newhope/error_correction.c\
   src/crypto/newhope/newhope.c\
   src/crypto/newhope/ntt.c\
