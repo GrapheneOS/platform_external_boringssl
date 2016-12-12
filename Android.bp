@@ -44,7 +44,6 @@ cc_defaults {
 libcrypto_sources_no_clang = [
     "linux-arm/crypto/aes/aes-armv4.S",
     "linux-arm/crypto/aes/bsaes-armv7.S",
-    "linux-arm/crypto/sha/sha256-armv4.S",
 ]
 
 cc_defaults {

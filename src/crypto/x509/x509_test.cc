@@ -25,7 +25,6 @@
 #include <openssl/pool.h>
 #include <openssl/x509.h>
 
-namespace bssl {
 
 static const char kCrossSigningRootPEM[] =
     "-----BEGIN CERTIFICATE-----\n"
@@ -724,7 +723,7 @@ static bool TestSignCtx() {
   }
 
   // Test PKCS#1 v1.5.
-  ScopedEVP_MD_CTX md_ctx;
+  bssl::ScopedEVP_MD_CTX md_ctx;
   if (!EVP_DigestSignInit(md_ctx.get(), NULL, EVP_sha256(), NULL, pkey.get()) ||
       !SignatureRoundTrips(md_ctx.get(), pkey.get())) {
     fprintf(stderr, "RSA PKCS#1 with SHA-256 failed\n");
@@ -941,7 +940,51 @@ static bool TestFromBufferReused() {
   return true;
 }
 
-static int Main() {
+static bool TestFailedParseFromBuffer() {
+  static const uint8_t kNonsense[] = {1, 2, 3, 4, 5};
+
+  bssl::UniquePtr<CRYPTO_BUFFER> buf(
+      CRYPTO_BUFFER_new(kNonsense, sizeof(kNonsense), nullptr));
+  if (!buf) {
+    return false;
+  }
+
+  bssl::UniquePtr<X509> cert(X509_parse_from_buffer(buf.get()));
+  if (cert) {
+    fprintf(stderr, "Nonsense somehow parsed.\n");
+    return false;
+  }
+  ERR_clear_error();
+
+  // Test a buffer with trailing data.
+  size_t data_len;
+  bssl::UniquePtr<uint8_t> data;
+  if (!PEMToDER(&data, &data_len, kRootCAPEM)) {
+    return false;
+  }
+
+  std::unique_ptr<uint8_t[]> data_with_trailing_byte(new uint8_t[data_len + 1]);
+  memcpy(data_with_trailing_byte.get(), data.get(), data_len);
+  data_with_trailing_byte[data_len] = 0;
+
+  bssl::UniquePtr<CRYPTO_BUFFER> buf_with_trailing_byte(
+      CRYPTO_BUFFER_new(data_with_trailing_byte.get(), data_len + 1, nullptr));
+  if (!buf_with_trailing_byte) {
+    return false;
+  }
+
+  bssl::UniquePtr<X509> root(
+      X509_parse_from_buffer(buf_with_trailing_byte.get()));
+  if (root) {
+    fprintf(stderr, "Parsed buffer with trailing byte.\n");
+    return false;
+  }
+  ERR_clear_error();
+
+  return true;
+}
+
+int main() {
   CRYPTO_library_init();
 
   if (!TestVerify() ||
@@ -952,16 +995,11 @@ static int Main() {
       !TestFromBuffer() ||
       !TestFromBufferTrailingData() ||
       !TestFromBufferModified() ||
-      !TestFromBufferReused()) {
+      !TestFromBufferReused() ||
+      !TestFailedParseFromBuffer()) {
     return 1;
   }
 
   printf("PASS\n");
   return 0;
-}
-
-}  // namespace bssl
-
-int main() {
-  return bssl::Main();
 }
