@@ -171,8 +171,7 @@ extern "C" {
 #define SSL_kECDHE 0x00000004L
 /* SSL_kPSK is only set for plain PSK, not ECDHE_PSK. */
 #define SSL_kPSK 0x00000008L
-#define SSL_kCECPQ1 0x00000010L
-#define SSL_kGENERIC 0x00000020L
+#define SSL_kGENERIC 0x00000010L
 
 /* Bits for |algorithm_auth| (server authentication). */
 #define SSL_aRSA 0x00000001L
@@ -617,9 +616,6 @@ int SSL_ECDH_CTX_init(SSL_ECDH_CTX *ctx, uint16_t group_id);
  * where the server specifies a group. It takes ownership of |params|. */
 void SSL_ECDH_CTX_init_for_dhe(SSL_ECDH_CTX *ctx, DH *params);
 
-/* SSL_ECDH_CTX_init_for_cecpq1 sets up |ctx| for use with CECPQ1. */
-void SSL_ECDH_CTX_init_for_cecpq1(SSL_ECDH_CTX *ctx);
-
 /* SSL_ECDH_CTX_cleanup releases memory associated with |ctx|. It is legal to
  * call it in the zero state. */
 void SSL_ECDH_CTX_cleanup(SSL_ECDH_CTX *ctx);
@@ -752,14 +748,27 @@ int ssl_has_certificate(const SSL *ssl);
  * on error. */
 X509 *ssl_parse_x509(CBS *cbs);
 
+/* ssl_session_x509_cache_objects fills out |sess->x509_peer| and
+ * |sess->x509_chain| from |sess->certs| and erases
+ * |sess->x509_chain_without_leaf|. It returns one on success or zero on
+ * error. */
+int ssl_session_x509_cache_objects(SSL_SESSION *sess);
+
 /* ssl_parse_cert_chain parses a certificate list from |cbs| in the format used
  * by a TLS Certificate message. On success, it returns a newly-allocated
- * |X509| list and advances |cbs|. Otherwise, it returns NULL and sets
- * |*out_alert| to an alert to send to the peer. If the list is non-empty and
- * |out_leaf_sha256| is non-NULL, it writes the SHA-256 hash of the leaf to
- * |out_leaf_sha256|. */
-STACK_OF(X509) *ssl_parse_cert_chain(SSL *ssl, uint8_t *out_alert,
-                                     uint8_t *out_leaf_sha256, CBS *cbs);
+ * |CRYPTO_BUFFER| list and advances |cbs|. Otherwise, it returns NULL and sets
+ * |*out_alert| to an alert to send to the peer.
+ *
+ * If the list is non-empty then |*out_pubkey| will be set to a freshly
+ * allocated public-key from the leaf certificate.
+ *
+ * If the list is non-empty and |out_leaf_sha256| is non-NULL, it writes the
+ * SHA-256 hash of the leaf to |out_leaf_sha256|. */
+STACK_OF(CRYPTO_BUFFER) *ssl_parse_cert_chain(uint8_t *out_alert,
+                                              EVP_PKEY **out_pubkey,
+                                              uint8_t *out_leaf_sha256,
+                                              CBS *cbs,
+                                              CRYPTO_BUFFER_POOL *pool);
 
 /* ssl_add_cert_to_cbb adds |x509| to |cbb|. It returns one on success and zero
  * on error. */
@@ -769,6 +778,17 @@ int ssl_add_cert_to_cbb(CBB *cbb, X509 *x509);
  * by a TLS Certificate message. If there is no certificate chain, it emits an
  * empty certificate list. It returns one on success and zero on error. */
 int ssl_add_cert_chain(SSL *ssl, CBB *cbb);
+
+/* ssl_cert_check_digital_signature_key_usage parses the DER-encoded, X.509
+ * certificate in |in| and returns one if doesn't specify a key usage or, if it
+ * does, if it includes digitalSignature. Otherwise it pushes to the error
+ * queue and returns zero. */
+int ssl_cert_check_digital_signature_key_usage(const CBS *in);
+
+/* ssl_cert_parse_pubkey extracts the public key from the DER-encoded, X.509
+ * certificate in |in|. It returns an allocated |EVP_PKEY| or else returns NULL
+ * and pushes to the error queue. */
+EVP_PKEY *ssl_cert_parse_pubkey(const CBS *in);
 
 /* ssl_parse_client_CA_list parses a CA list from |cbs| in the format used by a
  * TLS CertificateRequest message. On success, it returns a newly-allocated
@@ -782,15 +802,11 @@ STACK_OF(X509_NAME) *
  * on error. */
 int ssl_add_client_CA_list(SSL *ssl, CBB *cbb);
 
-/* ssl_check_leaf_certificate returns one if |leaf| is a suitable leaf server
- * certificate for |ssl|. Otherwise, it returns zero and pushes an error on the
- * error queue. */
-int ssl_check_leaf_certificate(SSL *ssl, X509 *leaf);
-
-/* ssl_do_client_cert_cb runs the client_cert_cb, if any, and returns one on
- * success and zero on error. On error, it sets |*out_should_retry| to one if
- * the callback failed and should be retried and zero otherwise. */
-int ssl_do_client_cert_cb(SSL *ssl, int *out_should_retry);
+/* ssl_check_leaf_certificate returns one if |pkey| and |leaf| are suitable as
+ * a server's leaf certificate for |ssl|. Otherwise, it returns zero and pushes
+ * an error on the error queue. */
+int ssl_check_leaf_certificate(SSL *ssl, EVP_PKEY *pkey,
+                               const CRYPTO_BUFFER *leaf);
 
 
 /* TLS 1.3 key derivation. */
@@ -886,7 +902,15 @@ struct ssl_handshake_st {
    * or |ssl_hs_ok| if none. */
   enum ssl_hs_wait_t wait;
 
+  /* state contains one of the SSL3_ST_* values. */
   int state;
+
+  /* next_state is used when SSL_ST_FLUSH_DATA is entered */
+  int next_state;
+
+  /* tls13_state is the internal state for the TLS 1.3 handshake. Its values
+   * depend on |do_tls13_handshake| but the starting state is always zero. */
+  int tls13_state;
 
   size_t hash_len;
   uint8_t secret[EVP_MAX_MD_SIZE];
@@ -973,6 +997,9 @@ struct ssl_handshake_st {
   /* hostname, on the server, is the value of the SNI extension. */
   char *hostname;
 
+  /* peer_pubkey is the public key parsed from the peer's leaf certificate. */
+  EVP_PKEY *peer_pubkey;
+
   /* key_block is the record-layer key block for TLS 1.2 and earlier. */
   uint8_t *key_block;
   uint8_t key_block_len;
@@ -1047,8 +1074,8 @@ int tls13_post_handshake(SSL *ssl);
  * it returns one. Otherwise, it sends an alert and returns zero. */
 int tls13_check_message_type(SSL *ssl, int type);
 
-int tls13_process_certificate(SSL *ssl, int allow_anonymous);
-int tls13_process_certificate_verify(SSL *ssl);
+int tls13_process_certificate(SSL_HANDSHAKE *hs, int allow_anonymous);
+int tls13_process_certificate_verify(SSL_HANDSHAKE *hs);
 int tls13_process_finished(SSL_HANDSHAKE *hs);
 
 int tls13_prepare_certificate(SSL_HANDSHAKE *hs);
@@ -1498,9 +1525,6 @@ typedef struct ssl3_state_st {
 
     int message_type;
 
-    /* used when SSL_ST_FLUSH_DATA is entered */
-    int next_state;
-
     int reuse_message;
 
     uint8_t new_mac_secret_len;
@@ -1514,10 +1538,6 @@ typedef struct ssl3_state_st {
      * messages, but it doesn't matter if the session that's being resumed
      * didn't use it to create the master secret initially. */
     char extended_master_secret;
-
-    /* peer_signature_algorithm is the signature algorithm used to authenticate
-     * the peer, or zero if not applicable. */
-    uint16_t peer_signature_algorithm;
   } tmp;
 
   /* new_session is the new mutable session being established by the current
