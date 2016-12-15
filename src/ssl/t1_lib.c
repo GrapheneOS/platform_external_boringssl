@@ -1212,7 +1212,7 @@ static int ext_ocsp_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
   if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION ||
       !hs->ocsp_stapling_requested ||
-      ssl->ctx->ocsp_response_length == 0 ||
+      ssl->ocsp_response == NULL ||
       ssl->s3->session_reused ||
       !ssl_cipher_uses_certificate_auth(ssl->s3->tmp.new_cipher)) {
     return 1;
@@ -2288,7 +2288,7 @@ int ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t **out_secret,
     return 0;
   }
 
-  ssl->s3->new_session->key_exchange_info = group_id;
+  ssl->s3->new_session->group_id = group_id;
   SSL_ECDH_CTX_cleanup(&hs->ecdh_ctx);
   return 1;
 }
@@ -2387,7 +2387,7 @@ int ssl_ext_key_share_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
   hs->public_key = NULL;
   hs->public_key_len = 0;
 
-  ssl->s3->new_session->key_exchange_info = group_id;
+  ssl->s3->new_session->group_id = group_id;
   return 1;
 }
 
