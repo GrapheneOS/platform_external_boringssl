@@ -162,12 +162,6 @@ crypto_sources := \
   src/crypto/modes/gcm.c\
   src/crypto/modes/ofb.c\
   src/crypto/modes/polyval.c\
-  src/crypto/newhope/error_correction.c\
-  src/crypto/newhope/newhope.c\
-  src/crypto/newhope/ntt.c\
-  src/crypto/newhope/poly.c\
-  src/crypto/newhope/precomp.c\
-  src/crypto/newhope/reduce.c\
   src/crypto/obj/obj.c\
   src/crypto/obj/obj_xref.c\
   src/crypto/pem/pem_all.c\
