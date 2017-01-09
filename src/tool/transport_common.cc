@@ -47,6 +47,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 
+#include "../crypto/internal.h"
 #include "internal.h"
 #include "transport_common.h"
 
@@ -98,7 +99,7 @@ bool Connect(int *out_sock, const std::string &hostname_and_port) {
   }
 
   struct addrinfo hint, *result;
-  memset(&hint, 0, sizeof(hint));
+  OPENSSL_memset(&hint, 0, sizeof(hint));
   hint.ai_family = AF_UNSPEC;
   hint.ai_socktype = SOCK_STREAM;
 
@@ -151,19 +152,30 @@ out:
 bool Accept(int *out_sock, const std::string &port) {
   struct sockaddr_in6 addr, cli_addr;
   socklen_t cli_addr_len = sizeof(cli_addr);
-  memset(&addr, 0, sizeof(addr));
+  OPENSSL_memset(&addr, 0, sizeof(addr));
 
   addr.sin6_family = AF_INET6;
   addr.sin6_addr = IN6ADDR_ANY_INIT;
   addr.sin6_port = htons(atoi(port.c_str()));
 
   bool ok = false;
+#if defined(OPENSSL_WINDOWS)
+  const BOOL enable = TRUE;
+#else
+  const int enable = 1;
+#endif
   int server_sock = -1;
 
   server_sock =
       socket(addr.sin6_family, SOCK_STREAM, 0);
   if (server_sock < 0) {
     perror("socket");
+    goto out;
+  }
+
+  if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&enable,
+                 sizeof(enable)) < 0) {
+    perror("setsockopt");
     goto out;
   }
 
@@ -434,7 +446,7 @@ class SocketLineReader {
 
         out_line->assign(buf_, length);
         buf_len_ -= i + 1;
-        memmove(buf_, &buf_[i + 1], buf_len_);
+        OPENSSL_memmove(buf_, &buf_[i + 1], buf_len_);
 
         return true;
       }
