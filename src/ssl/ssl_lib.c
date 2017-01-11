@@ -196,8 +196,8 @@ static uint32_t ssl_session_hash(const SSL_SESSION *sess) {
 
   uint8_t tmp_storage[sizeof(uint32_t)];
   if (sess->session_id_length < sizeof(tmp_storage)) {
-    memset(tmp_storage, 0, sizeof(tmp_storage));
-    memcpy(tmp_storage, sess->session_id, sess->session_id_length);
+    OPENSSL_memset(tmp_storage, 0, sizeof(tmp_storage));
+    OPENSSL_memcpy(tmp_storage, sess->session_id, sess->session_id_length);
     session_id = tmp_storage;
   }
 
@@ -224,7 +224,7 @@ static int ssl_session_cmp(const SSL_SESSION *a, const SSL_SESSION *b) {
     return 1;
   }
 
-  return memcmp(a->session_id, b->session_id, a->session_id_length);
+  return OPENSSL_memcmp(a->session_id, b->session_id, a->session_id_length);
 }
 
 SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
@@ -245,7 +245,7 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
     goto err;
   }
 
-  memset(ret, 0, sizeof(SSL_CTX));
+  OPENSSL_memset(ret, 0, sizeof(SSL_CTX));
 
   ret->method = method->method;
 
@@ -352,8 +352,6 @@ void SSL_CTX_free(SSL_CTX *ctx) {
   lh_SSL_SESSION_free(ctx->sessions);
   X509_STORE_free(ctx->cert_store);
   ssl_cipher_preference_list_free(ctx->cipher_list);
-  ssl_cipher_preference_list_free(ctx->cipher_list_tls10);
-  ssl_cipher_preference_list_free(ctx->cipher_list_tls11);
   ssl_cert_free(ctx->cert);
   sk_SSL_CUSTOM_EXTENSION_pop_free(ctx->client_custom_extensions,
                                    SSL_CUSTOM_EXTENSION_free);
@@ -385,7 +383,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
   if (ssl == NULL) {
     goto err;
   }
-  memset(ssl, 0, sizeof(SSL));
+  OPENSSL_memset(ssl, 0, sizeof(SSL));
 
   ssl->min_version = ctx->min_version;
   ssl->max_version = ctx->max_version;
@@ -408,7 +406,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->verify_mode = ctx->verify_mode;
   ssl->sid_ctx_length = ctx->sid_ctx_length;
   assert(ssl->sid_ctx_length <= sizeof ssl->sid_ctx);
-  memcpy(&ssl->sid_ctx, &ctx->sid_ctx, sizeof(ssl->sid_ctx));
+  OPENSSL_memcpy(&ssl->sid_ctx, &ctx->sid_ctx, sizeof(ssl->sid_ctx));
   ssl->verify_callback = ctx->default_verify_callback;
   ssl->retain_only_sha256_of_client_certs =
       ctx->retain_only_sha256_of_client_certs;
@@ -421,9 +419,9 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->quiet_shutdown = ctx->quiet_shutdown;
   ssl->max_send_fragment = ctx->max_send_fragment;
 
-  CRYPTO_refcount_inc(&ctx->references);
+  SSL_CTX_up_ref(ctx);
   ssl->ctx = ctx;
-  CRYPTO_refcount_inc(&ctx->references);
+  SSL_CTX_up_ref(ctx);
   ssl->initial_ctx = ctx;
 
   if (ctx->supported_group_list) {
@@ -614,11 +612,16 @@ BIO *SSL_get_wbio(const SSL *ssl) {
   return ssl->wbio;
 }
 
-int SSL_do_handshake(SSL *ssl) {
+void ssl_reset_error_state(SSL *ssl) {
+  /* Functions which use |SSL_get_error| must reset I/O and error state on
+   * entry. */
   ssl->rwstate = SSL_NOTHING;
-  /* Functions which use SSL_get_error must clear the error queue on entry. */
   ERR_clear_error();
   ERR_clear_system_error();
+}
+
+int SSL_do_handshake(SSL *ssl) {
+  ssl_reset_error_state(ssl);
 
   if (ssl->handshake_func == NULL) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_CONNECTION_TYPE_NOT_SET);
@@ -737,10 +740,7 @@ static int ssl_do_post_handshake(SSL *ssl) {
 }
 
 static int ssl_read_impl(SSL *ssl, void *buf, int num, int peek) {
-  ssl->rwstate = SSL_NOTHING;
-  /* Functions which use SSL_get_error must clear the error queue on entry. */
-  ERR_clear_error();
-  ERR_clear_system_error();
+  ssl_reset_error_state(ssl);
 
   if (ssl->handshake_func == NULL) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_UNINITIALIZED);
@@ -786,10 +786,7 @@ int SSL_peek(SSL *ssl, void *buf, int num) {
 }
 
 int SSL_write(SSL *ssl, const void *buf, int num) {
-  ssl->rwstate = SSL_NOTHING;
-  /* Functions which use SSL_get_error must clear the error queue on entry. */
-  ERR_clear_error();
-  ERR_clear_system_error();
+  ssl_reset_error_state(ssl);
 
   if (ssl->handshake_func == NULL) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_UNINITIALIZED);
@@ -817,10 +814,7 @@ int SSL_write(SSL *ssl, const void *buf, int num) {
 }
 
 int SSL_shutdown(SSL *ssl) {
-  ssl->rwstate = SSL_NOTHING;
-  /* Functions which use SSL_get_error must clear the error queue on entry. */
-  ERR_clear_error();
-  ERR_clear_system_error();
+  ssl_reset_error_state(ssl);
 
   if (ssl->handshake_func == NULL) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_UNINITIALIZED);
@@ -878,6 +872,10 @@ int SSL_send_fatal_alert(SSL *ssl, uint8_t alert) {
   }
 
   return ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
+}
+
+void SSL_CTX_set_early_data_enabled(SSL_CTX *ctx, int enabled) {
+  ctx->enable_early_data = !!enabled;
 }
 
 static int bio_retry_reason_to_error(int reason) {
@@ -1159,12 +1157,12 @@ int SSL_get_tls_unique(const SSL *ssl, uint8_t *out, size_t *out_len,
     *out_len = max_out;
   }
 
-  memcpy(out, finished, *out_len);
+  OPENSSL_memcpy(out, finished, *out_len);
   return 1;
 
 err:
   *out_len = 0;
-  memset(out, 0, max_out);
+  OPENSSL_memset(out, 0, max_out);
   return 0;
 }
 
@@ -1177,7 +1175,7 @@ int SSL_CTX_set_session_id_context(SSL_CTX *ctx, const uint8_t *sid_ctx,
 
   assert(sizeof(ctx->sid_ctx) < 256);
   ctx->sid_ctx_length = (uint8_t)sid_ctx_len;
-  memcpy(ctx->sid_ctx, sid_ctx, sid_ctx_len);
+  OPENSSL_memcpy(ctx->sid_ctx, sid_ctx, sid_ctx_len);
 
   return 1;
 }
@@ -1191,7 +1189,7 @@ int SSL_set_session_id_context(SSL *ssl, const uint8_t *sid_ctx,
 
   assert(sizeof(ssl->sid_ctx) < 256);
   ssl->sid_ctx_length = (uint8_t)sid_ctx_len;
-  memcpy(ssl->sid_ctx, sid_ctx, sid_ctx_len);
+  OPENSSL_memcpy(ssl->sid_ctx, sid_ctx, sid_ctx_len);
 
   return 1;
 }
@@ -1311,7 +1309,7 @@ static size_t copy_finished(void *out, size_t out_len, const uint8_t *in,
   if (out_len > in_len) {
     out_len = in_len;
   }
-  memcpy(out, in, out_len);
+  OPENSSL_memcpy(out, in, out_len);
   return in_len;
 }
 
@@ -1547,9 +1545,9 @@ int SSL_CTX_get_tlsext_ticket_keys(SSL_CTX *ctx, void *out, size_t len) {
     return 0;
   }
   uint8_t *out_bytes = out;
-  memcpy(out_bytes, ctx->tlsext_tick_key_name, 16);
-  memcpy(out_bytes + 16, ctx->tlsext_tick_hmac_key, 16);
-  memcpy(out_bytes + 32, ctx->tlsext_tick_aes_key, 16);
+  OPENSSL_memcpy(out_bytes, ctx->tlsext_tick_key_name, 16);
+  OPENSSL_memcpy(out_bytes + 16, ctx->tlsext_tick_hmac_key, 16);
+  OPENSSL_memcpy(out_bytes + 32, ctx->tlsext_tick_aes_key, 16);
   return 1;
 }
 
@@ -1562,9 +1560,9 @@ int SSL_CTX_set_tlsext_ticket_keys(SSL_CTX *ctx, const void *in, size_t len) {
     return 0;
   }
   const uint8_t *in_bytes = in;
-  memcpy(ctx->tlsext_tick_key_name, in_bytes, 16);
-  memcpy(ctx->tlsext_tick_hmac_key, in_bytes + 16, 16);
-  memcpy(ctx->tlsext_tick_aes_key, in_bytes + 32, 16);
+  OPENSSL_memcpy(ctx->tlsext_tick_key_name, in_bytes, 16);
+  OPENSSL_memcpy(ctx->tlsext_tick_hmac_key, in_bytes + 16, 16);
+  OPENSSL_memcpy(ctx->tlsext_tick_aes_key, in_bytes + 32, 16);
   return 1;
 }
 
@@ -1667,38 +1665,6 @@ const char *SSL_get_cipher_list(const SSL *ssl, int n) {
 int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str) {
   STACK_OF(SSL_CIPHER) *cipher_list =
       ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str);
-  if (cipher_list == NULL) {
-    return 0;
-  }
-
-  /* |ssl_create_cipher_list| may succeed but return an empty cipher list. */
-  if (sk_SSL_CIPHER_num(cipher_list) == 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
-    return 0;
-  }
-
-  return 1;
-}
-
-int SSL_CTX_set_cipher_list_tls10(SSL_CTX *ctx, const char *str) {
-  STACK_OF(SSL_CIPHER) *cipher_list =
-      ssl_create_cipher_list(ctx->method, &ctx->cipher_list_tls10, str);
-  if (cipher_list == NULL) {
-    return 0;
-  }
-
-  /* |ssl_create_cipher_list| may succeed but return an empty cipher list. */
-  if (sk_SSL_CIPHER_num(cipher_list) == 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
-    return 0;
-  }
-
-  return 1;
-}
-
-int SSL_CTX_set_cipher_list_tls11(SSL_CTX *ctx, const char *str) {
-  STACK_OF(SSL_CIPHER) *cipher_list =
-      ssl_create_cipher_list(ctx->method, &ctx->cipher_list_tls11, str);
   if (cipher_list == NULL) {
     return 0;
   }
@@ -1878,7 +1844,7 @@ int SSL_select_next_proto(uint8_t **out, uint8_t *out_len,
   for (i = 0; i < server_len;) {
     for (j = 0; j < client_len;) {
       if (server[i] == client[j] &&
-          memcmp(&server[i + 1], &client[j + 1], server[i]) == 0) {
+          OPENSSL_memcmp(&server[i + 1], &client[j + 1], server[i]) == 0) {
         /* We found a match */
         result = &server[i];
         status = OPENSSL_NPN_NEGOTIATED;
@@ -2030,7 +1996,8 @@ size_t SSL_get_tls_channel_id(SSL *ssl, uint8_t *out, size_t max_out) {
   if (!ssl->s3->tlsext_channel_id_valid) {
     return 0;
   }
-  memcpy(out, ssl->s3->tlsext_channel_id, (max_out < 64) ? max_out : 64);
+  OPENSSL_memcpy(out, ssl->s3->tlsext_channel_id,
+                 (max_out < 64) ? max_out : 64);
   return 64;
 }
 
@@ -2299,13 +2266,13 @@ SSL_CTX *SSL_set_SSL_CTX(SSL *ssl, SSL_CTX *ctx) {
   ssl_cert_free(ssl->cert);
   ssl->cert = ssl_cert_dup(ctx->cert);
 
-  CRYPTO_refcount_inc(&ctx->references);
-  SSL_CTX_free(ssl->ctx); /* decrement reference count */
+  SSL_CTX_up_ref(ctx);
+  SSL_CTX_free(ssl->ctx);
   ssl->ctx = ctx;
 
   ssl->sid_ctx_length = ctx->sid_ctx_length;
   assert(ssl->sid_ctx_length <= sizeof(ssl->sid_ctx));
-  memcpy(ssl->sid_ctx, ctx->sid_ctx, sizeof(ssl->sid_ctx));
+  OPENSSL_memcpy(ssl->sid_ctx, ctx->sid_ctx, sizeof(ssl->sid_ctx));
 
   return ssl->ctx;
 }
@@ -2869,7 +2836,7 @@ size_t SSL_get_client_random(const SSL *ssl, uint8_t *out, size_t max_out) {
   if (max_out > sizeof(ssl->s3->client_random)) {
     max_out = sizeof(ssl->s3->client_random);
   }
-  memcpy(out, ssl->s3->client_random, max_out);
+  OPENSSL_memcpy(out, ssl->s3->client_random, max_out);
   return max_out;
 }
 
@@ -2880,7 +2847,7 @@ size_t SSL_get_server_random(const SSL *ssl, uint8_t *out, size_t max_out) {
   if (max_out > sizeof(ssl->s3->server_random)) {
     max_out = sizeof(ssl->s3->server_random);
   }
-  memcpy(out, ssl->s3->server_random, max_out);
+  OPENSSL_memcpy(out, ssl->s3->server_random, max_out);
   return max_out;
 }
 
@@ -2901,6 +2868,10 @@ void SSL_CTX_set_retain_only_sha256_of_client_certs(SSL_CTX *ctx, int enabled) {
 
 void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
   ctx->grease_enabled = !!enabled;
+}
+
+void SSL_CTX_set_short_header_enabled(SSL_CTX *ctx, int enabled) {
+  ctx->short_header_enabled = !!enabled;
 }
 
 int SSL_clear(SSL *ssl) {

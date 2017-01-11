@@ -159,6 +159,7 @@
 #include <openssl/mem.h>
 #include <openssl/nid.h>
 
+#include "../crypto/internal.h"
 #include "internal.h"
 
 
@@ -169,7 +170,7 @@ int ssl3_new(SSL *ssl) {
   if (s3 == NULL) {
     return 0;
   }
-  memset(s3, 0, sizeof *s3);
+  OPENSSL_memset(s3, 0, sizeof *s3);
 
   s3->hs = ssl_handshake_new(ssl);
   if (s3->hs == NULL) {
@@ -221,19 +222,7 @@ const struct ssl_cipher_preference_list_st *ssl_get_cipher_preferences(
     return ssl->cipher_list;
   }
 
-  if (ssl->version >= TLS1_1_VERSION && ssl->ctx->cipher_list_tls11 != NULL) {
-    return ssl->ctx->cipher_list_tls11;
-  }
-
-  if (ssl->version >= TLS1_VERSION && ssl->ctx->cipher_list_tls10 != NULL) {
-    return ssl->ctx->cipher_list_tls10;
-  }
-
-  if (ssl->ctx->cipher_list != NULL) {
-    return ssl->ctx->cipher_list;
-  }
-
-  return NULL;
+  return ssl->ctx->cipher_list;
 }
 
 /* If we are using default SHA1+MD5 algorithms switch to new SHA256 PRF and

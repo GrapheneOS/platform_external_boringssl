@@ -207,12 +207,12 @@ void RAND_enable_fork_unsafe_buffering(int fd) {
     abort();  // Already initialized
   }
 
-  if (urandom_fd == kHaveGetrandom) {
-    if (fd >= 0) {
+  if (fd >= 0) {
+    if (urandom_fd == kHaveGetrandom) {
       close(fd);
+    } else if (urandom_fd != fd) {
+      abort();  // Already initialized.
     }
-  } else if (urandom_fd != fd) {
-    abort();  // Already initialized.
   }
 }
 
@@ -237,18 +237,35 @@ static struct rand_buffer *get_thread_local_buffer(void) {
   return buf;
 }
 
+#if defined(USE_SYS_getrandom) && defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+void __msan_unpoison(void *, size_t);
+#endif
+#endif
+
 /* fill_with_entropy writes |len| bytes of entropy into |out|. It returns one
  * on success and zero on error. */
 static char fill_with_entropy(uint8_t *out, size_t len) {
-  ssize_t r;
-
   while (len > 0) {
+    ssize_t r;
+
     if (urandom_fd == kHaveGetrandom) {
 #if defined(USE_SYS_getrandom)
       do {
         r = syscall(SYS_getrandom, out, len, 0 /* no flags */);
       } while (r == -1 && errno == EINTR);
-#else
+
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+      if (r > 0) {
+        /* MSAN doesn't recognise |syscall| and thus doesn't notice that we
+         * have initialised the output buffer. */
+        __msan_unpoison(out, r);
+      }
+#endif /* memory_sanitizer */
+#endif /*__has_feature */
+
+#else /* USE_SYS_getrandom */
       abort();
 #endif
     } else {
@@ -274,7 +291,7 @@ static void read_from_buffer(struct rand_buffer *buf,
   size_t remaining = BUF_SIZE - buf->used;
 
   while (requested > remaining) {
-    memcpy(out, &buf->rand[buf->used], remaining);
+    OPENSSL_memcpy(out, &buf->rand[buf->used], remaining);
     buf->used += remaining;
     out += remaining;
     requested -= remaining;
@@ -287,7 +304,7 @@ static void read_from_buffer(struct rand_buffer *buf,
     remaining = BUF_SIZE;
   }
 
-  memcpy(out, &buf->rand[buf->used], requested);
+  OPENSSL_memcpy(out, &buf->rand[buf->used], requested);
   buf->used += requested;
 }
 

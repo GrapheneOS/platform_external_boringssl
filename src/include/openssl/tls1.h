@@ -213,6 +213,7 @@ extern "C" {
 #define TLSEXT_TYPE_supported_versions 43
 #define TLSEXT_TYPE_cookie 44
 #define TLSEXT_TYPE_psk_key_exchange_modes 45
+#define TLSEXT_TYPE_ticket_early_data_info 46
 
 /* ExtensionType value from RFC5746 */
 #define TLSEXT_TYPE_renegotiate 0xff01
@@ -225,6 +226,9 @@ extern "C" {
 
 /* This is not an IANA defined extension number */
 #define TLSEXT_TYPE_channel_id 30032
+
+/* This is not an IANA defined extension number */
+#define TLSEXT_TYPE_short_header 27463
 
 /* status request value from RFC 3546 */
 #define TLSEXT_STATUSTYPE_ocsp 1

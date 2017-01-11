@@ -333,7 +333,6 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/aes/bsaes-x86_64.S\
   linux-x86_64/crypto/aes/vpaes-x86_64.S\
   linux-x86_64/crypto/bn/rsaz-avx2.S\
-  linux-x86_64/crypto/bn/rsaz-x86_64.S\
   linux-x86_64/crypto/bn/x86_64-mont.S\
   linux-x86_64/crypto/bn/x86_64-mont5.S\
   linux-x86_64/crypto/chacha/chacha-x86_64.S\
