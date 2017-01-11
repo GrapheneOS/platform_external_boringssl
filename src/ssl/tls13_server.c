@@ -25,8 +25,14 @@
 #include <openssl/rand.h>
 #include <openssl/stack.h>
 
+#include "../crypto/internal.h"
 #include "internal.h"
 
+
+/* kMaxEarlyDataAccepted is the advertised number of plaintext bytes of early
+ * data that will be accepted. This value should be slightly below
+ * kMaxEarlyDataSkipped in tls_record.c, which is measured in ciphertext. */
+static const size_t kMaxEarlyDataAccepted = 14336;
 
 enum server_hs_state_t {
   state_process_client_hello = 0,
@@ -109,7 +115,8 @@ static enum ssl_hs_wait_t do_process_client_hello(SSL_HANDSHAKE *hs) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
     return ssl_hs_error;
   }
-  memcpy(ssl->s3->client_random, client_hello.random, client_hello.random_len);
+  OPENSSL_memcpy(ssl->s3->client_random, client_hello.random,
+                 client_hello.random_len);
 
   /* TLS 1.3 requires the peer only advertise the null compression. */
   if (client_hello.compression_methods_len != 1 ||
@@ -122,6 +129,12 @@ static enum ssl_hs_wait_t do_process_client_hello(SSL_HANDSHAKE *hs) {
   /* TLS extensions. */
   if (!ssl_parse_clienthello_tlsext(hs, &client_hello)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_PARSE_TLSEXT);
+    return ssl_hs_error;
+  }
+
+  /* The short record header extension is incompatible with early data. */
+  if (ssl->s3->skip_early_data && ssl->s3->short_header) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_EXTENSION);
     return ssl_hs_error;
   }
 
@@ -189,6 +202,10 @@ static enum ssl_hs_wait_t do_select_parameters(SSL_HANDSHAKE *hs) {
       hs->tls13_state = state_select_parameters;
       return ssl_hs_x509_lookup;
     }
+  }
+
+  if (!ssl_auto_chain_if_needed(ssl)) {
+    return ssl_hs_error;
   }
 
   SSL_CLIENT_HELLO client_hello;
@@ -389,8 +406,18 @@ static enum ssl_hs_wait_t do_send_server_hello(SSL_HANDSHAKE *hs) {
       !CBB_add_u16(&body, ssl_cipher_get_value(ssl->s3->tmp.new_cipher)) ||
       !CBB_add_u16_length_prefixed(&body, &extensions) ||
       !ssl_ext_pre_shared_key_add_serverhello(hs, &extensions) ||
-      !ssl_ext_key_share_add_serverhello(hs, &extensions) ||
-      !ssl_complete_message(ssl, &cbb)) {
+      !ssl_ext_key_share_add_serverhello(hs, &extensions)) {
+    goto err;
+  }
+
+  if (ssl->s3->short_header) {
+    if (!CBB_add_u16(&extensions, TLSEXT_TYPE_short_header) ||
+        !CBB_add_u16(&extensions, 0 /* empty extension */)) {
+      goto err;
+    }
+  }
+
+  if (!ssl_complete_message(ssl, &cbb)) {
     goto err;
   }
 
@@ -404,7 +431,11 @@ err:
 
 static enum ssl_hs_wait_t do_send_encrypted_extensions(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
-  if (!tls13_set_handshake_traffic(hs)) {
+  if (!tls13_derive_handshake_secrets(hs) ||
+      !tls13_set_traffic_key(ssl, evp_aead_open, hs->client_handshake_secret,
+                             hs->hash_len) ||
+      !tls13_set_traffic_key(ssl, evp_aead_seal, hs->server_handshake_secret,
+                             hs->hash_len)) {
     return ssl_hs_error;
   }
 
@@ -631,9 +662,6 @@ static enum ssl_hs_wait_t do_send_new_session_ticket(SSL_HANDSHAKE *hs) {
     goto err;
   }
 
-  /* TODO(svaldez): Add support for sending 0RTT through TicketEarlyDataInfo
-   * extension. */
-
   CBB cbb, body, ticket, extensions;
   if (!ssl->method->init_message(ssl, &cbb, &body,
                                  SSL3_MT_NEW_SESSION_TICKET) ||
@@ -643,6 +671,18 @@ static enum ssl_hs_wait_t do_send_new_session_ticket(SSL_HANDSHAKE *hs) {
       !ssl_encrypt_ticket(ssl, &ticket, session) ||
       !CBB_add_u16_length_prefixed(&body, &extensions)) {
     goto err;
+  }
+
+  if (ssl->ctx->enable_early_data) {
+    session->ticket_max_early_data = kMaxEarlyDataAccepted;
+
+    CBB early_data_info;
+    if (!CBB_add_u16(&extensions, TLSEXT_TYPE_ticket_early_data_info) ||
+        !CBB_add_u16_length_prefixed(&extensions, &early_data_info) ||
+        !CBB_add_u32(&early_data_info, session->ticket_max_early_data) ||
+        !CBB_flush(&extensions)) {
+      goto err;
+    }
   }
 
   /* Add a fake extension. See draft-davidben-tls-grease-01. */

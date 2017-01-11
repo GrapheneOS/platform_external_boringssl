@@ -81,8 +81,10 @@ const Flag<bool> kBoolFlags[] = {
   { "-tls-unique", &TestConfig::tls_unique },
   { "-expect-ticket-renewal", &TestConfig::expect_ticket_renewal },
   { "-expect-no-session", &TestConfig::expect_no_session },
+  { "-expect-early-data-info", &TestConfig::expect_early_data_info },
   { "-use-ticket-callback", &TestConfig::use_ticket_callback },
   { "-renew-ticket", &TestConfig::renew_ticket },
+  { "-enable-early-data", &TestConfig::enable_early_data },
   { "-enable-client-custom-extension",
     &TestConfig::enable_client_custom_extension },
   { "-enable-server-custom-extension",
@@ -115,6 +117,8 @@ const Flag<bool> kBoolFlags[] = {
     &TestConfig::expect_sha256_client_cert_initial },
   { "-expect-sha256-client-cert-resume",
     &TestConfig::expect_sha256_client_cert_resume },
+  { "-enable-short-header", &TestConfig::enable_short_header },
+  { "-read-with-unfinished-write", &TestConfig::read_with_unfinished_write },
 };
 
 const Flag<std::string> kStringFlags[] = {
@@ -135,8 +139,6 @@ const Flag<std::string> kStringFlags[] = {
   { "-psk-identity", &TestConfig::psk_identity },
   { "-srtp-profiles", &TestConfig::srtp_profiles },
   { "-cipher", &TestConfig::cipher },
-  { "-cipher-tls10", &TestConfig::cipher_tls10 },
-  { "-cipher-tls11", &TestConfig::cipher_tls11 },
   { "-export-label", &TestConfig::export_label },
   { "-export-context", &TestConfig::export_context },
   { "-expect-peer-cert-file", &TestConfig::expect_peer_cert_file },
