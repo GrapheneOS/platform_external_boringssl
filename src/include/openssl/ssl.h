@@ -1331,25 +1331,11 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
  * |str| as a cipher string. It returns one on success and zero on failure. */
 OPENSSL_EXPORT int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str);
 
-/* SSL_CTX_set_cipher_list_tls10 configures the TLS 1.0+ cipher list for |ctx|,
- * evaluating |str| as a cipher string. It returns one on success and zero on
- * failure. If set, servers will use this cipher suite list for TLS 1.0 or
- * higher. */
-OPENSSL_EXPORT int SSL_CTX_set_cipher_list_tls10(SSL_CTX *ctx, const char *str);
-
-/* SSL_CTX_set_cipher_list_tls11 configures the TLS 1.1+ cipher list for |ctx|,
- * evaluating |str| as a cipher string. It returns one on success and zero on
- * failure. If set, servers will use this cipher suite list for TLS 1.1 or
- * higher. */
-OPENSSL_EXPORT int SSL_CTX_set_cipher_list_tls11(SSL_CTX *ctx, const char *str);
-
 /* SSL_set_cipher_list configures the cipher list for |ssl|, evaluating |str| as
  * a cipher string. It returns one on success and zero on failure. */
 OPENSSL_EXPORT int SSL_set_cipher_list(SSL *ssl, const char *str);
 
-/* SSL_get_ciphers returns the cipher list for |ssl|, in order of preference. If
- * |SSL_CTX_set_cipher_list_tls10| or |SSL_CTX_set_cipher_list_tls11| has been
- * used, the corresponding list for the current version is returned. */
+/* SSL_get_ciphers returns the cipher list for |ssl|, in order of preference. */
 OPENSSL_EXPORT STACK_OF(SSL_CIPHER) *SSL_get_ciphers(const SSL *ssl);
 
 
@@ -2927,6 +2913,11 @@ OPENSSL_EXPORT int SSL_renegotiate_pending(SSL *ssl);
  * peformed by |ssl|. This includes the pending renegotiation, if any. */
 OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
+/* SSL_CTX_set_early_data_enabled sets whether early data is allowed to be used
+ * with resumptions using |ctx|. WARNING: This is experimental and may cause
+ * interop failures until fully implemented. */
+OPENSSL_EXPORT void SSL_CTX_set_early_data_enabled(SSL_CTX *ctx, int enabled);
+
 /* SSL_MAX_CERT_LIST_DEFAULT is the default maximum length, in bytes, of a peer
  * certificate chain. */
 #define SSL_MAX_CERT_LIST_DEFAULT (1024 * 100)
@@ -3162,6 +3153,11 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
 /* SSL_max_seal_overhead returns the maximum overhead, in bytes, of sealing a
  * record with |ssl|. */
 OPENSSL_EXPORT size_t SSL_max_seal_overhead(const SSL *ssl);
+
+/* SSL_CTX_set_short_header_enabled configures whether a short record header in
+ * TLS 1.3 may be negotiated. This allows client and server to negotiate
+ * https://github.com/tlswg/tls13-spec/pull/762 for testing. */
+OPENSSL_EXPORT void SSL_CTX_set_short_header_enabled(SSL_CTX *ctx, int enabled);
 
 
 /* Deprecated functions. */
@@ -3767,6 +3763,10 @@ struct ssl_session_st {
 
   uint32_t ticket_age_add;
 
+  /* ticket_max_early_data is the maximum amount of data allowed to be sent as
+   * early data. If zero, 0-RTT is disallowed. */
+  uint32_t ticket_max_early_data;
+
   /* extended_master_secret is true if the master secret in this session was
    * generated using EMS and thus isn't vulnerable to the Triple Handshake
    * attack. */
@@ -3838,21 +3838,6 @@ struct ssl_ctx_st {
   uint16_t min_version;
 
   struct ssl_cipher_preference_list_st *cipher_list;
-
-  /* cipher_list_tls10 is the list of ciphers when TLS 1.0 or greater is in
-   * use. This only applies to server connections as, for clients, the version
-   * number is known at connect time and so the cipher list can be set then. If
-   * |cipher_list_tls11| is non-NULL then this applies only to TLS 1.0
-   * connections.
-   *
-   * TODO(agl): this exists to assist in the death of SSLv3. It can hopefully
-   * be removed after that. */
-  struct ssl_cipher_preference_list_st *cipher_list_tls10;
-
-  /* cipher_list_tls11 is the list of ciphers when TLS 1.1 or greater is in
-   * use. This only applies to server connections as, for clients, the version
-   * number is known at connect time and so the cipher list can be set then. */
-  struct ssl_cipher_preference_list_st *cipher_list_tls11;
 
   X509_STORE *cert_store;
   LHASH_OF(SSL_SESSION) *sessions;
@@ -4057,6 +4042,10 @@ struct ssl_ctx_st {
    * shutdown. */
   unsigned quiet_shutdown:1;
 
+  /* If enable_early_data is non-zero, early data can be sent and accepted over
+   * new connections. */
+  unsigned enable_early_data:1;
+
   /* ocsp_stapling_enabled is only used by client connections and indicates
    * whether OCSP stapling will be requested. */
   unsigned ocsp_stapling_enabled:1;
@@ -4072,6 +4061,10 @@ struct ssl_ctx_st {
   /* grease_enabled is one if draft-davidben-tls-grease-01 is enabled and zero
    * otherwise. */
   unsigned grease_enabled:1;
+
+  /* short_header_enabled is one if a short record header in TLS 1.3 may
+   * be negotiated and zero otherwise. */
+  unsigned short_header_enabled:1;
 
   /* extra_certs is a dummy value included for compatibility.
    * TODO(agl): remove once node.js no longer references this. */

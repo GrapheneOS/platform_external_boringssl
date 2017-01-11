@@ -24,6 +24,7 @@
 #include <openssl/hmac.h>
 #include <openssl/mem.h>
 
+#include "../crypto/internal.h"
 #include "internal.h"
 
 
@@ -34,7 +35,7 @@ int tls13_init_key_schedule(SSL_HANDSHAKE *hs) {
   hs->hash_len = EVP_MD_size(digest);
 
   /* Initialize the secret to the zero key. */
-  memset(hs->secret, 0, hs->hash_len);
+  OPENSSL_memset(hs->secret, 0, hs->hash_len);
 
   /* Initialize the rolling hashes and release the handshake buffer. */
   if (!ssl3_init_handshake_hash(ssl)) {
@@ -166,10 +167,12 @@ int tls13_set_traffic_key(SSL *ssl, enum evp_aead_direction_t direction,
 
   /* Save the traffic secret. */
   if (direction == evp_aead_open) {
-    memmove(ssl->s3->read_traffic_secret, traffic_secret, traffic_secret_len);
+    OPENSSL_memmove(ssl->s3->read_traffic_secret, traffic_secret,
+                    traffic_secret_len);
     ssl->s3->read_traffic_secret_len = traffic_secret_len;
   } else {
-    memmove(ssl->s3->write_traffic_secret, traffic_secret, traffic_secret_len);
+    OPENSSL_memmove(ssl->s3->write_traffic_secret, traffic_secret,
+                    traffic_secret_len);
     ssl->s3->write_traffic_secret_len = traffic_secret_len;
   }
 
@@ -185,39 +188,18 @@ static const char kTLS13LabelClientApplicationTraffic[] =
 static const char kTLS13LabelServerApplicationTraffic[] =
     "server application traffic secret";
 
-int tls13_set_handshake_traffic(SSL_HANDSHAKE *hs) {
+int tls13_derive_handshake_secrets(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
-  uint8_t client_traffic_secret[EVP_MAX_MD_SIZE];
-  uint8_t server_traffic_secret[EVP_MAX_MD_SIZE];
-  if (!derive_secret(hs, client_traffic_secret, hs->hash_len,
-                     (const uint8_t *)kTLS13LabelClientHandshakeTraffic,
-                     strlen(kTLS13LabelClientHandshakeTraffic)) ||
-      !ssl_log_secret(ssl, "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
-                      client_traffic_secret, hs->hash_len) ||
-      !derive_secret(hs, server_traffic_secret, hs->hash_len,
-                     (const uint8_t *)kTLS13LabelServerHandshakeTraffic,
-                     strlen(kTLS13LabelServerHandshakeTraffic)) ||
-      !ssl_log_secret(ssl, "SERVER_HANDSHAKE_TRAFFIC_SECRET",
-                      server_traffic_secret, hs->hash_len)) {
-    return 0;
-  }
-
-  if (ssl->server) {
-    if (!tls13_set_traffic_key(ssl, evp_aead_open, client_traffic_secret,
-                               hs->hash_len) ||
-        !tls13_set_traffic_key(ssl, evp_aead_seal, server_traffic_secret,
-                               hs->hash_len)) {
-      return 0;
-    }
-  } else {
-    if (!tls13_set_traffic_key(ssl, evp_aead_open, server_traffic_secret,
-                               hs->hash_len) ||
-        !tls13_set_traffic_key(ssl, evp_aead_seal, client_traffic_secret,
-                               hs->hash_len)) {
-      return 0;
-    }
-  }
-  return 1;
+  return derive_secret(hs, hs->client_handshake_secret, hs->hash_len,
+                       (const uint8_t *)kTLS13LabelClientHandshakeTraffic,
+                       strlen(kTLS13LabelClientHandshakeTraffic)) &&
+         ssl_log_secret(ssl, "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+                        hs->client_handshake_secret, hs->hash_len) &&
+         derive_secret(hs, hs->server_handshake_secret, hs->hash_len,
+                       (const uint8_t *)kTLS13LabelServerHandshakeTraffic,
+                       strlen(kTLS13LabelServerHandshakeTraffic)) &&
+         ssl_log_secret(ssl, "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+                        hs->server_handshake_secret, hs->hash_len);
 }
 
 static const char kTLS13LabelExporter[] = "exporter master secret";
@@ -405,7 +387,7 @@ int tls13_write_psk_binder(SSL *ssl, uint8_t *msg, size_t len) {
     return 0;
   }
 
-  memcpy(msg + len - hash_len, verify_data, hash_len);
+  OPENSSL_memcpy(msg + len - hash_len, verify_data, hash_len);
   return 1;
 }
 

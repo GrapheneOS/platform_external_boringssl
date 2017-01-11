@@ -95,15 +95,12 @@ const (
 	extensionSupportedVersions          uint16 = 43    // draft-ietf-tls-tls13-16
 	extensionCookie                     uint16 = 44    // draft-ietf-tls-tls13-16
 	extensionPSKKeyExchangeModes        uint16 = 45    // draft-ietf-tls-tls13-18
+	extensionTicketEarlyDataInfo        uint16 = 46    // draft-ietf-tls-tls13-18
 	extensionCustom                     uint16 = 1234  // not IANA assigned
 	extensionNextProtoNeg               uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo          uint16 = 0xff01
 	extensionChannelID                  uint16 = 30032 // not IANA assigned
-)
-
-// TLS ticket extension numbers
-const (
-	ticketExtensionCustom uint16 = 1234 // not IANA assigned
+	extensionShortHeader                uint16 = 27463 // not IANA assigned
 )
 
 // TLS signaling cipher suite values
@@ -126,7 +123,8 @@ const (
 // TLS Elliptic Curve Point Formats
 // http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
 const (
-	pointFormatUncompressed uint8 = 0
+	pointFormatUncompressed    uint8 = 0
+	pointFormatCompressedPrime uint8 = 1
 )
 
 // TLS CertificateStatusType (RFC 3546)
@@ -225,6 +223,7 @@ type ConnectionState struct {
 	SCTList                    []byte                // signed certificate timestamp list
 	PeerSignatureAlgorithm     signatureAlgorithm    // algorithm used by the peer in the handshake
 	CurveID                    CurveID               // the curve used in ECDHE
+	ShortHeader                bool                  // whether the short header extension was negotiated
 }
 
 // ClientAuthType declares the policy the server will follow for
@@ -956,6 +955,19 @@ type ProtocolBugs struct {
 	// receipt of a NewSessionTicket message.
 	ExpectNoNewSessionTicket bool
 
+	// SendTicketEarlyDataInfo, if non-zero, is the maximum amount of data that we
+	// will accept as early data, and gets sent in the ticket_early_data_info
+	// extension of the NewSessionTicket message.
+	SendTicketEarlyDataInfo uint32
+
+	// DuplicateTicketEarlyDataInfo causes an extra empty extension of
+	// ticket_early_data_info to be sent in NewSessionTicket.
+	DuplicateTicketEarlyDataInfo bool
+
+	// ExpectTicketEarlyDataInfo, if true, means that the client will fail upon
+	// absence of the ticket_early_data_info extension.
+	ExpectTicketEarlyDataInfo bool
+
 	// ExpectTicketAge, if non-zero, is the expected age of the ticket that the
 	// server receives from the client.
 	ExpectTicketAge time.Duration
@@ -1224,6 +1236,23 @@ type ProtocolBugs struct {
 	// NoSignedCertificateTimestamps, if true, causes the client to not
 	// request signed certificate timestamps.
 	NoSignedCertificateTimestamps bool
+
+	// EnableShortHeader, if true, causes the TLS 1.3 short header extension
+	// to be enabled.
+	EnableShortHeader bool
+
+	// AlwaysNegotiateShortHeader, if true, causes the server to always
+	// negotiate the short header extension in ServerHello.
+	AlwaysNegotiateShortHeader bool
+
+	// ClearShortHeaderBit, if true, causes the server to send short headers
+	// without the high bit set.
+	ClearShortHeaderBit bool
+
+	// SendSupportedPointFormats, if not nil, is the list of supported point
+	// formats to send in ClientHello or ServerHello. If set to a non-nil
+	// empty slice, no extension will be sent.
+	SendSupportedPointFormats []byte
 }
 
 func (c *Config) serverInit() {
