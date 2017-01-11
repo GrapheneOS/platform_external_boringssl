@@ -253,6 +253,18 @@ OPENSSL_EXPORT BIGNUM *BN_bin2bn(const uint8_t *in, size_t len, BIGNUM *ret);
  * number of bytes written. */
 OPENSSL_EXPORT size_t BN_bn2bin(const BIGNUM *in, uint8_t *out);
 
+/* BN_le2bn sets |*ret| to the value of |len| bytes from |in|, interpreted as
+ * a little-endian number, and returns |ret|. If |ret| is NULL then a fresh
+ * |BIGNUM| is allocated and returned. It returns NULL on allocation
+ * failure. */
+OPENSSL_EXPORT BIGNUM *BN_le2bn(const uint8_t *in, size_t len, BIGNUM *ret);
+
+/* BN_bn2le_padded serialises the absolute value of |in| to |out| as a
+ * little-endian integer, which must have |len| of space available, padding
+ * out the remainder of out with zeros. If |len| is smaller than |BN_num_bytes|,
+ * the function fails and returns 0. Otherwise, it returns 1. */
+OPENSSL_EXPORT int BN_bn2le_padded(uint8_t *out, size_t len, const BIGNUM *in);
+
 /* BN_bn2bin_padded serialises the absolute value of |in| to |out| as a
  * big-endian integer. The integer is padded with leading zeros up to size
  * |len|. If |len| is smaller than |BN_num_bytes|, the function fails and
@@ -305,6 +317,11 @@ OPENSSL_EXPORT int BN_print_fp(FILE *fp, const BIGNUM *a);
  * too large to be represented as a single word, the maximum possible value
  * will be returned. */
 OPENSSL_EXPORT BN_ULONG BN_get_word(const BIGNUM *bn);
+
+/* BN_get_u64 sets |*out| to the absolute value of |bn| as a |uint64_t| and
+ * returns one. If |bn| is too large to be represented as a |uint64_t|, it
+ * returns zero. */
+OPENSSL_EXPORT int BN_get_u64(const BIGNUM *bn, uint64_t *out);
 
 
 /* ASN.1 functions. */
@@ -913,9 +930,9 @@ OPENSSL_EXPORT unsigned BN_num_bits_word(BN_ULONG l);
 
 #define BN_FLG_MALLOCED 0x01
 #define BN_FLG_STATIC_DATA 0x02
-/* avoid leaking exponent information through timing, BN_mod_exp_mont() will
- * call BN_mod_exp_mont_consttime, BN_div() will call BN_div_no_branch,
- * BN_mod_inverse() will call BN_mod_inverse_no_branch. */
+/* Avoid leaking exponent information through timing. |BN_mod_exp_mont| will
+ * call |BN_mod_exp_mont_consttime| and |BN_mod_inverse| will call
+ * |BN_mod_inverse_no_branch|. */
 #define BN_FLG_CONSTTIME 0x04
 
 

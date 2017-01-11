@@ -75,8 +75,6 @@ struct TestConfig {
   bool fail_second_ddos_callback = false;
   bool fail_cert_callback = false;
   std::string cipher;
-  std::string cipher_tls10;
-  std::string cipher_tls11;
   bool handshake_never_done = false;
   int export_keying_material = 0;
   std::string export_label;
@@ -85,8 +83,10 @@ struct TestConfig {
   bool tls_unique = false;
   bool expect_ticket_renewal = false;
   bool expect_no_session = false;
+  bool expect_early_data_info = false;
   bool use_ticket_callback = false;
   bool renew_ticket = false;
+  bool enable_early_data = false;
   bool enable_client_custom_extension = false;
   bool enable_server_custom_extension = false;
   bool custom_extension_skip = false;
@@ -125,6 +125,8 @@ struct TestConfig {
   bool retain_only_sha256_client_cert_resume = false;
   bool expect_sha256_client_cert_initial = false;
   bool expect_sha256_client_cert_resume = false;
+  bool enable_short_header = false;
+  bool read_with_unfinished_write = false;
 };
 
 bool ParseConfig(int argc, char **argv, TestConfig *out_config);

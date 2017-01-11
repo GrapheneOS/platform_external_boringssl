@@ -81,6 +81,7 @@ func (c *Conn) clientHandshake() error {
 		srtpMasterKeyIdentifier: c.config.Bugs.SRTPMasterKeyIdentifer,
 		customExtension:         c.config.Bugs.CustomExtension,
 		pskBinderFirst:          c.config.Bugs.PSKBinderFirst,
+		shortHeaderSupported:    c.config.Bugs.EnableShortHeader,
 	}
 
 	disableEMS := c.config.Bugs.NoExtendedMasterSecret
@@ -102,6 +103,10 @@ func (c *Conn) clientHandshake() error {
 
 	if c.config.Bugs.SendCompressionMethods != nil {
 		hello.compressionMethods = c.config.Bugs.SendCompressionMethods
+	}
+
+	if c.config.Bugs.SendSupportedPointFormats != nil {
+		hello.supportedPoints = c.config.Bugs.SendSupportedPointFormats
 	}
 
 	if len(c.clientVerify) > 0 && !c.config.Bugs.EmptyRenegotiationInfo {
@@ -684,6 +689,18 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		hs.finishedHash.addEntropy(zeroSecret)
 	}
 
+	if hs.serverHello.shortHeader && !hs.hello.shortHeaderSupported {
+		return errors.New("tls: server sent unsolicited short header extension")
+	}
+
+	if hs.serverHello.shortHeader && hs.hello.hasEarlyData {
+		return errors.New("tls: server sent short header extension in response to early data")
+	}
+
+	if hs.serverHello.shortHeader {
+		c.setShortHeader()
+	}
+
 	// Switch to handshake traffic keys.
 	clientHandshakeTrafficSecret := hs.finishedHash.deriveSecret(clientHandshakeTrafficLabel)
 	c.out.useTrafficSecret(c.vers, hs.suite, clientHandshakeTrafficSecret, clientWrite)
@@ -1011,7 +1028,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	// no_certificate warning alert.
 	if certRequested {
 		if c.vers == VersionSSL30 && chainToSend == nil {
-			c.sendAlert(alertNoCertficate)
+			c.sendAlert(alertNoCertificate)
 		} else if !c.config.Bugs.SkipClientCertificate {
 			certMsg := new(certificateMsg)
 			if chainToSend != nil {
@@ -1290,6 +1307,10 @@ func (hs *clientHandshakeState) serverResumedSession() bool {
 
 func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	c := hs.c
+
+	if hs.serverHello.shortHeader {
+		return false, errors.New("tls: short header extension sent before TLS 1.3")
+	}
 
 	if hs.serverResumedSession() {
 		// For test purposes, assert that the server never accepts the

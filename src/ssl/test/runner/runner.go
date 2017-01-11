@@ -383,6 +383,8 @@ type testCase struct {
 	// expectPeerCertificate, if not nil, is the certificate chain the peer
 	// is expected to send.
 	expectPeerCertificate *Certificate
+	// expectShortHeader is whether the short header extension should be negotiated.
+	expectShortHeader bool
 }
 
 var testCases []testCase
@@ -609,6 +611,10 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, nu
 				return fmt.Errorf("peer certificate %d did not match", i+1)
 			}
 		}
+	}
+
+	if test.expectShortHeader != connState.ShortHeader {
+		return fmt.Errorf("ShortHeader is %t, but we expected the opposite", connState.ShortHeader)
 	}
 
 	if test.exportKeyingMaterial > 0 {
@@ -1315,13 +1321,15 @@ func addBasicTests() {
 					SendFallbackSCSV: true,
 				},
 			},
-			shouldFail:    true,
-			expectedError: ":INAPPROPRIATE_FALLBACK:",
+			shouldFail:         true,
+			expectedError:      ":INAPPROPRIATE_FALLBACK:",
+			expectedLocalError: "remote error: inappropriate fallback",
 		},
 		{
 			testType: serverTest,
-			name:     "FallbackSCSV-VersionMatch",
+			name:     "FallbackSCSV-VersionMatch-TLS13",
 			config: Config{
+				MaxVersion: VersionTLS13,
 				Bugs: ProtocolBugs{
 					SendFallbackSCSV: true,
 				},
@@ -2561,11 +2569,57 @@ func addTestForCipherSuite(suite testCipherSuite, ver tlsVersion, protocol proto
 		expectedError: expectedClientError,
 	})
 
-	if !shouldClientFail {
-		// Ensure the maximum record size is accepted.
+	if shouldClientFail {
+		return
+	}
+
+	// Ensure the maximum record size is accepted.
+	testCases = append(testCases, testCase{
+		protocol: protocol,
+		name:     prefix + ver.name + "-" + suite.name + "-LargeRecord",
+		config: Config{
+			MinVersion:           ver.version,
+			MaxVersion:           ver.version,
+			CipherSuites:         []uint16{suite.id},
+			Certificates:         []Certificate{cert},
+			PreSharedKey:         []byte(psk),
+			PreSharedKeyIdentity: pskIdentity,
+		},
+		flags:      flags,
+		messageLen: maxPlaintext,
+	})
+
+	// Test bad records for all ciphers. Bad records are fatal in TLS
+	// and ignored in DTLS.
+	var shouldFail bool
+	var expectedError string
+	if protocol == tls {
+		shouldFail = true
+		expectedError = ":DECRYPTION_FAILED_OR_BAD_RECORD_MAC:"
+	}
+
+	testCases = append(testCases, testCase{
+		protocol: protocol,
+		name:     prefix + ver.name + "-" + suite.name + "-BadRecord",
+		config: Config{
+			MinVersion:           ver.version,
+			MaxVersion:           ver.version,
+			CipherSuites:         []uint16{suite.id},
+			Certificates:         []Certificate{cert},
+			PreSharedKey:         []byte(psk),
+			PreSharedKeyIdentity: pskIdentity,
+		},
+		flags:            flags,
+		damageFirstWrite: true,
+		messageLen:       maxPlaintext,
+		shouldFail:       shouldFail,
+		expectedError:    expectedError,
+	})
+
+	if ver.version >= VersionTLS13 {
 		testCases = append(testCases, testCase{
 			protocol: protocol,
-			name:     prefix + ver.name + "-" + suite.name + "-LargeRecord",
+			name:     prefix + ver.name + "-" + suite.name + "-ShortHeader",
 			config: Config{
 				MinVersion:           ver.version,
 				MaxVersion:           ver.version,
@@ -2573,36 +2627,13 @@ func addTestForCipherSuite(suite testCipherSuite, ver tlsVersion, protocol proto
 				Certificates:         []Certificate{cert},
 				PreSharedKey:         []byte(psk),
 				PreSharedKeyIdentity: pskIdentity,
+				Bugs: ProtocolBugs{
+					EnableShortHeader: true,
+				},
 			},
-			flags:      flags,
-			messageLen: maxPlaintext,
-		})
-
-		// Test bad records for all ciphers. Bad records are fatal in TLS
-		// and ignored in DTLS.
-		var shouldFail bool
-		var expectedError string
-		if protocol == tls {
-			shouldFail = true
-			expectedError = ":DECRYPTION_FAILED_OR_BAD_RECORD_MAC:"
-		}
-
-		testCases = append(testCases, testCase{
-			protocol: protocol,
-			name:     prefix + ver.name + "-" + suite.name + "-BadRecord",
-			config: Config{
-				MinVersion:           ver.version,
-				MaxVersion:           ver.version,
-				CipherSuites:         []uint16{suite.id},
-				Certificates:         []Certificate{cert},
-				PreSharedKey:         []byte(psk),
-				PreSharedKeyIdentity: pskIdentity,
-			},
-			flags:            flags,
-			damageFirstWrite: true,
-			messageLen:       maxPlaintext,
-			shouldFail:       shouldFail,
-			expectedError:    expectedError,
+			flags:             append([]string{"-enable-short-header"}, flags...),
+			resumeSession:     true,
+			expectShortHeader: true,
 		})
 	}
 }
@@ -2774,94 +2805,6 @@ func addCipherSuiteTests() {
 		},
 		flags: []string{"-psk", "secret"},
 	})
-
-	// versionSpecificCiphersTest specifies a test for the TLS 1.0 and TLS
-	// 1.1 specific cipher suite settings. A server is setup with the given
-	// cipher lists and then a connection is made for each member of
-	// expectations. The cipher suite that the server selects must match
-	// the specified one.
-	var versionSpecificCiphersTest = []struct {
-		ciphersDefault, ciphersTLS10, ciphersTLS11 string
-		// expectations is a map from TLS version to cipher suite id.
-		expectations map[uint16]uint16
-	}{
-		{
-			// Test that the null case (where no version-specific ciphers are set)
-			// works as expected.
-			"DES-CBC3-SHA:AES128-SHA", // default ciphers
-			"", // no ciphers specifically for TLS ≥ 1.0
-			"", // no ciphers specifically for TLS ≥ 1.1
-			map[uint16]uint16{
-				VersionSSL30: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS10: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS11: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS12: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-			},
-		},
-		{
-			// With ciphers_tls10 set, TLS 1.0, 1.1 and 1.2 should get a different
-			// cipher.
-			"DES-CBC3-SHA:AES128-SHA", // default
-			"AES128-SHA",              // these ciphers for TLS ≥ 1.0
-			"",                        // no ciphers specifically for TLS ≥ 1.1
-			map[uint16]uint16{
-				VersionSSL30: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS10: TLS_RSA_WITH_AES_128_CBC_SHA,
-				VersionTLS11: TLS_RSA_WITH_AES_128_CBC_SHA,
-				VersionTLS12: TLS_RSA_WITH_AES_128_CBC_SHA,
-			},
-		},
-		{
-			// With ciphers_tls11 set, TLS 1.1 and 1.2 should get a different
-			// cipher.
-			"DES-CBC3-SHA:AES128-SHA", // default
-			"",           // no ciphers specifically for TLS ≥ 1.0
-			"AES128-SHA", // these ciphers for TLS ≥ 1.1
-			map[uint16]uint16{
-				VersionSSL30: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS10: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS11: TLS_RSA_WITH_AES_128_CBC_SHA,
-				VersionTLS12: TLS_RSA_WITH_AES_128_CBC_SHA,
-			},
-		},
-		{
-			// With both ciphers_tls10 and ciphers_tls11 set, ciphers_tls11 should
-			// mask ciphers_tls10 for TLS 1.1 and 1.2.
-			"DES-CBC3-SHA:AES128-SHA", // default
-			"AES128-SHA",              // these ciphers for TLS ≥ 1.0
-			"AES256-SHA",              // these ciphers for TLS ≥ 1.1
-			map[uint16]uint16{
-				VersionSSL30: TLS_RSA_WITH_3DES_EDE_CBC_SHA,
-				VersionTLS10: TLS_RSA_WITH_AES_128_CBC_SHA,
-				VersionTLS11: TLS_RSA_WITH_AES_256_CBC_SHA,
-				VersionTLS12: TLS_RSA_WITH_AES_256_CBC_SHA,
-			},
-		},
-	}
-
-	for i, test := range versionSpecificCiphersTest {
-		for version, expectedCipherSuite := range test.expectations {
-			flags := []string{"-cipher", test.ciphersDefault}
-			if len(test.ciphersTLS10) > 0 {
-				flags = append(flags, "-cipher-tls10", test.ciphersTLS10)
-			}
-			if len(test.ciphersTLS11) > 0 {
-				flags = append(flags, "-cipher-tls11", test.ciphersTLS11)
-			}
-
-			testCases = append(testCases, testCase{
-				testType: serverTest,
-				name:     fmt.Sprintf("VersionSpecificCiphersTest-%d-%x", i, version),
-				config: Config{
-					MaxVersion:   version,
-					MinVersion:   version,
-					CipherSuites: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA, TLS_RSA_WITH_AES_128_CBC_SHA, TLS_RSA_WITH_AES_256_CBC_SHA},
-				},
-				flags:          flags,
-				expectedCipher: expectedCipherSuite,
-			})
-		}
-	}
 }
 
 func addBadECDSASignatureTests() {
@@ -6319,6 +6262,24 @@ func addRenegotiationTests() {
 		expectedLocalError: "remote error: no renegotiation",
 	})
 
+	// Renegotiation is not allowed when there is an unfinished write.
+	testCases = append(testCases, testCase{
+		name: "Renegotiate-Client-UnfinishedWrite",
+		config: Config{
+			MaxVersion: VersionTLS12,
+		},
+		renegotiate: 1,
+		flags: []string{
+			"-async",
+			"-renegotiate-freely",
+			"-read-with-unfinished-write",
+		},
+		shouldFail:    true,
+		expectedError: ":NO_RENEGOTIATION:",
+		// We do not successfully send the no_renegotiation alert in
+		// this case. https://crbug.com/boringssl/130
+	})
+
 	// Stray HelloRequests during the handshake are ignored in TLS 1.2.
 	testCases = append(testCases, testCase{
 		name: "StrayHelloRequest",
@@ -8178,6 +8139,102 @@ func addCurveTests() {
 		},
 		resumeSession: true,
 	})
+
+	// Server-sent point formats are legal in TLS 1.2, but not in TLS 1.3.
+	testCases = append(testCases, testCase{
+		name: "PointFormat-ServerHello-TLS12",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{pointFormatUncompressed},
+			},
+		},
+	})
+	testCases = append(testCases, testCase{
+		name: "PointFormat-EncryptedExtensions-TLS13",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{pointFormatUncompressed},
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":ERROR_PARSING_EXTENSION:",
+	})
+
+	// Test that we tolerate unknown point formats, as long as
+	// pointFormatUncompressed is present. Limit ciphers to ECDHE ciphers to
+	// check they are still functional.
+	testCases = append(testCases, testCase{
+		name: "PointFormat-Client-Tolerance",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{42, pointFormatUncompressed, 99, pointFormatCompressedPrime},
+			},
+		},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "PointFormat-Server-Tolerance",
+		config: Config{
+			MaxVersion:   VersionTLS12,
+			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256},
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{42, pointFormatUncompressed, 99, pointFormatCompressedPrime},
+			},
+		},
+	})
+
+	// Test TLS 1.2 does not require the point format extension to be
+	// present.
+	testCases = append(testCases, testCase{
+		name: "PointFormat-Client-Missing",
+		config: Config{
+			MaxVersion:   VersionTLS12,
+			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256},
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{},
+			},
+		},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "PointFormat-Server-Missing",
+		config: Config{
+			MaxVersion:   VersionTLS12,
+			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256},
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{},
+			},
+		},
+	})
+
+	// If the point format extension is present, uncompressed points must be
+	// offered. BoringSSL requires this whether or not ECDHE is used.
+	testCases = append(testCases, testCase{
+		name: "PointFormat-Client-MissingUncompressed",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{pointFormatCompressedPrime},
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":ERROR_PARSING_EXTENSION:",
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "PointFormat-Server-MissingUncompressed",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				SendSupportedPointFormats: []byte{pointFormatCompressedPrime},
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":ERROR_PARSING_EXTENSION:",
+	})
 }
 
 func addTLS13RecordTests() {
@@ -8322,6 +8379,48 @@ func addSessionTicketTests() {
 		expectedLocalError: "tls: invalid ticket age",
 	})
 
+	testCases = append(testCases, testCase{
+		testType: clientTest,
+		name:     "TLS13-SendTicketEarlyDataInfo",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendTicketEarlyDataInfo: 16384,
+			},
+		},
+		flags: []string{
+			"-expect-early-data-info",
+		},
+	})
+
+	testCases = append(testCases, testCase{
+		testType: clientTest,
+		name:     "TLS13-DuplicateTicketEarlyDataInfo",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendTicketEarlyDataInfo:      16384,
+				DuplicateTicketEarlyDataInfo: true,
+			},
+		},
+		shouldFail:         true,
+		expectedError:      ":DUPLICATE_EXTENSION:",
+		expectedLocalError: "remote error: illegal parameter",
+	})
+
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "TLS13-ExpectTicketEarlyDataInfo",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				ExpectTicketEarlyDataInfo: true,
+			},
+		},
+		flags: []string{
+			"-enable-early-data",
+		},
+	})
 }
 
 func addChangeCipherSpecTests() {
@@ -9853,6 +9952,150 @@ func addECDSAKeyUsageTests() {
 	}
 }
 
+func addShortHeaderTests() {
+	// The short header extension may be negotiated as either client or
+	// server.
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-Client",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				EnableShortHeader: true,
+			},
+		},
+		flags:             []string{"-enable-short-header"},
+		expectShortHeader: true,
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "ShortHeader-Server",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				EnableShortHeader: true,
+			},
+		},
+		flags:             []string{"-enable-short-header"},
+		expectShortHeader: true,
+	})
+
+	// If the peer doesn't support it, it will not be negotiated.
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-No-Yes-Client",
+		config: Config{
+			MaxVersion: VersionTLS13,
+		},
+		flags: []string{"-enable-short-header"},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "ShortHeader-No-Yes-Server",
+		config: Config{
+			MaxVersion: VersionTLS13,
+		},
+		flags: []string{"-enable-short-header"},
+	})
+
+	// If we don't support it, it will not be negotiated.
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-Yes-No-Client",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				EnableShortHeader: true,
+			},
+		},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "ShortHeader-Yes-No-Server",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				EnableShortHeader: true,
+			},
+		},
+	})
+
+	// It will not be negotiated at TLS 1.2.
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-TLS12-Client",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				EnableShortHeader: true,
+			},
+		},
+		flags: []string{"-enable-short-header"},
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "ShortHeader-TLS12-Server",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				EnableShortHeader: true,
+			},
+		},
+		flags: []string{"-enable-short-header"},
+	})
+
+	// Servers reject early data and short header sent together.
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "ShortHeader-EarlyData",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				EnableShortHeader:   true,
+				SendEarlyDataLength: 1,
+			},
+		},
+		flags:         []string{"-enable-short-header"},
+		shouldFail:    true,
+		expectedError: ":UNEXPECTED_EXTENSION:",
+	})
+
+	// Clients reject unsolicited short header extensions.
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-Unsolicited",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				AlwaysNegotiateShortHeader: true,
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":UNEXPECTED_EXTENSION:",
+	})
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-Unsolicited-TLS12",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				AlwaysNegotiateShortHeader: true,
+			},
+		},
+		shouldFail:    true,
+		expectedError: ":UNEXPECTED_EXTENSION:",
+	})
+
+	// The high bit must be checked in short headers.
+	testCases = append(testCases, testCase{
+		name: "ShortHeader-ClearShortHeaderBit",
+		config: Config{
+			Bugs: ProtocolBugs{
+				EnableShortHeader:   true,
+				ClearShortHeaderBit: true,
+			},
+		},
+		flags:              []string{"-enable-short-header"},
+		shouldFail:         true,
+		expectedError:      ":DECODE_ERROR:",
+		expectedLocalError: "remote error: error decoding message",
+	})
+}
+
 func worker(statusChan chan statusMsg, c chan *testCase, shimPath string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -9979,6 +10222,7 @@ func main() {
 	addCertificateTests()
 	addRetainOnlySHA256ClientCertTests()
 	addECDSAKeyUsageTests()
+	addShortHeaderTests()
 
 	var wg sync.WaitGroup
 

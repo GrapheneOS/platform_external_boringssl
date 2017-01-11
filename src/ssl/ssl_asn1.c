@@ -91,6 +91,7 @@
 #include <openssl/mem.h>
 #include <openssl/x509.h>
 
+#include "../crypto/internal.h"
 #include "internal.h"
 
 
@@ -127,6 +128,7 @@
  *     ticketAgeAdd            [21] OCTET STRING OPTIONAL,
  *     isServer                [22] BOOLEAN DEFAULT TRUE,
  *     peerSignatureAlgorithm  [23] INTEGER OPTIONAL,
+ *     ticketMaxEarlyData      [24] INTEGER OPTIONAL,
  * }
  *
  * Note: historically this serialization has included other optional
@@ -179,6 +181,8 @@ static const int kIsServerTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 22;
 static const int kPeerSignatureAlgorithmTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 23;
+static const int kTicketMaxEarlyDataTag =
+    CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 24;
 
 static int SSL_SESSION_to_bytes_full(const SSL_SESSION *in, uint8_t **out_data,
                                      size_t *out_len, int for_ticket) {
@@ -391,6 +395,13 @@ static int SSL_SESSION_to_bytes_full(const SSL_SESSION *in, uint8_t **out_data,
     goto err;
   }
 
+  if (in->ticket_max_early_data != 0 &&
+      (!CBB_add_asn1(&session, &child, kTicketMaxEarlyDataTag) ||
+       !CBB_add_asn1_uint64(&child, in->ticket_max_early_data))) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
+    goto err;
+  }
+
   if (!CBB_finish(&cbb, out_data, out_len)) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto err;
@@ -443,7 +454,7 @@ int i2d_SSL_SESSION(SSL_SESSION *in, uint8_t **pp) {
   }
 
   if (pp) {
-    memcpy(*pp, out, len);
+    OPENSSL_memcpy(*pp, out, len);
     *pp += len;
   }
   OPENSSL_free(out);
@@ -510,7 +521,7 @@ static int SSL_SESSION_parse_bounded_octet_string(
     OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
     return 0;
   }
-  memcpy(out, CBS_data(&value), CBS_len(&value));
+  OPENSSL_memcpy(out, CBS_data(&value), CBS_len(&value));
   *out_len = (uint8_t)CBS_len(&value);
   return 1;
 }
@@ -593,9 +604,9 @@ static SSL_SESSION *SSL_SESSION_parse(CBS *cbs) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
     goto err;
   }
-  memcpy(ret->session_id, CBS_data(&session_id), CBS_len(&session_id));
+  OPENSSL_memcpy(ret->session_id, CBS_data(&session_id), CBS_len(&session_id));
   ret->session_id_length = CBS_len(&session_id);
-  memcpy(ret->master_key, CBS_data(&master_key), CBS_len(&master_key));
+  OPENSSL_memcpy(ret->master_key, CBS_data(&master_key), CBS_len(&master_key));
   ret->master_key_length = CBS_len(&master_key);
 
   CBS child;
@@ -647,7 +658,8 @@ static SSL_SESSION *SSL_SESSION_parse(CBS *cbs) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
       goto err;
     }
-    memcpy(ret->peer_sha256, CBS_data(&peer_sha256), sizeof(ret->peer_sha256));
+    OPENSSL_memcpy(ret->peer_sha256, CBS_data(&peer_sha256),
+                   sizeof(ret->peer_sha256));
     ret->peer_sha256_valid = 1;
   } else {
     ret->peer_sha256_valid = 0;
@@ -773,6 +785,8 @@ static SSL_SESSION *SSL_SESSION_parse(CBS *cbs) {
 
   if (!SSL_SESSION_parse_u16(&session, &ret->peer_signature_algorithm,
                              kPeerSignatureAlgorithmTag, 0) ||
+      !SSL_SESSION_parse_u32(&session, &ret->ticket_max_early_data,
+                             kTicketMaxEarlyDataTag, 0) ||
       CBS_len(&session) != 0) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
     goto err;

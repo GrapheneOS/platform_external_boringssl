@@ -25,6 +25,8 @@
 #include <openssl/pool.h>
 #include <openssl/x509.h>
 
+#include "../internal.h"
+
 
 static const char kCrossSigningRootPEM[] =
     "-----BEGIN CERTIFICATE-----\n"
@@ -450,7 +452,8 @@ static bssl::UniquePtr<STACK_OF(X509_CRL)> CRLsToStack(
 static int Verify(X509 *leaf, const std::vector<X509 *> &roots,
                    const std::vector<X509 *> &intermediates,
                    const std::vector<X509_CRL *> &crls,
-                   unsigned long flags = 0) {
+                   unsigned long flags,
+                   bool use_additional_untrusted) {
   bssl::UniquePtr<STACK_OF(X509)> roots_stack(CertsToStack(roots));
   bssl::UniquePtr<STACK_OF(X509)> intermediates_stack(
       CertsToStack(intermediates));
@@ -469,8 +472,14 @@ static int Verify(X509 *leaf, const std::vector<X509 *> &roots,
     return X509_V_ERR_UNSPECIFIED;
   }
 
-  if (!X509_STORE_CTX_init(ctx.get(), store.get(), leaf,
-                           intermediates_stack.get())) {
+  if (use_additional_untrusted) {
+    X509_STORE_set0_additional_untrusted(store.get(),
+                                         intermediates_stack.get());
+  }
+
+  if (!X509_STORE_CTX_init(
+          ctx.get(), store.get(), leaf,
+          use_additional_untrusted ? nullptr : intermediates_stack.get())) {
     return X509_V_ERR_UNSPECIFIED;
   }
 
@@ -494,6 +503,24 @@ static int Verify(X509 *leaf, const std::vector<X509 *> &roots,
   }
 
   return X509_V_OK;
+}
+
+static int Verify(X509 *leaf, const std::vector<X509 *> &roots,
+                   const std::vector<X509 *> &intermediates,
+                   const std::vector<X509_CRL *> &crls,
+                   unsigned long flags = 0) {
+  const int r1 = Verify(leaf, roots, intermediates, crls, flags, false);
+  const int r2 = Verify(leaf, roots, intermediates, crls, flags, true);
+
+  if (r1 != r2) {
+    fprintf(stderr,
+            "Verify with, and without, use_additional_untrusted gave different "
+            "results: %d vs %d.\n",
+            r1, r2);
+    return false;
+  }
+
+  return r1;
 }
 
 static bool TestVerify() {
@@ -814,7 +841,7 @@ static bool TestFromBufferTrailingData() {
   }
 
   std::unique_ptr<uint8_t[]> trailing_data(new uint8_t[data_len + 1]);
-  memcpy(trailing_data.get(), data.get(), data_len);
+  OPENSSL_memcpy(trailing_data.get(), data.get(), data_len);
 
   bssl::UniquePtr<CRYPTO_BUFFER> buf_trailing_data(
       CRYPTO_BUFFER_new(trailing_data.get(), data_len + 1, nullptr));
@@ -927,7 +954,7 @@ static bool TestFromBufferReused() {
     return false;
   }
   if (i2d_len != static_cast<long>(data2_len) ||
-      memcmp(data2.get(), i2d, i2d_len) != 0) {
+      OPENSSL_memcmp(data2.get(), i2d, i2d_len) != 0) {
     fprintf(stderr, "TestFromBufferReused: i2d gave wrong result.\n");
     return false;
   }
@@ -964,7 +991,7 @@ static bool TestFailedParseFromBuffer() {
   }
 
   std::unique_ptr<uint8_t[]> data_with_trailing_byte(new uint8_t[data_len + 1]);
-  memcpy(data_with_trailing_byte.get(), data.get(), data_len);
+  OPENSSL_memcpy(data_with_trailing_byte.get(), data.get(), data_len);
   data_with_trailing_byte[data_len] = 0;
 
   bssl::UniquePtr<CRYPTO_BUFFER> buf_with_trailing_byte(

@@ -673,7 +673,7 @@ static bool TestSSL_SESSIONEncoding(const char *input_b64) {
   }
   encoded.reset(encoded_raw);
   if (encoded_len != input.size() ||
-      memcmp(input.data(), encoded.get(), input.size()) != 0) {
+      OPENSSL_memcmp(input.data(), encoded.get(), input.size()) != 0) {
     fprintf(stderr, "SSL_SESSION_to_bytes did not round-trip\n");
     hexdump(stderr, "Before: ", input.data(), input.size());
     hexdump(stderr, "After:  ", encoded_raw, encoded_len);
@@ -711,7 +711,7 @@ static bool TestSSL_SESSIONEncoding(const char *input_b64) {
     fprintf(stderr, "i2d_SSL_SESSION did not advance ptr correctly\n");
     return false;
   }
-  if (memcmp(input.data(), encoded.get(), input.size()) != 0) {
+  if (OPENSSL_memcmp(input.data(), encoded.get(), input.size()) != 0) {
     fprintf(stderr, "i2d_SSL_SESSION did not round-trip\n");
     return false;
   }
@@ -838,7 +838,7 @@ static bssl::UniquePtr<SSL_SESSION> CreateSessionWithTicket(uint16_t version,
   if (session->tlsext_tick == nullptr) {
     return nullptr;
   }
-  memset(session->tlsext_tick, 'a', ticket_len);
+  OPENSSL_memset(session->tlsext_tick, 'a', ticket_len);
   session->tlsext_ticklen = ticket_len;
 
   // Fix up the timeout.
@@ -1030,8 +1030,8 @@ static bssl::UniquePtr<SSL_SESSION> CreateTestSession(uint32_t number) {
   }
 
   ret->session_id_length = SSL3_SSL_SESSION_ID_LENGTH;
-  memset(ret->session_id, 0, ret->session_id_length);
-  memcpy(ret->session_id, &number, sizeof(number));
+  OPENSSL_memset(ret->session_id, 0, ret->session_id_length);
+  OPENSSL_memcpy(ret->session_id, &number, sizeof(number));
   return ret;
 }
 
@@ -1142,7 +1142,8 @@ static bssl::UniquePtr<X509> GetTestCertificate() {
       "j2VNHwsSrJwkD4QUGlUtH7vwnQmyCFxZMmWAJg==\n"
       "-----END CERTIFICATE-----\n";
   bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kCertPEM, strlen(kCertPEM)));
-  return bssl::UniquePtr<X509>(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+  return bssl::UniquePtr<X509>(
+      PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
 }
 
 static bssl::UniquePtr<EVP_PKEY> GetTestKey() {
@@ -1191,6 +1192,90 @@ static bssl::UniquePtr<EVP_PKEY> GetECDSATestKey() {
       "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBw8IcnrUoEqc3VnJ\n"
       "TYlodwi1b8ldMHcO6NHJzgqLtGqhRANCAATmK2niv2Wfl74vHg2UikzVl2u3qR4N\n"
       "Rvvdqakendy6WgHn1peoChj5w8SjHlbifINI2xYaHPUdfvGULUvPciLB\n"
+      "-----END PRIVATE KEY-----\n";
+  bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kKeyPEM, strlen(kKeyPEM)));
+  return bssl::UniquePtr<EVP_PKEY>(
+      PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr));
+}
+
+static bssl::UniquePtr<X509> GetChainTestCertificate() {
+  static const char kCertPEM[] =
+      "-----BEGIN CERTIFICATE-----\n"
+      "MIIC0jCCAbqgAwIBAgICEAAwDQYJKoZIhvcNAQELBQAwDzENMAsGA1UEAwwEQiBD\n"
+      "QTAeFw0xNjAyMjgyMDI3MDNaFw0yNjAyMjUyMDI3MDNaMBgxFjAUBgNVBAMMDUNs\n"
+      "aWVudCBDZXJ0IEEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDRvaz8\n"
+      "CC/cshpCafJo4jLkHEoBqDLhdgFelJoAiQUyIqyWl2O7YHPnpJH+TgR7oelzNzt/\n"
+      "kLRcH89M/TszB6zqyLTC4aqmvzKL0peD/jL2LWBucR0WXIvjA3zoRuF/x86+rYH3\n"
+      "tHb+xs2PSs8EGL/Ev+ss+qTzTGEn26fuGNHkNw6tOwPpc+o8+wUtzf/kAthamo+c\n"
+      "IDs2rQ+lP7+aLZTLeU/q4gcLutlzcK5imex5xy2jPkweq48kijK0kIzl1cPlA5d1\n"
+      "z7C8jU50Pj9X9sQDJTN32j7UYRisJeeYQF8GaaN8SbrDI6zHgKzrRLyxDt/KQa9V\n"
+      "iLeXANgZi+Xx9KgfAgMBAAGjLzAtMAwGA1UdEwEB/wQCMAAwHQYDVR0lBBYwFAYI\n"
+      "KwYBBQUHAwEGCCsGAQUFBwMCMA0GCSqGSIb3DQEBCwUAA4IBAQBFEVbmYl+2RtNw\n"
+      "rDftRDF1v2QUbcN2ouSnQDHxeDQdSgasLzT3ui8iYu0Rw2WWcZ0DV5e0ztGPhWq7\n"
+      "AO0B120aFRMOY+4+bzu9Q2FFkQqc7/fKTvTDzIJI5wrMnFvUfzzvxh3OHWMYSs/w\n"
+      "giq33hTKeHEq6Jyk3btCny0Ycecyc3yGXH10sizUfiHlhviCkDuESk8mFDwDDzqW\n"
+      "ZF0IipzFbEDHoIxLlm3GQxpiLoEV4k8KYJp3R5KBLFyxM6UGPz8h72mIPCJp2RuK\n"
+      "MYgF91UDvVzvnYm6TfseM2+ewKirC00GOrZ7rEcFvtxnKSqYf4ckqfNdSU1Y+RRC\n"
+      "1ngWZ7Ih\n"
+      "-----END CERTIFICATE-----\n";
+  bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kCertPEM, strlen(kCertPEM)));
+  return bssl::UniquePtr<X509>(
+      PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+}
+
+static bssl::UniquePtr<X509> GetChainTestIntermediate() {
+  static const char kCertPEM[] =
+      "-----BEGIN CERTIFICATE-----\n"
+      "MIICwjCCAaqgAwIBAgICEAEwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJQyBS\n"
+      "b290IENBMB4XDTE2MDIyODIwMjcwM1oXDTI2MDIyNTIwMjcwM1owDzENMAsGA1UE\n"
+      "AwwEQiBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALsSCYmDip2D\n"
+      "GkjFxw7ykz26JSjELkl6ArlYjFJ3aT/SCh8qbS4gln7RH8CPBd78oFdfhIKQrwtZ\n"
+      "3/q21ykD9BAS3qHe2YdcJfm8/kWAy5DvXk6NXU4qX334KofBAEpgdA/igEFq1P1l\n"
+      "HAuIfZCpMRfT+i5WohVsGi8f/NgpRvVaMONLNfgw57mz1lbtFeBEISmX0kbsuJxF\n"
+      "Qj/Bwhi5/0HAEXG8e7zN4cEx0yPRvmOATRdVb/8dW2pwOHRJq9R5M0NUkIsTSnL7\n"
+      "6N/z8hRAHMsV3IudC5Yd7GXW1AGu9a+iKU+Q4xcZCoj0DC99tL4VKujrV1kAeqsM\n"
+      "cz5/dKzi6+cCAwEAAaMjMCEwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n"
+      "AQYwDQYJKoZIhvcNAQELBQADggEBAIIeZiEeNhWWQ8Y4D+AGDwqUUeG8NjCbKrXQ\n"
+      "BlHg5wZ8xftFaiP1Dp/UAezmx2LNazdmuwrYB8lm3FVTyaPDTKEGIPS4wJKHgqH1\n"
+      "QPDhqNm85ey7TEtI9oYjsNim/Rb+iGkIAMXaxt58SzxbjvP0kMr1JfJIZbic9vye\n"
+      "NwIspMFIpP3FB8ywyu0T0hWtCQgL4J47nigCHpOu58deP88fS/Nyz/fyGVWOZ76b\n"
+      "WhWwgM3P3X95fQ3d7oFPR/bVh0YV+Cf861INwplokXgXQ3/TCQ+HNXeAMWn3JLWv\n"
+      "XFwk8owk9dq/kQGdndGgy3KTEW4ctPX5GNhf3LJ9Q7dLji4ReQ4=\n"
+      "-----END CERTIFICATE-----\n";
+  bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kCertPEM, strlen(kCertPEM)));
+  return bssl::UniquePtr<X509>(
+      PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+}
+
+static bssl::UniquePtr<EVP_PKEY> GetChainTestKey() {
+  static const char kKeyPEM[] =
+      "-----BEGIN PRIVATE KEY-----\n"
+      "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDRvaz8CC/cshpC\n"
+      "afJo4jLkHEoBqDLhdgFelJoAiQUyIqyWl2O7YHPnpJH+TgR7oelzNzt/kLRcH89M\n"
+      "/TszB6zqyLTC4aqmvzKL0peD/jL2LWBucR0WXIvjA3zoRuF/x86+rYH3tHb+xs2P\n"
+      "Ss8EGL/Ev+ss+qTzTGEn26fuGNHkNw6tOwPpc+o8+wUtzf/kAthamo+cIDs2rQ+l\n"
+      "P7+aLZTLeU/q4gcLutlzcK5imex5xy2jPkweq48kijK0kIzl1cPlA5d1z7C8jU50\n"
+      "Pj9X9sQDJTN32j7UYRisJeeYQF8GaaN8SbrDI6zHgKzrRLyxDt/KQa9ViLeXANgZ\n"
+      "i+Xx9KgfAgMBAAECggEBAK0VjSJzkyPaamcyTVSWjo7GdaBGcK60lk657RjR+lK0\n"
+      "YJ7pkej4oM2hdsVZFsP8Cs4E33nXLa/0pDsRov/qrp0WQm2skwqGMC1I/bZ0WRPk\n"
+      "wHaDrBBfESWnJDX/AGpVtlyOjPmgmK6J2usMPihQUDkKdAYrVWJePrMIxt1q6BMe\n"
+      "iczs3qriMmtY3bUc4UyUwJ5fhDLjshHvfuIpYQyI6EXZM6dZksn9LylXJnigY6QJ\n"
+      "HxOYO0BDwOsZ8yQ8J8afLk88i0GizEkgE1z3REtQUwgWfxr1WV/ud+T6/ZhSAgH9\n"
+      "042mQvSFZnIUSEsmCvjhWuAunfxHKCTcAoYISWfzWpkCgYEA7gpf3HHU5Tn+CgUn\n"
+      "1X5uGpG3DmcMgfeGgs2r2f/IIg/5Ac1dfYILiybL1tN9zbyLCJfcbFpWBc9hJL6f\n"
+      "CPc5hUiwWFJqBJewxQkC1Ae/HakHbip+IZ+Jr0842O4BAArvixk4Lb7/N2Ct9sTE\n"
+      "NJO6RtK9lbEZ5uK61DglHy8CS2UCgYEA4ZC1o36kPAMQBggajgnucb2yuUEelk0f\n"
+      "AEr+GI32MGE+93xMr7rAhBoqLg4AITyIfEnOSQ5HwagnIHonBbv1LV/Gf9ursx8Z\n"
+      "YOGbvT8zzzC+SU1bkDzdjAYnFQVGIjMtKOBJ3K07++ypwX1fr4QsQ8uKL8WSOWwt\n"
+      "Z3Bym6XiZzMCgYADnhy+2OwHX85AkLt+PyGlPbmuelpyTzS4IDAQbBa6jcuW/2wA\n"
+      "UE2km75VUXmD+u2R/9zVuLm99NzhFhSMqlUxdV1YukfqMfP5yp1EY6m/5aW7QuIP\n"
+      "2MDa7TVL9rIFMiVZ09RKvbBbQxjhuzPQKL6X/PPspnhiTefQ+dl2k9xREQKBgHDS\n"
+      "fMfGNEeAEKezrfSVqxphE9/tXms3L+ZpnCaT+yu/uEr5dTIAawKoQ6i9f/sf1/Sy\n"
+      "xedsqR+IB+oKrzIDDWMgoJybN4pkZ8E5lzhVQIjFjKgFdWLzzqyW9z1gYfABQPlN\n"
+      "FiS20WX0vgP1vcKAjdNrHzc9zyHBpgQzDmAj3NZZAoGBAI8vKCKdH7w3aL5CNkZQ\n"
+      "2buIeWNA2HZazVwAGG5F2TU/LmXfRKnG6dX5bkU+AkBZh56jNZy//hfFSewJB4Kk\n"
+      "buB7ERSdaNbO21zXt9FEA3+z0RfMd/Zv2vlIWOSB5nzl/7UKti3sribK6s9ZVLfi\n"
+      "SxpiPQ8d/hmSGwn4ksrWUsJD\n"
       "-----END PRIVATE KEY-----\n";
   bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(kKeyPEM, strlen(kKeyPEM)));
   return bssl::UniquePtr<EVP_PKEY>(
@@ -1442,7 +1527,7 @@ static bool TestSessionDuplication() {
   }
   bssl::UniquePtr<uint8_t> free_s1(s1_bytes);
 
-  return s0_len == s1_len && memcmp(s0_bytes, s1_bytes, s0_len) == 0;
+  return s0_len == s1_len && OPENSSL_memcmp(s0_bytes, s1_bytes, s0_len) == 0;
 }
 
 static bool ExpectFDs(const SSL *ssl, int rfd, int wfd) {
@@ -1711,7 +1796,8 @@ static bool TestRetainOnlySHA256OfCerts(bool is_dtls, const SSL_METHOD *method,
     return false;
   }
 
-  if (memcmp(cert_sha256, session->peer_sha256, SHA256_DIGEST_LENGTH) != 0) {
+  if (OPENSSL_memcmp(cert_sha256, session->peer_sha256, SHA256_DIGEST_LENGTH) !=
+      0) {
     fprintf(stderr, "peer_sha256 did not match.\n");
     return false;
   }
@@ -1747,10 +1833,10 @@ static bool ClientHelloMatches(uint16_t version, const uint8_t *expected,
     fprintf(stderr, "ClientHello for version %04x too short.\n", version);
     return false;
   }
-  memset(client_hello.data() + kRandomOffset, 0, SSL3_RANDOM_SIZE);
+  OPENSSL_memset(client_hello.data() + kRandomOffset, 0, SSL3_RANDOM_SIZE);
 
   if (client_hello.size() != expected_len ||
-      memcmp(client_hello.data(), expected, expected_len) != 0) {
+      OPENSSL_memcmp(client_hello.data(), expected, expected_len) != 0) {
     fprintf(stderr, "ClientHello for version %04x did not match:\n", version);
     fprintf(stderr, "Got:\n\t");
     for (size_t i = 0; i < client_hello.size(); i++) {
@@ -2097,9 +2183,9 @@ static int RenewTicketCallback(SSL *ssl, uint8_t *key_name, uint8_t *iv,
   static const uint8_t kZeros[16] = {0};
 
   if (encrypt) {
-    memcpy(key_name, kZeros, sizeof(kZeros));
+    OPENSSL_memcpy(key_name, kZeros, sizeof(kZeros));
     RAND_bytes(iv, 16);
-  } else if (memcmp(key_name, kZeros, 16) != 0) {
+  } else if (OPENSSL_memcmp(key_name, kZeros, 16) != 0) {
     return 0;
   }
 
@@ -2124,7 +2210,7 @@ static bool GetServerTicketTime(long *out, const SSL_SESSION *session) {
 
 #if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
   // Fuzzer-mode tickets are unencrypted.
-  memcpy(plaintext.get(), ciphertext, len);
+  OPENSSL_memcpy(plaintext.get(), ciphertext, len);
 #else
   static const uint8_t kZeros[16] = {0};
   const uint8_t *iv = session->tlsext_tick + 16;
@@ -2588,6 +2674,27 @@ static bool TestSetVersion() {
   return true;
 }
 
+static const char *GetVersionName(uint16_t version) {
+  switch (version) {
+    case SSL3_VERSION:
+      return "SSLv3";
+    case TLS1_VERSION:
+      return "TLSv1";
+    case TLS1_1_VERSION:
+      return "TLSv1.1";
+    case TLS1_2_VERSION:
+      return "TLSv1.2";
+    case TLS1_3_VERSION:
+      return "TLSv1.3";
+    case DTLS1_VERSION:
+      return "DTLSv1";
+    case DTLS1_2_VERSION:
+      return "DTLSv1.2";
+    default:
+      return "???";
+  }
+}
+
 static bool TestVersion(bool is_dtls, const SSL_METHOD *method,
                         uint16_t version) {
   bssl::UniquePtr<X509> cert = GetTestCertificate();
@@ -2616,6 +2723,29 @@ static bool TestVersion(bool is_dtls, const SSL_METHOD *method,
       SSL_version(server.get()) != version) {
     fprintf(stderr, "Version mismatch. Got %04x and %04x, wanted %04x.\n",
             SSL_version(client.get()), SSL_version(server.get()), version);
+    return false;
+  }
+
+  // Test the version name is reported as expected.
+  const char *version_name = GetVersionName(version);
+  if (strcmp(version_name, SSL_get_version(client.get())) != 0 ||
+      strcmp(version_name, SSL_get_version(server.get())) != 0) {
+    fprintf(stderr, "Version name mismatch. Got '%s' and '%s', wanted '%s'.\n",
+            SSL_get_version(client.get()), SSL_get_version(server.get()),
+            version_name);
+    return false;
+  }
+
+  // Test SSL_SESSION reports the same name.
+  const char *client_name =
+      SSL_SESSION_get_version(SSL_get_session(client.get()));
+  const char *server_name =
+      SSL_SESSION_get_version(SSL_get_session(server.get()));
+  if (strcmp(version_name, client_name) != 0 ||
+      strcmp(version_name, server_name) != 0) {
+    fprintf(stderr,
+            "Session version name mismatch. Got '%s' and '%s', wanted '%s'.\n",
+            client_name, server_name, version_name);
     return false;
   }
 
@@ -2738,6 +2868,268 @@ static bool TestSSLClearSessionResumption(bool is_dtls,
   return true;
 }
 
+static bool ChainsEqual(STACK_OF(X509) *chain,
+                         const std::vector<X509 *> &expected) {
+  if (sk_X509_num(chain) != expected.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < expected.size(); i++) {
+    if (X509_cmp(sk_X509_value(chain, i), expected[i]) != 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static bool TestAutoChain(bool is_dtls, const SSL_METHOD *method,
+                          uint16_t version) {
+  bssl::UniquePtr<X509> cert = GetChainTestCertificate();
+  bssl::UniquePtr<X509> intermediate = GetChainTestIntermediate();
+  bssl::UniquePtr<EVP_PKEY> key = GetChainTestKey();
+  if (!cert || !intermediate || !key) {
+    return false;
+  }
+
+  // Configure both client and server to accept any certificate. Add
+  // |intermediate| to the cert store.
+  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(method));
+  if (!ctx ||
+      !SSL_CTX_use_certificate(ctx.get(), cert.get()) ||
+      !SSL_CTX_use_PrivateKey(ctx.get(), key.get()) ||
+      !SSL_CTX_set_min_proto_version(ctx.get(), version) ||
+      !SSL_CTX_set_max_proto_version(ctx.get(), version) ||
+      !X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx.get()),
+                           intermediate.get())) {
+    return false;
+  }
+  SSL_CTX_set_verify(
+      ctx.get(), SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+  SSL_CTX_set_cert_verify_callback(ctx.get(), VerifySucceed, NULL);
+
+  // By default, the client and server should each only send the leaf.
+  bssl::UniquePtr<SSL> client, server;
+  if (!ConnectClientAndServer(&client, &server, ctx.get(), ctx.get(),
+                              nullptr /* no session */)) {
+    return false;
+  }
+
+  if (!ChainsEqual(SSL_get_peer_full_cert_chain(client.get()), {cert.get()})) {
+    fprintf(stderr, "Client-received chain did not match.\n");
+    return false;
+  }
+
+  if (!ChainsEqual(SSL_get_peer_full_cert_chain(server.get()), {cert.get()})) {
+    fprintf(stderr, "Server-received chain did not match.\n");
+    return false;
+  }
+
+  // If auto-chaining is enabled, then the intermediate is sent.
+  SSL_CTX_clear_mode(ctx.get(), SSL_MODE_NO_AUTO_CHAIN);
+  if (!ConnectClientAndServer(&client, &server, ctx.get(), ctx.get(),
+                              nullptr /* no session */)) {
+    return false;
+  }
+
+  if (!ChainsEqual(SSL_get_peer_full_cert_chain(client.get()),
+                   {cert.get(), intermediate.get()})) {
+    fprintf(stderr, "Client-received chain did not match (auto-chaining).\n");
+    return false;
+  }
+
+  if (!ChainsEqual(SSL_get_peer_full_cert_chain(server.get()),
+                   {cert.get(), intermediate.get()})) {
+    fprintf(stderr, "Server-received chain did not match (auto-chaining).\n");
+    return false;
+  }
+
+  // Auto-chaining does not override explicitly-configured intermediates.
+  if (!SSL_CTX_add1_chain_cert(ctx.get(), cert.get()) ||
+      !ConnectClientAndServer(&client, &server, ctx.get(), ctx.get(),
+                              nullptr /* no session */)) {
+    return false;
+  }
+
+  if (!ChainsEqual(SSL_get_peer_full_cert_chain(client.get()),
+                   {cert.get(), cert.get()})) {
+    fprintf(stderr,
+            "Client-received chain did not match (auto-chaining, explicit "
+            "intermediate).\n");
+    return false;
+  }
+
+  if (!ChainsEqual(SSL_get_peer_full_cert_chain(server.get()),
+                   {cert.get(), cert.get()})) {
+    fprintf(stderr,
+            "Server-received chain did not match (auto-chaining, explicit "
+            "intermediate).\n");
+    return false;
+  }
+
+  return true;
+}
+
+static bool ExpectBadWriteRetry() {
+  int err = ERR_get_error();
+  if (ERR_GET_LIB(err) != ERR_LIB_SSL ||
+      ERR_GET_REASON(err) != SSL_R_BAD_WRITE_RETRY) {
+    char buf[ERR_ERROR_STRING_BUF_LEN];
+    ERR_error_string_n(err, buf, sizeof(buf));
+    fprintf(stderr, "Wanted SSL_R_BAD_WRITE_RETRY, got: %s.\n", buf);
+    return false;
+  }
+
+  if (ERR_peek_error() != 0) {
+    fprintf(stderr, "Unexpected error following SSL_R_BAD_WRITE_RETRY.\n");
+    return false;
+  }
+
+  return true;
+}
+
+static bool TestSSLWriteRetry(bool is_dtls, const SSL_METHOD *method,
+                              uint16_t version) {
+  if (is_dtls) {
+    return true;
+  }
+
+  for (bool enable_partial_write : std::vector<bool>{false, true}) {
+    // Connect a client and server.
+    bssl::UniquePtr<X509> cert = GetTestCertificate();
+    bssl::UniquePtr<EVP_PKEY> key = GetTestKey();
+    bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(method));
+    bssl::UniquePtr<SSL> client, server;
+    if (!cert || !key || !ctx ||
+        !SSL_CTX_use_certificate(ctx.get(), cert.get()) ||
+        !SSL_CTX_use_PrivateKey(ctx.get(), key.get()) ||
+        !SSL_CTX_set_min_proto_version(ctx.get(), version) ||
+        !SSL_CTX_set_max_proto_version(ctx.get(), version) ||
+        !ConnectClientAndServer(&client, &server, ctx.get(), ctx.get(),
+                                nullptr /* no session */)) {
+      return false;
+    }
+
+    if (enable_partial_write) {
+      SSL_set_mode(client.get(), SSL_MODE_ENABLE_PARTIAL_WRITE);
+    }
+
+    // Write without reading until the buffer is full and we have an unfinished
+    // write. Keep a count so we may reread it again later. "hello!" will be
+    // written in two chunks, "hello" and "!".
+    char data[] = "hello!";
+    static const int kChunkLen = 5;  // The length of "hello".
+    unsigned count = 0;
+    for (;;) {
+      int ret = SSL_write(client.get(), data, kChunkLen);
+      if (ret <= 0) {
+        int err = SSL_get_error(client.get(), ret);
+        if (SSL_get_error(client.get(), ret) == SSL_ERROR_WANT_WRITE) {
+          break;
+        }
+        fprintf(stderr, "SSL_write failed in unexpected way: %d\n", err);
+        return false;
+      }
+
+      if (ret != 5) {
+        fprintf(stderr, "SSL_write wrote %d bytes, expected 5.\n", ret);
+        return false;
+      }
+
+      count++;
+    }
+
+    // Retrying with the same parameters is legal.
+    if (SSL_get_error(client.get(), SSL_write(client.get(), data, kChunkLen)) !=
+        SSL_ERROR_WANT_WRITE) {
+      fprintf(stderr, "SSL_write retry unexpectedly failed.\n");
+      return false;
+    }
+
+    // Retrying with the same buffer but shorter length is not legal.
+    if (SSL_get_error(client.get(),
+                      SSL_write(client.get(), data, kChunkLen - 1)) !=
+            SSL_ERROR_SSL ||
+        !ExpectBadWriteRetry()) {
+      fprintf(stderr, "SSL_write retry did not fail as expected.\n");
+      return false;
+    }
+
+    // Retrying with a different buffer pointer is not legal.
+    char data2[] = "hello";
+    if (SSL_get_error(client.get(), SSL_write(client.get(), data2,
+                                              kChunkLen)) != SSL_ERROR_SSL ||
+        !ExpectBadWriteRetry()) {
+      fprintf(stderr, "SSL_write retry did not fail as expected.\n");
+      return false;
+    }
+
+    // With |SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER|, the buffer may move.
+    SSL_set_mode(client.get(), SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    if (SSL_get_error(client.get(),
+                      SSL_write(client.get(), data2, kChunkLen)) !=
+        SSL_ERROR_WANT_WRITE) {
+      fprintf(stderr, "SSL_write retry unexpectedly failed.\n");
+      return false;
+    }
+
+    // |SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER| does not disable length checks.
+    if (SSL_get_error(client.get(),
+                      SSL_write(client.get(), data2, kChunkLen - 1)) !=
+            SSL_ERROR_SSL ||
+        !ExpectBadWriteRetry()) {
+      fprintf(stderr, "SSL_write retry did not fail as expected.\n");
+      return false;
+    }
+
+    // Retrying with a larger buffer is legal.
+    if (SSL_get_error(client.get(),
+                      SSL_write(client.get(), data, kChunkLen + 1)) !=
+        SSL_ERROR_WANT_WRITE) {
+      fprintf(stderr, "SSL_write retry unexpectedly failed.\n");
+      return false;
+    }
+
+    // Drain the buffer.
+    char buf[20];
+    for (unsigned i = 0; i < count; i++) {
+      if (SSL_read(server.get(), buf, sizeof(buf)) != kChunkLen ||
+          OPENSSL_memcmp(buf, "hello", kChunkLen) != 0) {
+        fprintf(stderr, "Failed to read initial records.\n");
+        return false;
+      }
+    }
+
+    // Now that there is space, a retry with a larger buffer should flush the
+    // pending record, skip over that many bytes of input (on assumption they
+    // are the same), and write the remainder. If SSL_MODE_ENABLE_PARTIAL_WRITE
+    // is set, this will complete in two steps.
+    char data3[] = "_____!";
+    if (enable_partial_write) {
+      if (SSL_write(client.get(), data3, kChunkLen + 1) != kChunkLen ||
+          SSL_write(client.get(), data3 + kChunkLen, 1) != 1) {
+        fprintf(stderr, "SSL_write retry failed.\n");
+        return false;
+      }
+    } else if (SSL_write(client.get(), data3, kChunkLen + 1) != kChunkLen + 1) {
+      fprintf(stderr, "SSL_write retry failed.\n");
+      return false;
+    }
+
+    // Check the last write was correct. The data will be spread over two
+    // records, so SSL_read returns twice.
+    if (SSL_read(server.get(), buf, sizeof(buf)) != kChunkLen ||
+        OPENSSL_memcmp(buf, "hello", kChunkLen) != 0 ||
+        SSL_read(server.get(), buf, sizeof(buf)) != 1 ||
+        buf[0] != '!') {
+      fprintf(stderr, "Failed to read write retry.\n");
+      return false;
+    }
+  }
+
+  return true;
+}
+
 static bool ForEachVersion(bool (*test_func)(bool is_dtls,
                                              const SSL_METHOD *method,
                                              uint16_t version)) {
@@ -2814,7 +3206,9 @@ int main() {
       !TestSetVersion() ||
       !ForEachVersion(TestVersion) ||
       !ForEachVersion(TestALPNCipherAvailable) ||
-      !ForEachVersion(TestSSLClearSessionResumption)) {
+      !ForEachVersion(TestSSLClearSessionResumption) ||
+      !ForEachVersion(TestAutoChain) ||
+      !ForEachVersion(TestSSLWriteRetry)) {
     ERR_print_errors_fp(stderr);
     return 1;
   }
