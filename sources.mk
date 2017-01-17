@@ -172,7 +172,6 @@ crypto_sources := \
   src/crypto/pem/pem_pkey.c\
   src/crypto/pem/pem_x509.c\
   src/crypto/pem/pem_xaux.c\
-  src/crypto/pkcs8/p5_pbe.c\
   src/crypto/pkcs8/p5_pbev2.c\
   src/crypto/pkcs8/p8_pkey.c\
   src/crypto/pkcs8/pkcs8.c\
@@ -181,6 +180,7 @@ crypto_sources := \
   src/crypto/poly1305/poly1305_vec.c\
   src/crypto/pool/pool.c\
   src/crypto/rand/deterministic.c\
+  src/crypto/rand/fuchsia.c\
   src/crypto/rand/rand.c\
   src/crypto/rand/urandom.c\
   src/crypto/rand/windows.c\
