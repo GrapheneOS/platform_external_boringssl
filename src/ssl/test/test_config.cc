@@ -119,6 +119,10 @@ const Flag<bool> kBoolFlags[] = {
     &TestConfig::expect_sha256_client_cert_resume },
   { "-enable-short-header", &TestConfig::enable_short_header },
   { "-read-with-unfinished-write", &TestConfig::read_with_unfinished_write },
+  { "-expect-secure-renegotiation",
+    &TestConfig::expect_secure_renegotiation },
+  { "-expect-no-secure-renegotiation",
+    &TestConfig::expect_no_secure_renegotiation },
 };
 
 const Flag<std::string> kStringFlags[] = {
@@ -172,6 +176,8 @@ const Flag<int> kIntFlags[] = {
   { "-expect-cipher-aes", &TestConfig::expect_cipher_aes },
   { "-expect-cipher-no-aes", &TestConfig::expect_cipher_no_aes },
   { "-resumption-delay", &TestConfig::resumption_delay },
+  { "-max-send-fragment", &TestConfig::max_send_fragment },
+  { "-read-size", &TestConfig::read_size },
 };
 
 const Flag<std::vector<int>> kIntVectorFlags[] = {
