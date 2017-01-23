@@ -2401,6 +2401,42 @@ func addBasicTests() {
 				},
 			},
 		},
+		{
+			// Test the server so there is a large certificate as
+			// well as application data.
+			testType: serverTest,
+			name:     "MaxSendFragment",
+			config: Config{
+				Bugs: ProtocolBugs{
+					MaxReceivePlaintext: 512,
+				},
+			},
+			messageLen: 1024,
+			flags: []string{
+				"-max-send-fragment", "512",
+				"-read-size", "1024",
+			},
+		},
+		{
+			// Test the server so there is a large certificate as
+			// well as application data.
+			testType: serverTest,
+			name:     "MaxSendFragment-TooLarge",
+			config: Config{
+				Bugs: ProtocolBugs{
+					// Ensure that some of the records are
+					// 512.
+					MaxReceivePlaintext: 511,
+				},
+			},
+			messageLen: 1024,
+			flags: []string{
+				"-max-send-fragment", "512",
+				"-read-size", "1024",
+			},
+			shouldFail:         true,
+			expectedLocalError: "local error: record overflow",
+		},
 	}
 	testCases = append(testCases, basicTests...)
 
@@ -5246,6 +5282,7 @@ func addExtensionTests() {
 				RequireRenegotiationInfo: true,
 			},
 		},
+		flags: []string{"-expect-secure-renegotiation"},
 	})
 	testCases = append(testCases, testCase{
 		testType: serverTest,
@@ -5258,6 +5295,7 @@ func addExtensionTests() {
 				RequireRenegotiationInfo: true,
 			},
 		},
+		flags: []string{"-expect-secure-renegotiation"},
 	})
 
 	// Test that illegal extensions in TLS 1.3 are rejected by the client if
@@ -6015,6 +6053,7 @@ func addRenegotiationTests() {
 		flags: []string{
 			"-renegotiate-freely",
 			"-expect-total-renegotiations", "1",
+			"-expect-secure-renegotiation",
 		},
 	})
 	testCases = append(testCases, testCase{
@@ -6081,6 +6120,7 @@ func addRenegotiationTests() {
 		flags: []string{
 			"-renegotiate-freely",
 			"-expect-total-renegotiations", "1",
+			"-expect-no-secure-renegotiation",
 		},
 	})
 
@@ -6346,6 +6386,22 @@ func addRenegotiationTests() {
 		},
 		shouldFail:    true,
 		expectedError: ":UNEXPECTED_MESSAGE:",
+	})
+
+	// The renegotiation_info extension is not sent in TLS 1.3, but TLS 1.3
+	// always reads as supporting it, regardless of whether it was
+	// negotiated.
+	testCases = append(testCases, testCase{
+		name: "AlwaysReportRenegotiationInfo-TLS13",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				NoRenegotiationInfo: true,
+			},
+		},
+		flags: []string{
+			"-expect-secure-renegotiation",
+		},
 	})
 }
 
