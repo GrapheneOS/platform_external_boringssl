@@ -1305,11 +1305,22 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
     }
   }
 
-  if (config->expect_extended_master_secret) {
-    if (!SSL_get_extms_support(ssl)) {
-      fprintf(stderr, "No EMS for connection when expected");
-      return false;
-    }
+  if (config->expect_extended_master_secret && !SSL_get_extms_support(ssl)) {
+    fprintf(stderr, "No EMS for connection when expected\n");
+    return false;
+  }
+
+  if (config->expect_secure_renegotiation &&
+      !SSL_get_secure_renegotiation_support(ssl)) {
+    fprintf(stderr, "No secure renegotiation for connection when expected\n");
+    return false;
+  }
+
+  if (config->expect_no_secure_renegotiation &&
+      SSL_get_secure_renegotiation_support(ssl)) {
+    fprintf(stderr,
+            "Secure renegotiation unexpectedly negotiated for connection\n");
+    return false;
   }
 
   if (!config->expected_ocsp_response.empty()) {
@@ -1622,6 +1633,9 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
   if (is_resume && config->retain_only_sha256_client_cert_resume) {
     SSL_set_retain_only_sha256_of_client_certs(ssl.get(), 1);
   }
+  if (config->max_send_fragment > 0) {
+    SSL_set_max_send_fragment(ssl.get(), config->max_send_fragment);
+  }
 
   int sock = Connect(config->port);
   if (sock == -1) {
@@ -1785,12 +1799,15 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
     }
     if (!config->shim_shuts_down) {
       for (;;) {
-        static const size_t kBufLen = 16384;
-        std::unique_ptr<uint8_t[]> buf(new uint8_t[kBufLen]);
-
         // Read only 512 bytes at a time in TLS to ensure records may be
         // returned in multiple reads.
-        int n = DoRead(ssl.get(), buf.get(), config->is_dtls ? kBufLen : 512);
+        size_t read_size = config->is_dtls ? 16384 : 512;
+        if (config->read_size > 0) {
+          read_size = config->read_size;
+        }
+        std::unique_ptr<uint8_t[]> buf(new uint8_t[read_size]);
+
+        int n = DoRead(ssl.get(), buf.get(), read_size);
         int err = SSL_get_error(ssl.get(), n);
         if (err == SSL_ERROR_ZERO_RETURN ||
             (n == 0 && err == SSL_ERROR_SYSCALL)) {

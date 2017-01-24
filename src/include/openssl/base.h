@@ -118,6 +118,10 @@ extern "C" {
 #define OPENSSL_LINUX
 #endif
 
+#if defined(__Fuchsia__)
+#define OPENSSL_FUCHSIA
+#endif
+
 #if defined(TRUSTY)
 #define OPENSSL_TRUSTY
 #define OPENSSL_NO_THREADS
@@ -229,9 +233,6 @@ typedef struct NAME_CONSTRAINTS_st NAME_CONSTRAINTS;
 typedef struct Netscape_certificate_sequence NETSCAPE_CERT_SEQUENCE;
 typedef struct Netscape_spkac_st NETSCAPE_SPKAC;
 typedef struct Netscape_spki_st NETSCAPE_SPKI;
-typedef struct PBE2PARAM_st PBE2PARAM;
-typedef struct PBEPARAM_st PBEPARAM;
-typedef struct PBKDF2PARAM_st PBKDF2PARAM;
 typedef struct RIPEMD160state_st RIPEMD160_CTX;
 typedef struct X509_POLICY_CACHE_st X509_POLICY_CACHE;
 typedef struct X509_POLICY_LEVEL_st X509_POLICY_LEVEL;
