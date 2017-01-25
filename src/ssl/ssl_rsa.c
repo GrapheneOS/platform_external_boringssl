@@ -153,18 +153,6 @@ static int ssl_set_pkey(CERT *c, EVP_PKEY *pkey) {
   return 1;
 }
 
-int SSL_use_RSAPrivateKey_ASN1(SSL *ssl, const uint8_t *der, size_t der_len) {
-  RSA *rsa = RSA_private_key_from_bytes(der, der_len);
-  if (rsa == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_ASN1_LIB);
-    return 0;
-  }
-
-  int ret = SSL_use_RSAPrivateKey(ssl, rsa);
-  RSA_free(rsa);
-  return ret;
-}
-
 int SSL_use_PrivateKey(SSL *ssl, EVP_PKEY *pkey) {
   int ret;
 
@@ -377,12 +365,12 @@ int SSL_set_signing_algorithm_prefs(SSL *ssl, const uint16_t *prefs,
   return set_signing_algorithm_prefs(ssl->cert, prefs, num_prefs);
 }
 
-OPENSSL_COMPILE_ASSERT(sizeof(int) >= 2 * sizeof(uint16_t),
-                       digest_list_conversion_cannot_overflow);
-
 int SSL_set_private_key_digest_prefs(SSL *ssl, const int *digest_nids,
                                      size_t num_digests) {
   OPENSSL_free(ssl->cert->sigalgs);
+
+  OPENSSL_COMPILE_ASSERT(sizeof(int) >= 2 * sizeof(uint16_t),
+                         digest_list_conversion_cannot_overflow);
 
   ssl->cert->num_sigalgs = 0;
   ssl->cert->sigalgs = OPENSSL_malloc(sizeof(uint16_t) * 2 * num_digests);

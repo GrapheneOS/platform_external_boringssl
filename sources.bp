@@ -358,6 +358,7 @@ cc_defaults {
                 "linux-x86_64/crypto/bn/x86_64-mont.S",
                 "linux-x86_64/crypto/bn/x86_64-mont5.S",
                 "linux-x86_64/crypto/chacha/chacha-x86_64.S",
+                "linux-x86_64/crypto/cipher/chacha20_poly1305_x86_64.S",
                 "linux-x86_64/crypto/ec/p256-x86_64-asm.S",
                 "linux-x86_64/crypto/md5/md5-x86_64.S",
                 "linux-x86_64/crypto/modes/aesni-gcm-x86_64.S",
@@ -379,6 +380,7 @@ cc_defaults {
                 "linux-x86_64/crypto/bn/x86_64-mont.S",
                 "linux-x86_64/crypto/bn/x86_64-mont5.S",
                 "linux-x86_64/crypto/chacha/chacha-x86_64.S",
+                "linux-x86_64/crypto/cipher/chacha20_poly1305_x86_64.S",
                 "linux-x86_64/crypto/ec/p256-x86_64-asm.S",
                 "linux-x86_64/crypto/md5/md5-x86_64.S",
                 "linux-x86_64/crypto/modes/aesni-gcm-x86_64.S",
@@ -418,8 +420,10 @@ cc_defaults {
         "src/ssl/ssl_file.c",
         "src/ssl/ssl_lib.c",
         "src/ssl/ssl_rsa.c",
+        "src/ssl/ssl_rsa_cc.cc",
         "src/ssl/ssl_session.c",
         "src/ssl/ssl_stat.c",
+        "src/ssl/ssl_x509.c",
         "src/ssl/t1_enc.c",
         "src/ssl/t1_lib.c",
         "src/ssl/tls13_both.c",
@@ -460,6 +464,23 @@ cc_defaults {
 }
 
 cc_defaults {
+    name: "boringssl_crypto_test_sources",
+    srcs: [
+        "src/crypto/dh/dh_test.cc",
+        "src/crypto/dsa/dsa_test.cc",
+        "src/crypto/test/gtest_main.cc",
+    ],
+}
+
+cc_defaults {
+    name: "boringssl_ssl_test_sources",
+    srcs: [
+        "src/crypto/test/gtest_main.cc",
+        "src/ssl/ssl_test.cc",
+    ],
+}
+
+cc_defaults {
     name: "boringssl_tests_sources",
     srcs: [
         "src/crypto/aes/aes_test.cc",
@@ -476,9 +497,7 @@ cc_defaults {
         "src/crypto/curve25519/ed25519_test.cc",
         "src/crypto/curve25519/spake25519_test.cc",
         "src/crypto/curve25519/x25519_test.cc",
-        "src/crypto/dh/dh_test.cc",
         "src/crypto/digest/digest_test.cc",
-        "src/crypto/dsa/dsa_test.cc",
         "src/crypto/ec/ec_test.cc",
         "src/crypto/ec/example_mul.c",
         "src/crypto/ec/p256-x86_64_test.cc",
@@ -506,6 +525,5 @@ cc_defaults {
         "src/crypto/x509/x509_test.cc",
         "src/crypto/x509v3/tab_test.c",
         "src/crypto/x509v3/v3name_test.c",
-        "src/ssl/ssl_test.cc",
     ],
 }

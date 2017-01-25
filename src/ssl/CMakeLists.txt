@@ -25,8 +25,10 @@ add_library(
   ssl_file.c
   ssl_lib.c
   ssl_rsa.c
+  ssl_rsa_cc.cc
   ssl_session.c
   ssl_stat.c
+  ssl_x509.c
   t1_enc.c
   t1_lib.c
   tls_method.c
@@ -44,8 +46,9 @@ add_executable(
 
   ssl_test.cc
 
+  $<TARGET_OBJECTS:gtest_main>
   $<TARGET_OBJECTS:test_support>
 )
 
-target_link_libraries(ssl_test ssl crypto)
+target_link_libraries(ssl_test ssl crypto gtest)
 add_dependencies(all_tests ssl_test)
