@@ -451,9 +451,8 @@ int ssl3_accept(SSL_HANDSHAKE *hs) {
         break;
 
       case SSL3_ST_SW_FLUSH:
-        if (BIO_flush(ssl->wbio) <= 0) {
-          ssl->rwstate = SSL_WRITING;
-          ret = -1;
+        ret = ssl->method->flush_flight(ssl);
+        if (ret <= 0) {
           goto end;
         }
 
@@ -839,10 +838,6 @@ static int ssl3_get_client_hello(SSL_HANDSHAKE *hs) {
   }
 
   if (hs->state == SSL3_ST_SR_CLNT_HELLO_B) {
-    /* Unlike other callbacks, the early callback is not run a second time if
-     * paused. */
-    hs->state = SSL3_ST_SR_CLNT_HELLO_C;
-
     /* Run the early callback. */
     if (ssl->ctx->select_certificate_cb != NULL) {
       switch (ssl->ctx->select_certificate_cb(&client_hello)) {
@@ -860,6 +855,7 @@ static int ssl3_get_client_hello(SSL_HANDSHAKE *hs) {
           /* fallthrough */;
       }
     }
+    hs->state = SSL3_ST_SR_CLNT_HELLO_C;
   }
 
   /* Negotiate the protocol version if we have not done so yet. */
