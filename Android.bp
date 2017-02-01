@@ -32,7 +32,7 @@ cc_defaults {
 
     local_include_dirs: ["src/include"],
     export_include_dirs: ["src/include"],
-    stl: "none",
+    stl: "libc++_static",
     sdk_version: "9",
 
     cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
@@ -208,4 +208,24 @@ cc_test {
         "libcrypto",
         "libssl",
     ],
+}
+
+cc_test {
+  name: "boringssl_crypto_test",
+  host_supported: true,
+  defaults: ["boringssl_crypto_test_sources", "boringssl_flags"],
+  whole_static_libs: ["boringssl_test_support"],
+
+  cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
+  shared_libs: ["libcrypto"],
+}
+
+cc_test {
+  name: "boringssl_ssl_test",
+  host_supported: true,
+  defaults: ["boringssl_ssl_test_sources", "boringssl_flags"],
+  whole_static_libs: ["boringssl_test_support"],
+
+  cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
+  shared_libs: ["libcrypto", "libssl"],
 }
