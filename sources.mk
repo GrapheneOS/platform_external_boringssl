@@ -336,6 +336,7 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/bn/x86_64-mont.S\
   linux-x86_64/crypto/bn/x86_64-mont5.S\
   linux-x86_64/crypto/chacha/chacha-x86_64.S\
+  linux-x86_64/crypto/cipher/chacha20_poly1305_x86_64.S\
   linux-x86_64/crypto/ec/p256-x86_64-asm.S\
   linux-x86_64/crypto/md5/md5-x86_64.S\
   linux-x86_64/crypto/modes/aesni-gcm-x86_64.S\
