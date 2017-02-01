@@ -54,42 +54,23 @@
  * copied and put under another distribution licence
  * [including the GNU Public Licence.] */
 
-#ifndef OPENSSL_HEADER_TYPE_CHECK_H
-#define OPENSSL_HEADER_TYPE_CHECK_H
+#include <openssl/ssl.h>
 
-#include <openssl/base.h>
-
-#if defined(__cplusplus)
-extern "C" {
-#endif
+#include <openssl/err.h>
+#include <openssl/rsa.h>
 
 
-/* This header file contains some common macros for enforcing type checking.
- * Several, common OpenSSL structures (i.e. stack and lhash) operate on void
- * pointers, but we wish to have type checking when they are used with a
- * specific type. */
+/* This function has been converted to C++ to check if all of libssl's
+ * consumers' toolchains are capable of handling C++11. Once all problems in
+ * consumer toolchains are found and fixed, we will convert the rest of
+ * libssl. */
 
-/* CHECKED_CAST casts |p| from type |from| to type |to|. */
-#define CHECKED_CAST(to, from, p) ((to) (1 ? (p) : (from)0))
+int SSL_use_RSAPrivateKey_ASN1(SSL *ssl, const uint8_t *der, size_t der_len) {
+  bssl::UniquePtr<RSA> rsa(RSA_private_key_from_bytes(der, der_len));
+  if (!rsa) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_ASN1_LIB);
+    return 0;
+  }
 
-/* CHECKED_PTR_OF casts a given pointer to void* and statically checks that it
- * was a pointer to |type|. */
-#define CHECKED_PTR_OF(type, p) CHECKED_CAST(void*, type*, (p))
-
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#define OPENSSL_COMPILE_ASSERT(cond, msg) _Static_assert(cond, #msg)
-#elif defined(__GNUC__)
-#define OPENSSL_COMPILE_ASSERT(cond, msg)                      \
-  typedef char OPENSSL_COMPILE_ASSERT_##msg[((cond) ? 1 : -1)] \
-      __attribute__((unused))
-#else
-#define OPENSSL_COMPILE_ASSERT(cond, msg) \
-  typedef char OPENSSL_COMPILE_ASSERT_##msg[((cond) ? 1 : -1)]
-#endif
-
-
-#if defined(__cplusplus)
-}  /* extern C */
-#endif
-
-#endif  /* OPENSSL_HEADER_TYPE_CHECK_H */
+  return SSL_use_RSAPrivateKey(ssl, rsa.get());
+}
