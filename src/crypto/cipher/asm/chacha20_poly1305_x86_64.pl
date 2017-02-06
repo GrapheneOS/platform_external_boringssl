@@ -31,7 +31,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../perlasm/x86_64-xlate.pl" and -f $xlate) or
 die "can't locate x86_64-xlate.pl";
 
-open OUT,"| \"$^X\" $xlate $flavour $output";
+open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
 *STDOUT=*OUT;
 
 $avx = 2;
@@ -138,7 +138,7 @@ $code.="mov 0+$r_store, %rax
         mov %rdx, $t1
         mov 0+$r_store, %rax
         mul $acc1
-        imul $acc2, $t2
+        imulq $acc2, $t2
         add %rax, $t1
         adc %rdx, $t2\n";
 }
@@ -157,7 +157,7 @@ $code.="mov 8+$r_store, %rax
 }
 
 sub poly_stage3 {
-$code.="imul $acc2, $t3
+$code.="imulq $acc2, $t3
         add $acc0, $t2
         adc %rdx, $t3\n";
 }
@@ -389,7 +389,7 @@ hash_ad_loop:
         jb hash_ad_tail\n";
         &poly_add("0($adp)");
         &poly_mul(); $code.="
-        lea (1*16)($adp), $adp
+        lea 1*16($adp), $adp
         sub \$16, $itr2
     jmp hash_ad_loop
 hash_ad_tail:
@@ -453,7 +453,6 @@ chacha20_poly1305_open:
 .cfi_offset r13, -40
 .cfi_offset r14, -48
 .cfi_offset r15, -56
-.cfi_offset $keyp, -64
     lea 32(%rsp), %rbp
     and \$-32, %rbp
     mov %rdx, 8+$len_store
@@ -852,7 +851,6 @@ chacha20_poly1305_seal:
 .cfi_offset r13, -40
 .cfi_offset r14, -48
 .cfi_offset r15, -56
-.cfi_offset $keyp, -64
     lea 32(%rsp), %rbp
     and \$-32, %rbp
     mov %rdx, 8+$len_store
@@ -1378,7 +1376,7 @@ $code.=<<___;
     mov %rdx, $t2
     mulx $acc0, $t0, $t1
     mulx $acc1, %rax, %rdx
-    imul $acc2, $t2
+    imulq $acc2, $t2
     add %rax, $t1
     adc %rdx, $t2
 ___
@@ -1392,7 +1390,7 @@ $code.=<<___;
     mulx $acc1, $acc1, $t3
     adc $acc1, $t2
     adc \$0, $t3
-    imul $acc2, %rdx
+    imulq $acc2, %rdx
 ___
 }
 
