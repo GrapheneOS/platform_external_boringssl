@@ -56,7 +56,6 @@ cc_defaults {
         "src/crypto/base64/base64.c",
         "src/crypto/bio/bio.c",
         "src/crypto/bio/bio_mem.c",
-        "src/crypto/bio/buffer.c",
         "src/crypto/bio/connect.c",
         "src/crypto/bio/fd.c",
         "src/crypto/bio/file.c",
@@ -398,6 +397,7 @@ cc_defaults {
 cc_defaults {
     name: "libssl_sources",
     srcs: [
+        "src/ssl/bio_ssl.c",
         "src/ssl/custom_extensions.c",
         "src/ssl/d1_both.c",
         "src/ssl/d1_lib.c",

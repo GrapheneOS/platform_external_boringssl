@@ -99,14 +99,6 @@ static int dtls1_supports_cipher(const SSL_CIPHER *cipher) {
   return cipher->algorithm_enc != SSL_eNULL;
 }
 
-static int dtls1_flush_flight(SSL *ssl) {
-  int ret = BIO_flush(ssl->wbio);
-  if (ret <= 0) {
-    ssl->rwstate = SSL_WRITING;
-  }
-  return ret;
-}
-
 static void dtls1_expect_flight(SSL *ssl) { dtls1_start_timer(ssl); }
 
 static void dtls1_received_flight(SSL *ssl) { dtls1_stop_timer(ssl); }
@@ -159,9 +151,9 @@ static const SSL_PROTOCOL_METHOD kDTLSProtocolMethod = {
     dtls1_supports_cipher,
     dtls1_init_message,
     dtls1_finish_message,
-    dtls1_queue_message,
-    dtls1_write_message,
-    dtls1_send_change_cipher_spec,
+    dtls1_add_message,
+    dtls1_add_change_cipher_spec,
+    dtls1_add_alert,
     dtls1_flush_flight,
     dtls1_expect_flight,
     dtls1_received_flight,

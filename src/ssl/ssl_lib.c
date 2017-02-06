@@ -254,8 +254,8 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
   ret->session_cache_mode = SSL_SESS_CACHE_SERVER;
   ret->session_cache_size = SSL_SESSION_CACHE_MAX_SIZE_DEFAULT;
 
-  /* We take the system default */
   ret->session_timeout = SSL_DEFAULT_SESSION_TIMEOUT;
+  ret->session_psk_dhe_timeout = SSL_DEFAULT_SESSION_PSK_DHE_TIMEOUT;
 
   ret->references = 1;
 
@@ -425,22 +425,21 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->initial_ctx = ctx;
 
   if (ctx->supported_group_list) {
-    ssl->supported_group_list =
-        BUF_memdup(ctx->supported_group_list,
-                   ctx->supported_group_list_len * 2);
+    ssl->supported_group_list = BUF_memdup(ctx->supported_group_list,
+                                           ctx->supported_group_list_len * 2);
     if (!ssl->supported_group_list) {
       goto err;
     }
     ssl->supported_group_list_len = ctx->supported_group_list_len;
   }
 
-  if (ssl->ctx->alpn_client_proto_list) {
-    ssl->alpn_client_proto_list = BUF_memdup(
-        ssl->ctx->alpn_client_proto_list, ssl->ctx->alpn_client_proto_list_len);
+  if (ctx->alpn_client_proto_list) {
+    ssl->alpn_client_proto_list = BUF_memdup(ctx->alpn_client_proto_list,
+                                             ctx->alpn_client_proto_list_len);
     if (ssl->alpn_client_proto_list == NULL) {
       goto err;
     }
-    ssl->alpn_client_proto_list_len = ssl->ctx->alpn_client_proto_list_len;
+    ssl->alpn_client_proto_list_len = ctx->alpn_client_proto_list_len;
   }
 
   ssl->method = ctx->method;
@@ -469,16 +468,11 @@ SSL *SSL_new(SSL_CTX *ctx) {
     ssl->tlsext_channel_id_private = ctx->tlsext_channel_id_private;
   }
 
-  ssl->signed_cert_timestamps_enabled =
-      ssl->ctx->signed_cert_timestamps_enabled;
-  ssl->ocsp_stapling_enabled = ssl->ctx->ocsp_stapling_enabled;
+  ssl->signed_cert_timestamps_enabled = ctx->signed_cert_timestamps_enabled;
+  ssl->ocsp_stapling_enabled = ctx->ocsp_stapling_enabled;
 
-  ssl->session_timeout = SSL_DEFAULT_SESSION_TIMEOUT;
-
-  /* If the context has a default timeout, use it over the default. */
-  if (ctx->session_timeout != 0) {
-    ssl->session_timeout = ctx->session_timeout;
-  }
+  ssl->session_timeout = ctx->session_timeout;
+  ssl->session_psk_dhe_timeout = ctx->session_psk_dhe_timeout;
 
   /* If the context has an OCSP response, use it. */
   if (ctx->ocsp_response != NULL) {
@@ -503,9 +497,6 @@ void SSL_free(SSL *ssl) {
   X509_VERIFY_PARAM_free(ssl->param);
 
   CRYPTO_free_ex_data(&g_ex_data_class_ssl, ssl, &ssl->ex_data);
-
-  ssl_free_wbio_buffer(ssl);
-  assert(ssl->bbio == NULL);
 
   BIO_free_all(ssl->rbio);
   BIO_free_all(ssl->wbio);
@@ -553,18 +544,8 @@ void SSL_set0_rbio(SSL *ssl, BIO *rbio) {
 }
 
 void SSL_set0_wbio(SSL *ssl, BIO *wbio) {
-  /* If the output buffering BIO is still in place, remove it. */
-  if (ssl->bbio != NULL) {
-    ssl->wbio = BIO_pop(ssl->wbio);
-  }
-
   BIO_free_all(ssl->wbio);
   ssl->wbio = wbio;
-
-  /* Re-attach |bbio| to the new |wbio|. */
-  if (ssl->bbio != NULL) {
-    ssl->wbio = BIO_push(ssl->bbio, ssl->wbio);
-  }
 }
 
 void SSL_set_bio(SSL *ssl, BIO *rbio, BIO *wbio) {
@@ -603,14 +584,7 @@ void SSL_set_bio(SSL *ssl, BIO *rbio, BIO *wbio) {
 
 BIO *SSL_get_rbio(const SSL *ssl) { return ssl->rbio; }
 
-BIO *SSL_get_wbio(const SSL *ssl) {
-  if (ssl->bbio != NULL) {
-    /* If |bbio| is active, the true caller-configured BIO is its |next_bio|. */
-    assert(ssl->bbio == ssl->wbio);
-    return ssl->bbio->next_bio;
-  }
-  return ssl->wbio;
-}
+BIO *SSL_get_wbio(const SSL *ssl) { return ssl->wbio; }
 
 void ssl_reset_error_state(SSL *ssl) {
   /* Functions which use |SSL_get_error| must reset I/O and error state on
@@ -1292,34 +1266,12 @@ int SSL_pending(const SSL *ssl) {
 
 /* Fix this so it checks all the valid key/cert options */
 int SSL_CTX_check_private_key(const SSL_CTX *ctx) {
-  if (ctx->cert->privatekey == NULL) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_PRIVATE_KEY_ASSIGNED);
-    return 0;
-  }
-
-  X509 *x509 = ctx->cert->x509_leaf;
-  if (x509 == NULL) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CERTIFICATE_ASSIGNED);
-    return 0;
-  }
-
-  return X509_check_private_key(x509, ctx->cert->privatekey);
+  return ssl_cert_check_private_key(ctx->cert, ctx->cert->privatekey);
 }
 
 /* Fix this function so that it takes an optional type parameter */
 int SSL_check_private_key(const SSL *ssl) {
-  if (ssl->cert->privatekey == NULL) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_PRIVATE_KEY_ASSIGNED);
-    return 0;
-  }
-
-  X509 *x509 = ssl->cert->x509_leaf;
-  if (x509 == NULL) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CERTIFICATE_ASSIGNED);
-    return 0;
-  }
-
-  return X509_check_private_key(x509, ssl->cert->privatekey);
+  return ssl_cert_check_private_key(ssl->cert, ssl->cert->privatekey);
 }
 
 long SSL_get_default_timeout(const SSL *ssl) {
@@ -2022,41 +1974,6 @@ const COMP_METHOD *SSL_get_current_compression(SSL *ssl) { return NULL; }
 const COMP_METHOD *SSL_get_current_expansion(SSL *ssl) { return NULL; }
 
 int *SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key) { return 0; }
-
-int ssl_is_wbio_buffered(const SSL *ssl) {
-  return ssl->bbio != NULL;
-}
-
-int ssl_init_wbio_buffer(SSL *ssl) {
-  if (ssl->bbio != NULL) {
-    /* Already buffered. */
-    assert(ssl->bbio == ssl->wbio);
-    return 1;
-  }
-
-  BIO *bbio = BIO_new(BIO_f_buffer());
-  if (bbio == NULL ||
-      !BIO_set_read_buffer_size(bbio, 1)) {
-    BIO_free(bbio);
-    return 0;
-  }
-
-  ssl->bbio = bbio;
-  ssl->wbio = BIO_push(bbio, ssl->wbio);
-  return 1;
-}
-
-void ssl_free_wbio_buffer(SSL *ssl) {
-  if (ssl->bbio == NULL) {
-    return;
-  }
-
-  assert(ssl->bbio == ssl->wbio);
-
-  ssl->wbio = BIO_pop(ssl->wbio);
-  BIO_free(ssl->bbio);
-  ssl->bbio = NULL;
-}
 
 void SSL_CTX_set_quiet_shutdown(SSL_CTX *ctx, int mode) {
   ctx->quiet_shutdown = (mode != 0);
