@@ -1,6 +1,9 @@
 #if defined(__x86_64__)
 .text	
 
+
+chacha20_poly1305_constants:
+
 .p2align	6
 .chacha20_consts:
 .byte	'e','x','p','a','n','d',' ','3','2','-','b','y','t','e',' ','k'
