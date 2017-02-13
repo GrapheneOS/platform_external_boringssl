@@ -248,6 +248,7 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
   OPENSSL_memset(ret, 0, sizeof(SSL_CTX));
 
   ret->method = method->method;
+  ret->x509_method = method->x509_method;
 
   CRYPTO_MUTEX_init(&ret->lock);
 
@@ -261,7 +262,7 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
 
   ret->max_cert_list = SSL_MAX_CERT_LIST_DEFAULT;
   ret->verify_mode = SSL_VERIFY_NONE;
-  ret->cert = ssl_cert_new();
+  ret->cert = ssl_cert_new(method->x509_method);
   if (ret->cert == NULL) {
     goto err;
   }
@@ -362,8 +363,8 @@ void SSL_CTX_free(SSL_CTX *ctx) {
   OPENSSL_free(ctx->psk_identity_hint);
   OPENSSL_free(ctx->supported_group_list);
   OPENSSL_free(ctx->alpn_client_proto_list);
+  CRYPTO_BUFFER_free(ctx->signed_cert_timestamp_list);
   CRYPTO_BUFFER_free(ctx->ocsp_response);
-  OPENSSL_free(ctx->signed_cert_timestamp_list);
   EVP_PKEY_free(ctx->tlsext_channel_id_private);
 
   OPENSSL_free(ctx);
@@ -471,8 +472,11 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->signed_cert_timestamps_enabled = ctx->signed_cert_timestamps_enabled;
   ssl->ocsp_stapling_enabled = ctx->ocsp_stapling_enabled;
 
-  ssl->session_timeout = ctx->session_timeout;
-  ssl->session_psk_dhe_timeout = ctx->session_psk_dhe_timeout;
+  /* If the context has an SCT list, use it. */
+  if (ctx->signed_cert_timestamp_list != NULL) {
+    CRYPTO_BUFFER_up_ref(ctx->signed_cert_timestamp_list);
+    ssl->signed_cert_timestamp_list = ctx->signed_cert_timestamp_list;
+  }
 
   /* If the context has an OCSP response, use it. */
   if (ctx->ocsp_response != NULL) {
@@ -518,6 +522,7 @@ void SSL_free(SSL *ssl) {
   OPENSSL_free(ssl->psk_identity_hint);
   sk_X509_NAME_pop_free(ssl->client_CA, X509_NAME_free);
   sk_SRTP_PROTECTION_PROFILE_free(ssl->srtp_profiles);
+  CRYPTO_BUFFER_free(ssl->signed_cert_timestamp_list);
   CRYPTO_BUFFER_free(ssl->ocsp_response);
 
   if (ssl->method != NULL) {
@@ -1628,8 +1633,27 @@ int SSL_CTX_set_signed_cert_timestamp_list(SSL_CTX *ctx, const uint8_t *list,
     return 0;
   }
 
-  return CBS_stow(&sct_list, &ctx->signed_cert_timestamp_list,
-                  &ctx->signed_cert_timestamp_list_length);
+  CRYPTO_BUFFER_free(ctx->signed_cert_timestamp_list);
+  ctx->signed_cert_timestamp_list = CRYPTO_BUFFER_new(CBS_data(&sct_list),
+                                                      CBS_len(&sct_list),
+                                                      NULL);
+  return ctx->signed_cert_timestamp_list != NULL;
+}
+
+int SSL_set_signed_cert_timestamp_list(SSL *ssl, const uint8_t *list,
+                                       size_t list_len) {
+  CBS sct_list;
+  CBS_init(&sct_list, list, list_len);
+  if (!ssl_is_sct_list_valid(&sct_list)) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SCT_LIST);
+    return 0;
+  }
+
+  CRYPTO_BUFFER_free(ssl->signed_cert_timestamp_list);
+  ssl->signed_cert_timestamp_list = CRYPTO_BUFFER_new(CBS_data(&sct_list),
+                                                      CBS_len(&sct_list),
+                                                      NULL);
+  return ssl->signed_cert_timestamp_list != NULL;
 }
 
 int SSL_CTX_set_ocsp_response(SSL_CTX *ctx, const uint8_t *response,
@@ -2035,6 +2059,12 @@ SSL_CTX *SSL_set_SSL_CTX(SSL *ssl, SSL_CTX *ctx) {
     return ssl->ctx;
   }
 
+  /* One cannot change the X.509 callbacks during a connection. */
+  if (ssl->ctx->x509_method != ctx->x509_method) {
+    assert(0);
+    return NULL;
+  }
+
   if (ctx == NULL) {
     ctx = ssl->initial_ctx;
   }
@@ -2351,22 +2381,6 @@ int ssl3_can_false_start(const SSL *ssl) {
       cipher != NULL &&
       cipher->algorithm_mkey == SSL_kECDHE &&
       cipher->algorithm_mac == SSL_AEAD;
-}
-
-const SSL3_ENC_METHOD *ssl3_get_enc_method(uint16_t version) {
-  switch (version) {
-    case SSL3_VERSION:
-      return &SSLv3_enc_data;
-
-    case TLS1_VERSION:
-    case TLS1_1_VERSION:
-    case TLS1_2_VERSION:
-    case TLS1_3_VERSION:
-      return &TLSv1_enc_data;
-
-    default:
-      return NULL;
-  }
 }
 
 const struct {

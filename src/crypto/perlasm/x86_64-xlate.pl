@@ -51,12 +51,7 @@
 # 7. Stick to explicit ip-relative addressing. If you have to use
 #    GOTPCREL addressing, stick to mov symbol@GOTPCREL(%rip),%r??.
 #    Both are recognized and translated to proper Win64 addressing
-#    modes. To support legacy code a synthetic directive, .picmeup,
-#    is implemented. It puts address of the *next* instruction into
-#    target register, e.g.:
-#
-#		.picmeup	%rax
-#		lea		.Label-.(%rax),%rax
+#    modes.
 #
 # 8. In order to provide for structured exception handling unified
 #    Win64 prologue copies %rsp value to %rax. For further details
@@ -125,7 +120,7 @@ my %globals;
 		$self->{sz} = "";
 	    } elsif ($self->{op} =~ /^p/ && $' !~ /^(ush|op|insrw)/) { # SSEn
 		$self->{sz} = "";
-	    } elsif ($self->{op} =~ /^v/) { # VEX
+	    } elsif ($self->{op} =~ /^[vk]/) { # VEX or k* such as kmov
 		$self->{sz} = "";
 	    } elsif ($self->{op} =~ /mov[dq]/ && $$line =~ /%xmm/) {
 		$self->{sz} = "";
@@ -218,18 +213,26 @@ my %globals;
     }
 }
 { package ea;		# pick up effective addresses: expr(%reg,%reg,scale)
+
+    my %szmap = (	b=>"BYTE$PTR",    w=>"WORD$PTR",
+			l=>"DWORD$PTR",   d=>"DWORD$PTR",
+			q=>"QWORD$PTR",   o=>"OWORD$PTR",
+			x=>"XMMWORD$PTR", y=>"YMMWORD$PTR",
+			z=>"ZMMWORD$PTR" ) if (!$gas);
+
     sub re {
 	my	($class, $line, $opcode) = @_;
 	my	$self = {};
 	my	$ret;
 
 	# optional * ----vvv--- appears in indirect jmp/call
-	if ($$line =~ /^(\*?)([^\(,]*)\(([%\w,]+)\)/) {
+	if ($$line =~ /^(\*?)([^\(,]*)\(([%\w,]+)\)((?:{[^}]+})*)/) {
 	    bless $self, $class;
 	    $self->{asterisk} = $1;
 	    $self->{label} = $2;
 	    ($self->{base},$self->{index},$self->{scale})=split(/,/,$3);
 	    $self->{scale} = 1 if (!defined($self->{scale}));
+	    $self->{opmask} = $4;
 	    $ret = $self;
 	    $$line = substr($$line,@+[0]); $$line =~ s/^\s+//;
 
@@ -270,6 +273,8 @@ my %globals;
 	    $self->{label} =~ s/\b([0-9]+)\b/$1>>0/eg;
 	}
 
+	# if base register is %rbp or %r13, see if it's possible to
+	# flip base and ingex registers [for better performance]
 	if (!$self->{label} && $self->{index} && $self->{scale}==1 &&
 	    $self->{base} =~ /(rbp|r13)/) {
 		$self->{base} = $self->{index}; $self->{index} = $1;
@@ -279,19 +284,16 @@ my %globals;
 	    $self->{label} =~ s/^___imp_/__imp__/   if ($flavour eq "mingw64");
 
 	    if (defined($self->{index})) {
-		sprintf "%s%s(%s,%%%s,%d)",$self->{asterisk},
-					$self->{label},
+		sprintf "%s%s(%s,%%%s,%d)%s",
+					$self->{asterisk},$self->{label},
 					$self->{base}?"%$self->{base}":"",
-					$self->{index},$self->{scale};
+					$self->{index},$self->{scale},
+					$self->{opmask};
 	    } else {
-		sprintf "%s%s(%%%s)",	$self->{asterisk},$self->{label},$self->{base};
+		sprintf "%s%s(%%%s)%s",	$self->{asterisk},$self->{label},
+					$self->{base},$self->{opmask};
 	    }
 	} else {
-	    my %szmap = (	b=>"BYTE$PTR",  w=>"WORD$PTR",
-			l=>"DWORD$PTR", d=>"DWORD$PTR",
-	    		q=>"QWORD$PTR", o=>"OWORD$PTR",
-			x=>"XMMWORD$PTR", y=>"YMMWORD$PTR", z=>"ZMMWORD$PTR" );
-
 	    $self->{label} =~ s/\./\$/g;
 	    $self->{label} =~ s/(?<![\w\$\.])0x([0-9a-f]+)/0$1h/ig;
 	    $self->{label} = "($self->{label})" if ($self->{label} =~ /[\*\+\-\/]/);
@@ -303,17 +305,20 @@ my %globals;
 	    ($mnemonic =~ /^vpbroadcast([qdwb])$/)	&& ($sz=$1)  ||
 	    ($mnemonic =~ /^v(?!perm)[a-z]+[fi]128$/)	&& ($sz="x");
 
+	    $self->{opmask}  =~ s/%(k[0-7])/$1/;
+
 	    if (defined($self->{index})) {
-		sprintf "%s[%s%s*%d%s]",$szmap{$sz},
+		sprintf "%s[%s%s*%d%s]%s",$szmap{$sz},
 					$self->{label}?"$self->{label}+":"",
 					$self->{index},$self->{scale},
-					$self->{base}?"+$self->{base}":"";
+					$self->{base}?"+$self->{base}":"",
+					$self->{opmask};
 	    } elsif ($self->{base} eq "rip") {
 		sprintf "%s[%s]",$szmap{$sz},$self->{label};
 	    } else {
-		sprintf "%s[%s%s]",$szmap{$sz},
+		sprintf "%s[%s%s]%s",	$szmap{$sz},
 					$self->{label}?"$self->{label}+":"",
-					$self->{base};
+					$self->{base},$self->{opmask};
 	    }
 	}
     }
@@ -325,10 +330,11 @@ my %globals;
 	my	$ret;
 
 	# optional * ----vvv--- appears in indirect jmp/call
-	if ($$line =~ /^(\*?)%(\w+)/) {
+	if ($$line =~ /^(\*?)%(\w+)((?:{[^}]+})*)/) {
 	    bless $self,$class;
 	    $self->{asterisk} = $1;
 	    $self->{value} = $2;
+	    $self->{opmask} = $3;
 	    $opcode->size($self->size());
 	    $ret = $self;
 	    $$line = substr($$line,@+[0]); $$line =~ s/^\s+//;
@@ -352,8 +358,11 @@ my %globals;
     }
     sub out {
     	my $self = shift;
-	if ($gas)	{ sprintf "%s%%%s",$self->{asterisk},$self->{value}; }
-	else		{ $self->{value}; }
+	if ($gas)	{ sprintf "%s%%%s%s",	$self->{asterisk},
+						$self->{value},
+						$self->{opmask}; }
+	else		{ $self->{opmask} =~ s/%(k[0-7])/$1/;
+			  $self->{value}.$self->{opmask}; }
     }
 }
 { package label;	# pick up labels, which end with :
@@ -377,9 +386,8 @@ my %globals;
 
 	if ($gas) {
 	    my $func = ($globals{$self->{value}} or $self->{value}) . ":";
-	    if ($win64	&&
-			$current_function->{name} eq $self->{value} &&
-			$current_function->{abi} eq "svr4") {
+	    if ($win64	&& $current_function->{name} eq $self->{value}
+			&& $current_function->{abi} eq "svr4") {
 		$func .= "\n";
 		$func .= "	movq	%rdi,8(%rsp)\n";
 		$func .= "	movq	%rsi,16(%rsp)\n";
@@ -458,15 +466,6 @@ my %globals;
 	my	$self = {};
 	my	$ret;
 	my	$dir;
-	my	%opcode =	# lea 2f-1f(%rip),%dst; 1: nop; 2:
-		(	"%rax"=>0x01058d48,	"%rcx"=>0x010d8d48,
-			"%rdx"=>0x01158d48,	"%rbx"=>0x011d8d48,
-			"%rsp"=>0x01258d48,	"%rbp"=>0x012d8d48,
-			"%rsi"=>0x01358d48,	"%rdi"=>0x013d8d48,
-			"%r8" =>0x01058d4c,	"%r9" =>0x010d8d4c,
-			"%r10"=>0x01158d4c,	"%r11"=>0x011d8d4c,
-			"%r12"=>0x01258d4c,	"%r13"=>0x012d8d4c,
-			"%r14"=>0x01358d4c,	"%r15"=>0x013d8d4c	);
 
 	if ($$line =~ /^\s*(\.\w+)/) {
 	    bless $self,$class;
@@ -476,12 +475,6 @@ my %globals;
 	    $$line = substr($$line,@+[0]); $$line =~ s/^\s+//;
 
 	    SWITCH: for ($dir) {
-		/\.picmeup/ && do { if ($$line =~ /(%r[\w]+)/i) {
-			    		$dir="\t.long";
-					$$line=sprintf "0x%x,0x90000000",$opcode{$1};
-				    }
-				    last;
-				  };
 		/\.global|\.globl|\.extern/
 			    && do { $globals{$$line} = $prefix . $$line;
 				    $$line = $globals{$$line} if ($prefix);
@@ -696,15 +689,6 @@ my %globals;
     }
 }
 
-sub rex {
- my $opcode=shift;
- my ($dst,$src,$rex)=@_;
-
-   $rex|=0x04 if($dst>=8);
-   $rex|=0x01 if($src>=8);
-   push @$opcode,($rex|0x40) if ($rex);
-}
-
 # Upon initial x86_64 introduction SSE>2 extensions were not introduced
 # yet. In order not to be bothered by tracing exact assembler versions,
 # but at the same time to provide a bare security minimum of AES-NI, we
@@ -714,6 +698,15 @@ sub rex {
 
 my %regrm = (	"%eax"=>0, "%ecx"=>1, "%edx"=>2, "%ebx"=>3,
 		"%esp"=>4, "%ebp"=>5, "%esi"=>6, "%edi"=>7	);
+
+sub rex {
+ my $opcode=shift;
+ my ($dst,$src,$rex)=@_;
+
+   $rex|=0x04 if($dst>=8);
+   $rex|=0x01 if($src>=8);
+   push @$opcode,($rex|0x40) if ($rex);
+}
 
 my $movq = sub {	# elderly gas can't handle inter-register movq
   my $arg = shift;
@@ -838,6 +831,10 @@ my $rdseed = sub {
     }
 };
 
+# Not all AVX-capable assemblers recognize AMD XOP extension. Since we
+# are using only two instructions hand-code them in order to be excused
+# from chasing assembler versions...
+
 sub rxb {
  my $opcode=shift;
  my ($dst,$src1,$src2,$rxb)=@_;
@@ -877,9 +874,14 @@ my $vprotq = sub {
     }
 };
 
+# Intel Control-flow Enforcement Technology extension. All functions and
+# indirect branch targets will have to start with this instruction...
+
 my $endbranch = sub {
     (0xf3,0x0f,0x1e,0xfa);
 };
+
+########################################################################
 
 if ($nasm) {
     print <<___;
@@ -1077,6 +1079,7 @@ close STDOUT;
 #	movq	-16(%rcx),%rbx
 #	movq	-8(%rcx),%r15
 #	movq	%rcx,%rsp	# restore original rsp
+# magic_epilogue:
 #	ret
 # .size function,.-function
 #
@@ -1089,11 +1092,16 @@ close STDOUT;
 # EXCEPTION_DISPOSITION handler (EXCEPTION_RECORD *rec,ULONG64 frame,
 #		CONTEXT *context,DISPATCHER_CONTEXT *disp)
 # {	ULONG64 *rsp = (ULONG64 *)context->Rax;
-#	if (context->Rip >= magic_point)
-#	{   rsp = ((ULONG64 **)context->Rsp)[0];
-#	    context->Rbp = rsp[-3];
-#	    context->Rbx = rsp[-2];
-#	    context->R15 = rsp[-1];
+#	ULONG64  rip = context->Rip;
+#
+#	if (rip >= magic_point)
+#	{   rsp = (ULONG64 *)context->Rsp;
+#	    if (rip < magic_epilogue)
+#	    {	rsp = (ULONG64 *)rsp[0];
+#		context->Rbp = rsp[-3];
+#		context->Rbx = rsp[-2];
+#		context->R15 = rsp[-1];
+#	    }
 #	}
 #	context->Rsp = (ULONG64)rsp;
 #	context->Rdi = rsp[1];
@@ -1185,13 +1193,12 @@ close STDOUT;
 # instruction and reflecting it in finer grade unwind logic in handler.
 # After all, isn't it why it's called *language-specific* handler...
 #
-# Attentive reader can notice that exceptions would be mishandled in
-# auto-generated "gear" epilogue. Well, exception effectively can't
-# occur there, because if memory area used by it was subject to
-# segmentation violation, then it would be raised upon call to the
-# function (and as already mentioned be accounted to caller, which is
-# not a problem). If you're still not comfortable, then define tail
-# "magic point" just prior ret instruction and have handler treat it...
+# SE handlers are also involved in unwinding stack when executable is
+# profiled or debugged. Profiling implies additional limitations that
+# are too subtle to discuss here. For now it's sufficient to say that
+# in order to simplify handlers one should either a) offload original
+# %rsp to stack (like discussed above); or b) if you have a register to
+# spare for frame pointer, choose volatile one.
 #
 # (*)	Note that we're talking about run-time, not debug-time. Lack of
 #	unwind information makes debugging hard on both Windows and
