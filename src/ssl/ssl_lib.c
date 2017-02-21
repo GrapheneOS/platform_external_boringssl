@@ -363,8 +363,6 @@ void SSL_CTX_free(SSL_CTX *ctx) {
   OPENSSL_free(ctx->psk_identity_hint);
   OPENSSL_free(ctx->supported_group_list);
   OPENSSL_free(ctx->alpn_client_proto_list);
-  CRYPTO_BUFFER_free(ctx->signed_cert_timestamp_list);
-  CRYPTO_BUFFER_free(ctx->ocsp_response);
   EVP_PKEY_free(ctx->tlsext_channel_id_private);
 
   OPENSSL_free(ctx);
@@ -405,9 +403,6 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->msg_callback = ctx->msg_callback;
   ssl->msg_callback_arg = ctx->msg_callback_arg;
   ssl->verify_mode = ctx->verify_mode;
-  ssl->sid_ctx_length = ctx->sid_ctx_length;
-  assert(ssl->sid_ctx_length <= sizeof ssl->sid_ctx);
-  OPENSSL_memcpy(&ssl->sid_ctx, &ctx->sid_ctx, sizeof(ssl->sid_ctx));
   ssl->verify_callback = ctx->default_verify_callback;
   ssl->retain_only_sha256_of_client_certs =
       ctx->retain_only_sha256_of_client_certs;
@@ -472,18 +467,6 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->signed_cert_timestamps_enabled = ctx->signed_cert_timestamps_enabled;
   ssl->ocsp_stapling_enabled = ctx->ocsp_stapling_enabled;
 
-  /* If the context has an SCT list, use it. */
-  if (ctx->signed_cert_timestamp_list != NULL) {
-    CRYPTO_BUFFER_up_ref(ctx->signed_cert_timestamp_list);
-    ssl->signed_cert_timestamp_list = ctx->signed_cert_timestamp_list;
-  }
-
-  /* If the context has an OCSP response, use it. */
-  if (ctx->ocsp_response != NULL) {
-    CRYPTO_BUFFER_up_ref(ctx->ocsp_response);
-    ssl->ocsp_response = ctx->ocsp_response;
-  }
-
   return ssl;
 
 err:
@@ -522,8 +505,6 @@ void SSL_free(SSL *ssl) {
   OPENSSL_free(ssl->psk_identity_hint);
   sk_X509_NAME_pop_free(ssl->client_CA, X509_NAME_free);
   sk_SRTP_PROTECTION_PROFILE_free(ssl->srtp_profiles);
-  CRYPTO_BUFFER_free(ssl->signed_cert_timestamp_list);
-  CRYPTO_BUFFER_free(ssl->ocsp_response);
 
   if (ssl->method != NULL) {
     ssl->method->ssl_free(ssl);
@@ -800,10 +781,11 @@ int SSL_shutdown(SSL *ssl) {
     return -1;
   }
 
-  /* We can't shutdown properly if we are in the middle of a handshake. */
+  /* If we are in the middle of a handshake, silently succeed. Consumers often
+   * call this function before |SSL_free|, whether the handshake succeeded or
+   * not. We assume the caller has already handled failed handshakes. */
   if (SSL_in_init(ssl)) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_SHUTDOWN_WHILE_IN_INIT);
-    return -1;
+    return 1;
   }
 
   if (ssl->quiet_shutdown) {
@@ -1088,37 +1070,32 @@ err:
   return 0;
 }
 
-int SSL_CTX_set_session_id_context(SSL_CTX *ctx, const uint8_t *sid_ctx,
+static int set_session_id_context(CERT *cert, const uint8_t *sid_ctx,
                                    size_t sid_ctx_len) {
-  if (sid_ctx_len > sizeof(ctx->sid_ctx)) {
+  if (sid_ctx_len > sizeof(cert->sid_ctx)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_SSL_SESSION_ID_CONTEXT_TOO_LONG);
     return 0;
   }
 
-  assert(sizeof(ctx->sid_ctx) < 256);
-  ctx->sid_ctx_length = (uint8_t)sid_ctx_len;
-  OPENSSL_memcpy(ctx->sid_ctx, sid_ctx, sid_ctx_len);
-
+  OPENSSL_COMPILE_ASSERT(sizeof(cert->sid_ctx) < 256, sid_ctx_too_large);
+  cert->sid_ctx_length = (uint8_t)sid_ctx_len;
+  OPENSSL_memcpy(cert->sid_ctx, sid_ctx, sid_ctx_len);
   return 1;
+}
+
+int SSL_CTX_set_session_id_context(SSL_CTX *ctx, const uint8_t *sid_ctx,
+                                   size_t sid_ctx_len) {
+  return set_session_id_context(ctx->cert, sid_ctx, sid_ctx_len);
 }
 
 int SSL_set_session_id_context(SSL *ssl, const uint8_t *sid_ctx,
                                size_t sid_ctx_len) {
-  if (sid_ctx_len > sizeof(ssl->sid_ctx)) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_SSL_SESSION_ID_CONTEXT_TOO_LONG);
-    return 0;
-  }
-
-  assert(sizeof(ssl->sid_ctx) < 256);
-  ssl->sid_ctx_length = (uint8_t)sid_ctx_len;
-  OPENSSL_memcpy(ssl->sid_ctx, sid_ctx, sid_ctx_len);
-
-  return 1;
+  return set_session_id_context(ssl->cert, sid_ctx, sid_ctx_len);
 }
 
 const uint8_t *SSL_get0_session_id_context(const SSL *ssl, size_t *out_len) {
-  *out_len = ssl->sid_ctx_length;
-  return ssl->sid_ctx;
+  *out_len = ssl->cert->sid_ctx_length;
+  return ssl->cert->sid_ctx;
 }
 
 void ssl_cipher_preference_list_free(
@@ -1247,11 +1224,26 @@ size_t SSL_get_peer_finished(const SSL *ssl, void *buf, size_t count) {
 int SSL_get_verify_mode(const SSL *ssl) { return ssl->verify_mode; }
 
 int SSL_get_extms_support(const SSL *ssl) {
+  /* TLS 1.3 does not require extended master secret and always reports as
+   * supporting it. */
   if (!ssl->s3->have_version) {
     return 0;
   }
-  return ssl3_protocol_version(ssl) >= TLS1_3_VERSION ||
-         ssl->s3->tmp.extended_master_secret == 1;
+  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+    return 1;
+  }
+
+  /* If the initial handshake completed, query the established session. */
+  if (ssl->s3->established_session != NULL) {
+    return ssl->s3->established_session->extended_master_secret;
+  }
+
+  /* Otherwise, query the in-progress handshake. */
+  if (ssl->s3->hs != NULL) {
+    return ssl->s3->hs->extended_master_secret;
+  }
+  assert(0);
+  return 0;
 }
 
 int SSL_CTX_get_read_ahead(const SSL_CTX *ctx) { return 0; }
@@ -1583,18 +1575,16 @@ void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx) {
   ctx->signed_cert_timestamps_enabled = 1;
 }
 
-int SSL_enable_signed_cert_timestamps(SSL *ssl) {
+void SSL_enable_signed_cert_timestamps(SSL *ssl) {
   ssl->signed_cert_timestamps_enabled = 1;
-  return 1;
 }
 
 void SSL_CTX_enable_ocsp_stapling(SSL_CTX *ctx) {
   ctx->ocsp_stapling_enabled = 1;
 }
 
-int SSL_enable_ocsp_stapling(SSL *ssl) {
+void SSL_enable_ocsp_stapling(SSL *ssl) {
   ssl->ocsp_stapling_enabled = 1;
-  return 1;
 }
 
 void SSL_get0_signed_cert_timestamp_list(const SSL *ssl, const uint8_t **out,
@@ -1622,52 +1612,6 @@ void SSL_get0_ocsp_response(const SSL *ssl, const uint8_t **out,
   }
   *out = session->ocsp_response;
   *out_len = session->ocsp_response_length;
-}
-
-int SSL_CTX_set_signed_cert_timestamp_list(SSL_CTX *ctx, const uint8_t *list,
-                                           size_t list_len) {
-  CBS sct_list;
-  CBS_init(&sct_list, list, list_len);
-  if (!ssl_is_sct_list_valid(&sct_list)) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SCT_LIST);
-    return 0;
-  }
-
-  CRYPTO_BUFFER_free(ctx->signed_cert_timestamp_list);
-  ctx->signed_cert_timestamp_list = CRYPTO_BUFFER_new(CBS_data(&sct_list),
-                                                      CBS_len(&sct_list),
-                                                      NULL);
-  return ctx->signed_cert_timestamp_list != NULL;
-}
-
-int SSL_set_signed_cert_timestamp_list(SSL *ssl, const uint8_t *list,
-                                       size_t list_len) {
-  CBS sct_list;
-  CBS_init(&sct_list, list, list_len);
-  if (!ssl_is_sct_list_valid(&sct_list)) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SCT_LIST);
-    return 0;
-  }
-
-  CRYPTO_BUFFER_free(ssl->signed_cert_timestamp_list);
-  ssl->signed_cert_timestamp_list = CRYPTO_BUFFER_new(CBS_data(&sct_list),
-                                                      CBS_len(&sct_list),
-                                                      NULL);
-  return ssl->signed_cert_timestamp_list != NULL;
-}
-
-int SSL_CTX_set_ocsp_response(SSL_CTX *ctx, const uint8_t *response,
-                              size_t response_len) {
-  CRYPTO_BUFFER_free(ctx->ocsp_response);
-  ctx->ocsp_response = CRYPTO_BUFFER_new(response, response_len, NULL);
-  return ctx->ocsp_response != NULL;
-}
-
-int SSL_set_ocsp_response(SSL *ssl, const uint8_t *response,
-                          size_t response_len) {
-  CRYPTO_BUFFER_free(ssl->ocsp_response);
-  ssl->ocsp_response = CRYPTO_BUFFER_new(response, response_len, NULL);
-  return ssl->ocsp_response != NULL;
 }
 
 int SSL_set_tlsext_host_name(SSL *ssl, const char *name) {
@@ -2076,10 +2020,6 @@ SSL_CTX *SSL_set_SSL_CTX(SSL *ssl, SSL_CTX *ctx) {
   SSL_CTX_free(ssl->ctx);
   ssl->ctx = ctx;
 
-  ssl->sid_ctx_length = ctx->sid_ctx_length;
-  assert(ssl->sid_ctx_length <= sizeof(ssl->sid_ctx));
-  OPENSSL_memcpy(ssl->sid_ctx, ctx->sid_ctx, sizeof(ssl->sid_ctx));
-
   return ssl->ctx;
 }
 
@@ -2094,12 +2034,7 @@ void (*SSL_get_info_callback(const SSL *ssl))(const SSL *ssl, int type,
 }
 
 int SSL_state(const SSL *ssl) {
-  if (ssl->s3->hs == NULL) {
-    assert(ssl->s3->initial_handshake_complete);
-    return SSL_ST_OK;
-  }
-
-  return ssl->s3->hs->state;
+  return SSL_in_init(ssl) ? SSL_ST_INIT : SSL_ST_OK;
 }
 
 void SSL_set_state(SSL *ssl, int state) { }
@@ -2345,11 +2280,12 @@ int ssl_log_secret(const SSL *ssl, const char *label, const uint8_t *secret,
 }
 
 int SSL_is_init_finished(const SSL *ssl) {
-  return SSL_state(ssl) == SSL_ST_OK;
+  return !SSL_in_init(ssl);
 }
 
 int SSL_in_init(const SSL *ssl) {
-  return (SSL_state(ssl) & SSL_ST_INIT) != 0;
+  SSL_HANDSHAKE *hs = ssl->s3->hs;
+  return hs != NULL && hs->state != SSL_ST_OK;
 }
 
 int SSL_in_false_start(const SSL *ssl) {
@@ -2575,10 +2511,11 @@ size_t SSL_get_server_random(const SSL *ssl, uint8_t *out, size_t max_out) {
 }
 
 const SSL_CIPHER *SSL_get_pending_cipher(const SSL *ssl) {
-  if (!SSL_in_init(ssl)) {
+  SSL_HANDSHAKE *hs = ssl->s3->hs;
+  if (hs == NULL) {
     return NULL;
   }
-  return ssl->s3->tmp.new_cipher;
+  return hs->new_cipher;
 }
 
 void SSL_set_retain_only_sha256_of_client_certs(SSL *ssl, int enabled) {

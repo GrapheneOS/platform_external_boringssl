@@ -280,6 +280,15 @@ SSL_SESSION *SSL_SESSION_dup(SSL_SESSION *session, int dup_flags) {
     new_session->ticket_age_add = session->ticket_age_add;
     new_session->ticket_max_early_data = session->ticket_max_early_data;
     new_session->extended_master_secret = session->extended_master_secret;
+
+    if (session->early_alpn != NULL) {
+      new_session->early_alpn =
+          BUF_memdup(session->early_alpn, session->early_alpn_len);
+      if (new_session->early_alpn == NULL) {
+        goto err;
+      }
+    }
+    new_session->early_alpn_len = session->early_alpn_len;
   }
 
   /* Copy the ticket. */
@@ -373,6 +382,7 @@ void SSL_SESSION_free(SSL_SESSION *session) {
   OPENSSL_free(session->tlsext_signed_cert_timestamp_list);
   OPENSSL_free(session->ocsp_response);
   OPENSSL_free(session->psk_identity);
+  OPENSSL_free(session->early_alpn);
   OPENSSL_cleanse(session, sizeof(*session));
   OPENSSL_free(session);
 }
@@ -458,8 +468,8 @@ SSL_SESSION *SSL_get_session(const SSL *ssl) {
   if (!SSL_in_init(ssl)) {
     return ssl->s3->established_session;
   }
-  if (ssl->s3->new_session != NULL) {
-    return ssl->s3->new_session;
+  if (ssl->s3->hs->new_session != NULL) {
+    return ssl->s3->hs->new_session;
   }
   return ssl->session;
 }
@@ -550,19 +560,20 @@ int ssl_get_new_session(SSL_HANDSHAKE *hs, int is_server) {
     session->session_id_length = 0;
   }
 
-  if (ssl->sid_ctx_length > sizeof(session->sid_ctx)) {
+  if (ssl->cert->sid_ctx_length > sizeof(session->sid_ctx)) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
     goto err;
   }
-  OPENSSL_memcpy(session->sid_ctx, ssl->sid_ctx, ssl->sid_ctx_length);
-  session->sid_ctx_length = ssl->sid_ctx_length;
+  OPENSSL_memcpy(session->sid_ctx, ssl->cert->sid_ctx,
+                 ssl->cert->sid_ctx_length);
+  session->sid_ctx_length = ssl->cert->sid_ctx_length;
 
   /* The session is marked not resumable until it is completely filled in. */
   session->not_resumable = 1;
   session->verify_result = X509_V_ERR_INVALID_CALL;
 
-  SSL_SESSION_free(ssl->s3->new_session);
-  ssl->s3->new_session = session;
+  SSL_SESSION_free(hs->new_session);
+  hs->new_session = session;
   ssl_set_session(ssl, NULL);
   return 1;
 
@@ -668,9 +679,9 @@ int ssl_session_is_context_valid(const SSL *ssl, const SSL_SESSION *session) {
     return 0;
   }
 
-  return session->sid_ctx_length == ssl->sid_ctx_length &&
-         OPENSSL_memcmp(session->sid_ctx, ssl->sid_ctx, ssl->sid_ctx_length) ==
-             0;
+  return session->sid_ctx_length == ssl->cert->sid_ctx_length &&
+         OPENSSL_memcmp(session->sid_ctx, ssl->cert->sid_ctx,
+                        ssl->cert->sid_ctx_length) == 0;
 }
 
 int ssl_session_is_time_valid(const SSL *ssl, const SSL_SESSION *session) {
@@ -689,18 +700,20 @@ int ssl_session_is_time_valid(const SSL *ssl, const SSL_SESSION *session) {
   return session->timeout > (long)now.tv_sec - session->time;
 }
 
-int ssl_session_is_resumable(const SSL *ssl, const SSL_SESSION *session) {
+int ssl_session_is_resumable(const SSL_HANDSHAKE *hs,
+                             const SSL_SESSION *session) {
+  const SSL *const ssl = hs->ssl;
   return ssl_session_is_context_valid(ssl, session) &&
          /* The session must have been created by the same type of end point as
           * we're now using it with. */
-         session->is_server == ssl->server &&
+         ssl->server == session->is_server &&
          /* The session must not be expired. */
          ssl_session_is_time_valid(ssl, session) &&
          /* Only resume if the session's version matches the negotiated
            * version. */
          ssl->version == session->ssl_version &&
          /* Only resume if the session's cipher matches the negotiated one. */
-         ssl->s3->tmp.new_cipher == session->cipher &&
+         hs->new_cipher == session->cipher &&
          /* If the session contains a client certificate (either the full
           * certificate or just the hash) then require that the form of the
           * certificate matches the current configuration. */
@@ -898,7 +911,9 @@ static int remove_session_lock(SSL_CTX *ctx, SSL_SESSION *session, int lock) {
 
 int SSL_set_session(SSL *ssl, SSL_SESSION *session) {
   /* SSL_set_session may only be called before the handshake has started. */
-  if (SSL_state(ssl) != SSL_ST_INIT || ssl->s3->initial_handshake_complete) {
+  if (ssl->s3->initial_handshake_complete ||
+      ssl->s3->hs == NULL ||
+      ssl->s3->hs->state != SSL_ST_INIT) {
     abort();
   }
 

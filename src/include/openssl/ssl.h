@@ -2241,11 +2241,11 @@ OPENSSL_EXPORT void SSL_CTX_set_cert_verify_callback(
 
 /* SSL_enable_signed_cert_timestamps causes |ssl| (which must be the client end
  * of a connection) to request SCTs from the server. See
- * https://tools.ietf.org/html/rfc6962. It returns one.
+ * https://tools.ietf.org/html/rfc6962.
  *
  * Call |SSL_get0_signed_cert_timestamp_list| to recover the SCT after the
  * handshake. */
-OPENSSL_EXPORT int SSL_enable_signed_cert_timestamps(SSL *ssl);
+OPENSSL_EXPORT void SSL_enable_signed_cert_timestamps(SSL *ssl);
 
 /* SSL_CTX_enable_signed_cert_timestamps enables SCT requests on all client SSL
  * objects created from |ctx|.
@@ -2255,12 +2255,11 @@ OPENSSL_EXPORT int SSL_enable_signed_cert_timestamps(SSL *ssl);
 OPENSSL_EXPORT void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx);
 
 /* SSL_enable_ocsp_stapling causes |ssl| (which must be the client end of a
- * connection) to request a stapled OCSP response from the server. It returns
- * one.
+ * connection) to request a stapled OCSP response from the server.
  *
  * Call |SSL_get0_ocsp_response| to recover the OCSP response after the
  * handshake. */
-OPENSSL_EXPORT int SSL_enable_ocsp_stapling(SSL *ssl);
+OPENSSL_EXPORT void SSL_enable_ocsp_stapling(SSL *ssl);
 
 /* SSL_CTX_enable_ocsp_stapling enables OCSP stapling on all client SSL objects
  * created from |ctx|.
@@ -3043,7 +3042,6 @@ OPENSSL_EXPORT void SSL_CTX_set_dos_protection_cb(
 #define SSL_ST_OK 0x03
 #define SSL_ST_RENEGOTIATE (0x04 | SSL_ST_INIT)
 #define SSL_ST_TLS13 (0x05 | SSL_ST_INIT)
-#define SSL_ST_ERROR (0x06| SSL_ST_INIT)
 
 /* SSL_CB_* are possible values for the |type| parameter in the info
  * callback and the bitmasks that make them up. */
@@ -3086,8 +3084,7 @@ OPENSSL_EXPORT void SSL_CTX_set_dos_protection_cb(
  *
  * |SSL_CB_ACCEPT_LOOP| (respectively, |SSL_CB_CONNECT_LOOP|) is signaled when
  * a server (respectively, client) handshake progresses. The |value| argument
- * is always one. For the duration of the callback, |SSL_state| will return the
- * previous state.
+ * is always one.
  *
  * |SSL_CB_ACCEPT_EXIT| (respectively, |SSL_CB_CONNECT_EXIT|) is signaled when
  * a server (respectively, client) handshake completes, fails, or is paused.
@@ -3589,7 +3586,10 @@ OPENSSL_EXPORT const char *SSL_alert_desc_string(int value);
 
 typedef struct ssl_conf_ctx_st SSL_CONF_CTX;
 
-/* SSL_state returns the current state of the handshake state machine. */
+/* SSL_state returns |SSL_ST_INIT| if a handshake is in progress and |SSL_ST_OK|
+ * otherwise.
+ *
+ * Use |SSL_is_init| instead. */
 OPENSSL_EXPORT int SSL_state(const SSL *ssl);
 
 #define SSL_get_state(ssl) SSL_state(ssl)
@@ -3805,6 +3805,12 @@ struct ssl_session_st {
    * early data. If zero, 0-RTT is disallowed. */
   uint32_t ticket_max_early_data;
 
+  /* early_alpn is the ALPN protocol from the initial handshake. This is only
+   * stored for TLS 1.3 and above in order to enforce ALPN matching for 0-RTT
+   * resumptions. */
+  uint8_t *early_alpn;
+  size_t early_alpn_len;
+
   /* extended_master_secret is true if the master secret in this session was
    * generated using EMS and thus isn't vulnerable to the Triple Handshake
    * attack. */
@@ -3965,8 +3971,6 @@ struct ssl_ctx_st {
   void *msg_callback_arg;
 
   int verify_mode;
-  uint8_t sid_ctx_length;
-  uint8_t sid_ctx[SSL_MAX_SID_CTX_LENGTH];
   int (*default_verify_callback)(
       int ok, X509_STORE_CTX *ctx); /* called 'verify_callback' in the SSL */
 
@@ -4061,12 +4065,6 @@ struct ssl_ctx_st {
   /* The client's Channel ID private key. */
   EVP_PKEY *tlsext_channel_id_private;
 
-  /* Signed certificate timestamp list to be sent to the client, if requested */
-  CRYPTO_BUFFER *signed_cert_timestamp_list;
-
-  /* OCSP response to be sent to the client, if requested. */
-  CRYPTO_BUFFER *ocsp_response;
-
   /* keylog_callback, if not NULL, is the key logging callback. See
    * |SSL_CTX_set_keylog_callback|. */
   void (*keylog_callback)(const SSL *ssl, const char *line);
@@ -4107,9 +4105,6 @@ struct ssl_ctx_st {
   /* short_header_enabled is one if a short record header in TLS 1.3 may
    * be negotiated and zero otherwise. */
   unsigned short_header_enabled:1;
-
-  /* TODO(agl): remove once node.js no longer references this. */
-  int freelist_max_len;
 };
 
 
