@@ -330,8 +330,8 @@ static int tls1_setup_key_block(SSL_HANDSHAKE *hs) {
   }
 
   SSL_SESSION *session = ssl->session;
-  if (ssl->s3->new_session != NULL) {
-    session = ssl->s3->new_session;
+  if (hs->new_session != NULL) {
+    session = hs->new_session;
   }
 
   const EVP_AEAD *aead = NULL;
@@ -427,10 +427,9 @@ int tls1_change_cipher_state(SSL_HANDSHAKE *hs, int which) {
     iv = server_write_iv;
   }
 
-  SSL_AEAD_CTX *aead_ctx =
-      SSL_AEAD_CTX_new(is_read ? evp_aead_open : evp_aead_seal,
-                       ssl3_protocol_version(ssl), ssl->s3->tmp.new_cipher, key,
-                       key_len, mac_secret, mac_secret_len, iv, iv_len);
+  SSL_AEAD_CTX *aead_ctx = SSL_AEAD_CTX_new(
+      is_read ? evp_aead_open : evp_aead_seal, ssl3_protocol_version(ssl),
+      hs->new_cipher, key, key_len, mac_secret, mac_secret_len, iv, iv_len);
   if (aead_ctx == NULL) {
     return 0;
   }
@@ -474,7 +473,7 @@ int tls1_generate_master_secret(SSL_HANDSHAKE *hs, uint8_t *out,
                                 const uint8_t *premaster,
                                 size_t premaster_len) {
   const SSL *ssl = hs->ssl;
-  if (ssl->s3->tmp.extended_master_secret) {
+  if (hs->extended_master_secret) {
     uint8_t digests[EVP_MAX_MD_SIZE];
     size_t digests_len;
     if (!SSL_TRANSCRIPT_get_hash(&hs->transcript, digests, &digests_len) ||

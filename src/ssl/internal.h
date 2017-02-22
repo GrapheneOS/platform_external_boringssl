@@ -854,9 +854,9 @@ STACK_OF(X509_NAME) *
 int ssl_add_client_CA_list(SSL *ssl, CBB *cbb);
 
 /* ssl_check_leaf_certificate returns one if |pkey| and |leaf| are suitable as
- * a server's leaf certificate for |ssl|. Otherwise, it returns zero and pushes
+ * a server's leaf certificate for |hs|. Otherwise, it returns zero and pushes
  * an error on the error queue. */
-int ssl_check_leaf_certificate(SSL *ssl, EVP_PKEY *pkey,
+int ssl_check_leaf_certificate(SSL_HANDSHAKE *hs, EVP_PKEY *pkey,
                                const CRYPTO_BUFFER *leaf);
 
 
@@ -1049,6 +1049,13 @@ struct ssl_handshake_st {
   /* peer_pubkey is the public key parsed from the peer's leaf certificate. */
   EVP_PKEY *peer_pubkey;
 
+  /* new_session is the new mutable session being established by the current
+   * handshake. It should not be cached. */
+  SSL_SESSION *new_session;
+
+  /* new_cipher is the cipher being negotiated in this handshake. */
+  const SSL_CIPHER *new_cipher;
+
   /* key_block is the record-layer key block for TLS 1.2 and earlier. */
   uint8_t *key_block;
   uint8_t key_block_len;
@@ -1099,6 +1106,10 @@ struct ssl_handshake_st {
 
   /* v2_clienthello is one if we received a V2ClientHello. */
   unsigned v2_clienthello:1;
+
+  /* extended_master_secret is one if the extended master secret extension is
+   * negotiated in this handshake. */
+  unsigned extended_master_secret:1;
 
   /* client_version is the value sent or received in the ClientHello version. */
   uint16_t client_version;
@@ -1323,6 +1334,17 @@ typedef struct cert_st {
   /* Optional X509_STORE for certificate validation. If NULL the parent SSL_CTX
    * store is used instead. */
   X509_STORE *verify_store;
+
+  /* Signed certificate timestamp list to be sent to the client, if requested */
+  CRYPTO_BUFFER *signed_cert_timestamp_list;
+
+  /* OCSP response to be sent to the client, if requested. */
+  CRYPTO_BUFFER *ocsp_response;
+
+  /* sid_ctx partitions the session space within a shared session cache or
+   * ticket key. Only sessions with a matching value will be accepted. */
+  uint8_t sid_ctx_length;
+  uint8_t sid_ctx[SSL_MAX_SID_CTX_LENGTH];
 } CERT;
 
 /* SSL_METHOD is a compatibility structure to support the legacy version-locked
@@ -1594,9 +1616,6 @@ typedef struct ssl3_state_st {
    * TODO(davidben): Move everything not needed after the handshake completes to
    * |hs| and remove this. */
   struct {
-    /* used to hold the new cipher we are going to use */
-    const SSL_CIPHER *new_cipher;
-
     int message_type;
 
     int reuse_message;
@@ -1604,19 +1623,7 @@ typedef struct ssl3_state_st {
     uint8_t new_mac_secret_len;
     uint8_t new_key_len;
     uint8_t new_fixed_iv_len;
-
-    /* extended_master_secret indicates whether the extended master secret
-     * computation is used in this handshake. Note that this is different from
-     * whether it was used for the current session. If this is a resumption
-     * handshake then EMS might be negotiated in the client and server hello
-     * messages, but it doesn't matter if the session that's being resumed
-     * didn't use it to create the master secret initially. */
-    char extended_master_secret;
   } tmp;
-
-  /* new_session is the new mutable session being established by the current
-   * handshake. It should not be cached. */
-  SSL_SESSION *new_session;
 
   /* established_session is the session established by the connection. This
    * session is only filled upon the completion of the handshake and is
@@ -1798,11 +1805,6 @@ struct ssl_st {
    * milliseconds. It's used to initialize the timer any time it's restarted. */
   unsigned initial_timeout_duration_ms;
 
-  /* the session_id_context is used to ensure sessions are only reused
-   * in the appropriate context */
-  uint8_t sid_ctx_length;
-  uint8_t sid_ctx[SSL_MAX_SID_CTX_LENGTH];
-
   /* session is the configured session to be offered by the client. This session
    * is immutable. */
   SSL_SESSION *session;
@@ -1887,12 +1889,6 @@ struct ssl_st {
    * hash of the peer's certificate and then discard it to save memory and
    * session space. Only effective on the server side. */
   unsigned retain_only_sha256_of_client_certs:1;
-
-  /* Signed certificate timestamp list to be sent to the client, if requested */
-  CRYPTO_BUFFER *signed_cert_timestamp_list;
-
-  /* OCSP response to be sent to the client, if requested. */
-  CRYPTO_BUFFER *ocsp_response;
 };
 
 /* From draft-ietf-tls-tls13-18, used in determining PSK modes. */
@@ -1936,9 +1932,10 @@ int ssl_session_is_context_valid(const SSL *ssl, const SSL_SESSION *session);
  * it has expired. */
 int ssl_session_is_time_valid(const SSL *ssl, const SSL_SESSION *session);
 
-/* ssl_session_is_resumable returns one if |session| is resumable for |ssl| and
+/* ssl_session_is_resumable returns one if |session| is resumable for |hs| and
  * zero otherwise. */
-int ssl_session_is_resumable(const SSL *ssl, const SSL_SESSION *session);
+int ssl_session_is_resumable(const SSL_HANDSHAKE *hs,
+                             const SSL_SESSION *session);
 
 /* SSL_SESSION_get_digest returns the digest used in |session|. If the digest is
  * invalid, it returns NULL. */

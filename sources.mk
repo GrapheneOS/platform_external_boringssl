@@ -49,6 +49,7 @@ crypto_sources := \
   src/crypto/asn1/tasn_new.c\
   src/crypto/asn1/tasn_typ.c\
   src/crypto/asn1/tasn_utl.c\
+  src/crypto/asn1/time_support.c\
   src/crypto/asn1/x_bignum.c\
   src/crypto/asn1/x_long.c\
   src/crypto/base64/base64.c\
@@ -200,7 +201,6 @@ crypto_sources := \
   src/crypto/thread_none.c\
   src/crypto/thread_pthread.c\
   src/crypto/thread_win.c\
-  src/crypto/time_support.c\
   src/crypto/x509/a_digest.c\
   src/crypto/x509/a_sign.c\
   src/crypto/x509/a_strex.c\
