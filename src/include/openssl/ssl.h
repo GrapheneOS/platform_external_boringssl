@@ -355,7 +355,7 @@ OPENSSL_EXPORT int SSL_pending(const SSL *ssl);
 
 /* SSL_write writes up to |num| bytes from |buf| into |ssl|. It implicitly runs
  * any pending handshakes, including renegotiations when enabled. On success, it
- * returns the number of bytes read. Otherwise, it returns <= 0. The caller
+ * returns the number of bytes written. Otherwise, it returns <= 0. The caller
  * should pass the value into |SSL_get_error| to determine how to proceed.
  *
  * In TLS, a non-blocking |SSL_write| differs from non-blocking |write| in that
@@ -1160,9 +1160,6 @@ OPENSSL_EXPORT uint32_t SSL_CIPHER_get_id(const SSL_CIPHER *cipher);
  * mode). */
 OPENSSL_EXPORT int SSL_CIPHER_is_AES(const SSL_CIPHER *cipher);
 
-/* SSL_CIPHER_has_MD5_HMAC returns zero. */
-OPENSSL_EXPORT int SSL_CIPHER_has_MD5_HMAC(const SSL_CIPHER *cipher);
-
 /* SSL_CIPHER_has_SHA1_HMAC returns one if |cipher| uses HMAC-SHA1. */
 OPENSSL_EXPORT int SSL_CIPHER_has_SHA1_HMAC(const SSL_CIPHER *cipher);
 
@@ -1313,7 +1310,9 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
  *   |TLSv1_2| matches ciphers new in TLS 1.2. This is confusing and should not
  *   be used.
  *
- * Unknown rules silently match nothing.
+ * Unknown rules are silently ignored by legacy APIs, and rejected by APIs with
+ * "strict" in the name, which should be preferred. Cipher lists can be long and
+ * it's easy to commit typos.
  *
  * The special |@STRENGTH| directive will sort all enabled ciphers by strength.
  *
@@ -1342,12 +1341,29 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
  * substituted when a cipher string starts with 'DEFAULT'. */
 #define SSL_DEFAULT_CIPHER_LIST "ALL"
 
+/* SSL_CTX_set_strict_cipher_list configures the cipher list for |ctx|,
+ * evaluating |str| as a cipher string and returning error if |str| contains
+ * anything meaningless. It returns one on success and zero on failure. */
+OPENSSL_EXPORT int SSL_CTX_set_strict_cipher_list(SSL_CTX *ctx,
+                                                  const char *str);
+
 /* SSL_CTX_set_cipher_list configures the cipher list for |ctx|, evaluating
- * |str| as a cipher string. It returns one on success and zero on failure. */
+ * |str| as a cipher string. It returns one on success and zero on failure.
+ *
+ * Prefer to use |SSL_CTX_set_strict_cipher_list|. This function tolerates
+ * garbage inputs, unless an empty cipher list results. */
 OPENSSL_EXPORT int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str);
 
+/* SSL_set_strict_cipher_list configures the cipher list for |ssl|, evaluating
+ * |str| as a cipher string and returning error if |str| contains anything
+ * meaningless. It returns one on success and zero on failure. */
+OPENSSL_EXPORT int SSL_set_strict_cipher_list(SSL *ssl, const char *str);
+
 /* SSL_set_cipher_list configures the cipher list for |ssl|, evaluating |str| as
- * a cipher string. It returns one on success and zero on failure. */
+ * a cipher string. It returns one on success and zero on failure.
+ *
+ * Prefer to use |SSL_set_strict_cipher_list|. This function tolerates garbage
+ * inputs, unless an empty cipher list results. */
 OPENSSL_EXPORT int SSL_set_cipher_list(SSL *ssl, const char *str);
 
 /* SSL_get_ciphers returns the cipher list for |ssl|, in order of preference. */
