@@ -379,6 +379,12 @@ int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
     return 0;
   }
 
+  /* Require a cofactor of one for custom curves, which implies prime order. */
+  if (!BN_is_one(cofactor)) {
+    OPENSSL_PUT_ERROR(EC, EC_R_WRONG_CURVE_PARAMETERS);
+    return 0;
+  }
+
   if (group->generator == NULL) {
     group->generator = EC_POINT_new(group);
     if (group->generator == NULL) {
