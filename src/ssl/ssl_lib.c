@@ -271,11 +271,7 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
     goto err;
   }
 
-  ssl_create_cipher_list(ret->method, &ret->cipher_list,
-                         SSL_DEFAULT_CIPHER_LIST, 1 /* strict */);
-  if (ret->cipher_list == NULL ||
-      sk_SSL_CIPHER_num(ret->cipher_list->ciphers) <= 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_LIBRARY_HAS_NO_CIPHERS);
+  if (!SSL_CTX_set_strict_cipher_list(ret, SSL_DEFAULT_CIPHER_LIST)) {
     goto err2;
   }
 
@@ -401,7 +397,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
   SSL_CTX_up_ref(ctx);
   ssl->ctx = ctx;
   SSL_CTX_up_ref(ctx);
-  ssl->initial_ctx = ctx;
+  ssl->session_ctx = ctx;
 
   if (!ssl->ctx->x509_method->ssl_new(ssl)) {
     goto err;
@@ -484,7 +480,7 @@ void SSL_free(SSL *ssl) {
   ssl_cert_free(ssl->cert);
 
   OPENSSL_free(ssl->tlsext_hostname);
-  SSL_CTX_free(ssl->initial_ctx);
+  SSL_CTX_free(ssl->session_ctx);
   OPENSSL_free(ssl->supported_group_list);
   OPENSSL_free(ssl->alpn_client_proto_list);
   EVP_PKEY_free(ssl->tlsext_channel_id_private);
@@ -914,6 +910,9 @@ int SSL_get_error(const SSL *ssl, int ret_code) {
 
     case SSL_PRIVATE_KEY_OPERATION:
       return SSL_ERROR_WANT_PRIVATE_KEY_OPERATION;
+
+    case SSL_PENDING_TICKET:
+      return SSL_ERROR_PENDING_TICKET;
   }
 
   return SSL_ERROR_SYSCALL;
@@ -1492,71 +1491,23 @@ const char *SSL_get_cipher_list(const SSL *ssl, int n) {
 }
 
 int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str) {
-  STACK_OF(SSL_CIPHER) *cipher_list =
-      ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str,
-                             0 /* not strict */);
-  if (cipher_list == NULL) {
-    return 0;
-  }
-
-  /* |ssl_create_cipher_list| may succeed but return an empty cipher list. */
-  if (sk_SSL_CIPHER_num(cipher_list) == 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
-    return 0;
-  }
-
-  return 1;
+  return ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str,
+                                0 /* not strict */);
 }
 
 int SSL_CTX_set_strict_cipher_list(SSL_CTX *ctx, const char *str) {
-  STACK_OF(SSL_CIPHER) *cipher_list =
-      ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str,
-                             1 /* strict */);
-  if (cipher_list == NULL) {
-    return 0;
-  }
-
-  /* |ssl_create_cipher_list| may succeed but return an empty cipher list. */
-  if (sk_SSL_CIPHER_num(cipher_list) == 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
-    return 0;
-  }
-
-  return 1;
+  return ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str,
+                                1 /* strict */);
 }
 
 int SSL_set_cipher_list(SSL *ssl, const char *str) {
-  STACK_OF(SSL_CIPHER) *cipher_list =
-      ssl_create_cipher_list(ssl->ctx->method, &ssl->cipher_list, str,
-                             0 /* not strict */);
-  if (cipher_list == NULL) {
-    return 0;
-  }
-
-  /* |ssl_create_cipher_list| may succeed but return an empty cipher list. */
-  if (sk_SSL_CIPHER_num(cipher_list) == 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
-    return 0;
-  }
-
-  return 1;
+  return ssl_create_cipher_list(ssl->ctx->method, &ssl->cipher_list, str,
+                                0 /* not strict */);
 }
 
 int SSL_set_strict_cipher_list(SSL *ssl, const char *str) {
-  STACK_OF(SSL_CIPHER) *cipher_list =
-      ssl_create_cipher_list(ssl->ctx->method, &ssl->cipher_list, str,
-                             1 /* strict */);
-  if (cipher_list == NULL) {
-    return 0;
-  }
-
-  /* |ssl_create_cipher_list| may succeed but return an empty cipher list. */
-  if (sk_SSL_CIPHER_num(cipher_list) == 0) {
-    OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
-    return 0;
-  }
-
-  return 1;
+  return ssl_create_cipher_list(ssl->ctx->method, &ssl->cipher_list, str,
+                                1 /* strict */);
 }
 
 const char *SSL_get_servername(const SSL *ssl, const int type) {
@@ -1596,6 +1547,10 @@ int SSL_get_servername_type(const SSL *ssl) {
 
 void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx) {
   ctx->signed_cert_timestamps_enabled = 1;
+}
+
+void SSL_CTX_i_promise_to_verify_certs_after_the_handshake(SSL_CTX *ctx) {
+  ctx->i_promise_to_verify_certs_after_the_handshake = 1;
 }
 
 void SSL_enable_signed_cert_timestamps(SSL *ssl) {
@@ -1848,7 +1803,7 @@ size_t SSL_get0_certificate_types(SSL *ssl, const uint8_t **out_types) {
 
 void ssl_update_cache(SSL_HANDSHAKE *hs, int mode) {
   SSL *const ssl = hs->ssl;
-  SSL_CTX *ctx = ssl->initial_ctx;
+  SSL_CTX *ctx = ssl->session_ctx;
   /* Never cache sessions with empty session IDs. */
   if (ssl->s3->established_session->session_id_length == 0 ||
       (ctx->session_cache_mode & mode) != mode) {
@@ -2033,7 +1988,7 @@ SSL_CTX *SSL_set_SSL_CTX(SSL *ssl, SSL_CTX *ctx) {
   }
 
   if (ctx == NULL) {
-    ctx = ssl->initial_ctx;
+    ctx = ssl->session_ctx;
   }
 
   ssl_cert_free(ssl->cert);
@@ -2553,6 +2508,10 @@ void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
   ctx->grease_enabled = !!enabled;
 }
 
+int32_t SSL_get_ticket_age_skew(const SSL *ssl) {
+  return ssl->s3->ticket_age_skew;
+}
+
 int SSL_clear(SSL *ssl) {
   /* In OpenSSL, reusing a client |SSL| with |SSL_clear| causes the previously
    * established session to be offered the next time around. wpa_supplicant
@@ -2742,4 +2701,9 @@ int SSL_set_min_version(SSL *ssl, uint16_t version) {
 
 int SSL_set_max_version(SSL *ssl, uint16_t version) {
   return SSL_set_max_proto_version(ssl, version);
+}
+
+void SSL_CTX_set_ticket_aead_method(SSL_CTX *ctx,
+                                    const SSL_TICKET_AEAD_METHOD *aead_method) {
+  ctx->ticket_aead_method = aead_method;
 }
