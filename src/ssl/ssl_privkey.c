@@ -64,8 +64,6 @@
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/type_check.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
 
 #include "internal.h"
 
@@ -82,9 +80,7 @@ static int ssl_set_pkey(CERT *cert, EVP_PKEY *pkey) {
 
   if (cert->chain != NULL &&
       sk_CRYPTO_BUFFER_value(cert->chain, 0) != NULL &&
-      /* Sanity-check that the private key and the certificate match, unless
-       * the key is opaque (in case of, say, a smartcard). */
-      !EVP_PKEY_is_opaque(pkey) &&
+      /* Sanity-check that the private key and the certificate match. */
       !ssl_cert_check_private_key(cert, pkey)) {
     return 0;
   }
