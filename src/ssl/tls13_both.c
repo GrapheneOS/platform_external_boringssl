@@ -23,7 +23,6 @@
 #include <openssl/mem.h>
 #include <openssl/stack.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h>
 
 #include "../crypto/internal.h"
 #include "internal.h"
@@ -77,6 +76,11 @@ int tls13_handshake(SSL_HANDSHAKE *hs) {
 
       case ssl_hs_private_key_operation:
         ssl->rwstate = SSL_PRIVATE_KEY_OPERATION;
+        hs->wait = ssl_hs_ok;
+        return -1;
+
+      case ssl_hs_pending_ticket:
+        ssl->rwstate = SSL_PENDING_TICKET;
         hs->wait = ssl_hs_ok;
         return -1;
 
