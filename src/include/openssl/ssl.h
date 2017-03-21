@@ -2017,7 +2017,7 @@ OPENSSL_EXPORT int SSL_CTX_set_tlsext_ticket_key_cb(
 /* ssl_ticket_aead_result_t enumerates the possible results from decrypting a
  * ticket with an |SSL_TICKET_AEAD_METHOD|. */
 enum ssl_ticket_aead_result_t {
-  /* ssl_ticket_aead_success indicates the the ticket was successfully
+  /* ssl_ticket_aead_success indicates that the ticket was successfully
    * decrypted. */
   ssl_ticket_aead_success,
   /* ssl_ticket_aead_retry indicates that the operation could not be
@@ -3800,6 +3800,12 @@ OPENSSL_EXPORT const BIO_METHOD *BIO_f_ssl(void);
  * other than one on error. */
 OPENSSL_EXPORT long BIO_set_ssl(BIO *bio, SSL *ssl, int take_owership);
 
+/* SSL_CTX_set_ecdh_auto returns one. */
+#define SSL_CTX_set_ecdh_auto(ctx, onoff) 1
+
+/* SSL_set_ecdh_auto returns one. */
+#define SSL_set_ecdh_auto(ssl, onoff) 1
+
 
 /* Private structures.
  *
@@ -4294,6 +4300,7 @@ struct ssl_ctx_st {
 #define SSL_CTRL_SESS_NUMBER doesnt_exist
 #define SSL_CTRL_SET_CURVES doesnt_exist
 #define SSL_CTRL_SET_CURVES_LIST doesnt_exist
+#define SSL_CTRL_SET_ECDH_AUTO doesnt_exist
 #define SSL_CTRL_SET_MAX_CERT_LIST doesnt_exist
 #define SSL_CTRL_SET_MAX_SEND_FRAGMENT doesnt_exist
 #define SSL_CTRL_SET_MSG_CALLBACK doesnt_exist
