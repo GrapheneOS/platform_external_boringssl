@@ -52,8 +52,6 @@ cc_defaults {
         "src/crypto/asn1/tasn_typ.c",
         "src/crypto/asn1/tasn_utl.c",
         "src/crypto/asn1/time_support.c",
-        "src/crypto/asn1/x_bignum.c",
-        "src/crypto/asn1/x_long.c",
         "src/crypto/base64/base64.c",
         "src/crypto/bio/bio.c",
         "src/crypto/bio/bio_mem.c",
@@ -466,6 +464,7 @@ cc_defaults {
 cc_defaults {
     name: "boringssl_crypto_test_sources",
     srcs: [
+        "src/crypto/asn1/asn1_test.cc",
         "src/crypto/chacha/chacha_test.cc",
         "src/crypto/curve25519/x25519_test.cc",
         "src/crypto/dh/dh_test.cc",
@@ -490,7 +489,6 @@ cc_defaults {
     name: "boringssl_tests_sources",
     srcs: [
         "src/crypto/aes/aes_test.cc",
-        "src/crypto/asn1/asn1_test.cc",
         "src/crypto/base64/base64_test.cc",
         "src/crypto/bio/bio_test.cc",
         "src/crypto/bn/bn_test.cc",
