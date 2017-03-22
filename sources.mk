@@ -50,8 +50,6 @@ crypto_sources := \
   src/crypto/asn1/tasn_typ.c\
   src/crypto/asn1/tasn_utl.c\
   src/crypto/asn1/time_support.c\
-  src/crypto/asn1/x_bignum.c\
-  src/crypto/asn1/x_long.c\
   src/crypto/base64/base64.c\
   src/crypto/bio/bio.c\
   src/crypto/bio/bio_mem.c\
