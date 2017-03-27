@@ -613,6 +613,14 @@ int SSL_accept(SSL *ssl) {
   return SSL_do_handshake(ssl);
 }
 
+int ssl_can_write(const SSL *ssl) {
+  return !SSL_in_init(ssl) || ssl->s3->hs->can_early_write;
+}
+
+int ssl_can_read(const SSL *ssl) {
+  return !SSL_in_init(ssl) || ssl->s3->hs->can_early_read;
+}
+
 static int ssl_do_renegotiate(SSL *ssl) {
   /* We do not accept renegotiations as a server or SSL 3.0. SSL 3.0 will be
    * removed entirely in the future and requires retaining more data for
@@ -693,7 +701,7 @@ static int ssl_read_impl(SSL *ssl, void *buf, int num, int peek) {
     /* Complete the current handshake, if any. False Start will cause
      * |SSL_do_handshake| to return mid-handshake, so this may require multiple
      * iterations. */
-    while (SSL_in_init(ssl)) {
+    while (!ssl_can_read(ssl)) {
       int ret = SSL_do_handshake(ssl);
       if (ret < 0) {
         return ret;
@@ -709,6 +717,12 @@ static int ssl_read_impl(SSL *ssl, void *buf, int num, int peek) {
     if (ret > 0 || !got_handshake) {
       ssl->s3->key_update_count = 0;
       return ret;
+    }
+
+    /* If we received an interrupt in early read (the end_of_early_data alert),
+     * loop again for the handshake to process it. */
+    if (SSL_in_init(ssl)) {
+      continue;
     }
 
     /* Handle the post-handshake message and try again. */
@@ -741,7 +755,7 @@ int SSL_write(SSL *ssl, const void *buf, int num) {
   }
 
   /* If necessary, complete the handshake implicitly. */
-  if (SSL_in_init(ssl) && !SSL_in_false_start(ssl)) {
+  if (!ssl_can_write(ssl)) {
     int ret = SSL_do_handshake(ssl);
     if (ret < 0) {
       return ret;
@@ -819,6 +833,10 @@ int SSL_send_fatal_alert(SSL *ssl, uint8_t alert) {
 
 void SSL_CTX_set_early_data_enabled(SSL_CTX *ctx, int enabled) {
   ctx->enable_early_data = !!enabled;
+}
+
+int SSL_early_data_accepted(const SSL *ssl) {
+  return ssl->early_data_accepted;
 }
 
 static int bio_retry_reason_to_error(int reason) {
@@ -920,6 +938,7 @@ int SSL_get_error(const SSL *ssl, int ret_code) {
 
 static int set_min_version(const SSL_PROTOCOL_METHOD *method, uint16_t *out,
                            uint16_t version) {
+  /* Zero is interpreted as the default minimum version. */
   if (version == 0) {
     *out = method->min_version;
     return 1;
@@ -934,6 +953,7 @@ static int set_min_version(const SSL_PROTOCOL_METHOD *method, uint16_t *out,
 
 static int set_max_version(const SSL_PROTOCOL_METHOD *method, uint16_t *out,
                            uint16_t version) {
+  /* Zero is interpreted as the default maximum version. */
   if (version == 0) {
     *out = method->max_version;
     /* TODO(svaldez): Enable TLS 1.3 by default once fully implemented. */
@@ -2397,8 +2417,9 @@ int SSL_is_server(const SSL *ssl) { return ssl->server; }
 
 int SSL_is_dtls(const SSL *ssl) { return ssl->method->is_dtls; }
 
-void SSL_CTX_set_select_certificate_cb(SSL_CTX *ctx,
-                                       int (*cb)(const SSL_CLIENT_HELLO *)) {
+void SSL_CTX_set_select_certificate_cb(
+    SSL_CTX *ctx,
+    enum ssl_select_cert_result_t (*cb)(const SSL_CLIENT_HELLO *)) {
   ctx->select_certificate_cb = cb;
 }
 
