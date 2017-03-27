@@ -3078,9 +3078,25 @@ OPENSSL_EXPORT int SSL_renegotiate_pending(SSL *ssl);
 OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
 /* SSL_CTX_set_early_data_enabled sets whether early data is allowed to be used
- * with resumptions using |ctx|. WARNING: This is experimental and may cause
- * interoperability failures until fully implemented. */
+ * with resumptions using |ctx|.
+ *
+ * As a server, if the client's early data is accepted, |SSL_do_handshake| will
+ * complete as soon as the ClientHello is processed and server flight sent.
+ * |SSL_write| may be used to send half-RTT data. |SSL_read| will consume early
+ * data and transition to 1-RTT data as appropriate.
+ *
+ * Note early data is replayable by a network attacker. |SSL_in_init| and
+ * |SSL_is_init_finished| will report the handshake is still in progress until
+ * the client's Finished message is received. Callers may use these functions
+ * to defer some processing if desired.
+ *
+ * WARNING: This is experimental and may cause interoperability failures until
+ * fully implemented. */
 OPENSSL_EXPORT void SSL_CTX_set_early_data_enabled(SSL_CTX *ctx, int enabled);
+
+/* SSL_early_data_accepted returns whether early data was accepted on the
+ * handshake performed by |ssl|. */
+OPENSSL_EXPORT int SSL_early_data_accepted(const SSL *ssl);
 
 /* SSL_MAX_CERT_LIST_DEFAULT is the default maximum length, in bytes, of a peer
  * certificate chain. */
@@ -3144,6 +3160,20 @@ typedef struct ssl_early_callback_ctx {
   size_t extensions_len;
 } SSL_CLIENT_HELLO;
 
+/* ssl_select_cert_result_t enumerates the possible results from selecting a
+ * certificate with |select_certificate_cb|. */
+enum ssl_select_cert_result_t {
+  /* ssl_select_cert_success indicates that the certificate selection was
+   * successful. */
+  ssl_select_cert_success = 1,
+  /* ssl_select_cert_retry indicates that the operation could not be
+   * immediately completed and must be reattempted at a later point. */
+  ssl_select_cert_retry = 0,
+  /* ssl_select_cert_error indicates that a fatal error occured and the
+   * handshake should be terminated. */
+  ssl_select_cert_error = -1,
+};
+
 /* SSL_early_callback_ctx_extension_get searches the extensions in
  * |client_hello| for an extension of the given type. If not found, it returns
  * zero. Otherwise it sets |out_data| to point to the extension contents (not
@@ -3156,14 +3186,18 @@ OPENSSL_EXPORT int SSL_early_callback_ctx_extension_get(
 /* SSL_CTX_set_select_certificate_cb sets a callback that is called before most
  * ClientHello processing and before the decision whether to resume a session
  * is made. The callback may inspect the ClientHello and configure the
- * connection. It may then return one to continue the handshake or zero to
- * pause the handshake to perform an asynchronous operation. If paused,
- * |SSL_get_error| will return |SSL_ERROR_PENDING_CERTIFICATE|.
+ * connection. See |ssl_select_cert_result_t| for details of the return values.
+ *
+ * In the case that a retry is indicated, |SSL_get_error| will return
+ * |SSL_ERROR_PENDING_CERTIFICATE| and the caller should arrange for the
+ * high-level operation on |ssl| to be retried at a later time, which will
+ * result in another call to |cb|.
  *
  * Note: The |SSL_CLIENT_HELLO| is only valid for the duration of the callback
  * and is not valid while the handshake is paused. */
 OPENSSL_EXPORT void SSL_CTX_set_select_certificate_cb(
-    SSL_CTX *ctx, int (*cb)(const SSL_CLIENT_HELLO *));
+    SSL_CTX *ctx,
+    enum ssl_select_cert_result_t (*cb)(const SSL_CLIENT_HELLO *));
 
 /* SSL_CTX_set_dos_protection_cb sets a callback that is called once the
  * resumption decision for a ClientHello has been made. It can return one to
@@ -4112,12 +4146,10 @@ struct ssl_ctx_st {
   X509_VERIFY_PARAM *param;
 
   /* select_certificate_cb is called before most ClientHello processing and
-   * before the decision whether to resume a session is made. It may return one
-   * to continue the handshake or zero to cause the handshake loop to return
-   * with an error and cause SSL_get_error to return
-   * SSL_ERROR_PENDING_CERTIFICATE. Note: when the handshake loop is resumed, it
-   * will not call the callback a second time. */
-  int (*select_certificate_cb)(const SSL_CLIENT_HELLO *);
+   * before the decision whether to resume a session is made. See
+   * |ssl_select_cert_result_t| for details of the return values. */
+  enum ssl_select_cert_result_t (*select_certificate_cb)(
+      const SSL_CLIENT_HELLO *);
 
   /* dos_protection_cb is called once the resumption decision for a ClientHello
    * has been made. It returns one to continue the handshake or zero to
@@ -4584,6 +4616,9 @@ BORINGSSL_MAKE_DELETER(SSL_SESSION, SSL_SESSION_free)
 #define SSL_R_CERTIFICATE_AND_PRIVATE_KEY_MISMATCH 274
 #define SSL_R_CANNOT_HAVE_BOTH_PRIVKEY_AND_METHOD 275
 #define SSL_R_TICKET_ENCRYPTION_FAILED 276
+#define SSL_R_ALPN_MISMATCH_ON_EARLY_DATA 277
+#define SSL_R_WRONG_VERSION_ON_EARLY_DATA 278
+#define SSL_R_CHANNEL_ID_ON_EARLY_DATA 279
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020

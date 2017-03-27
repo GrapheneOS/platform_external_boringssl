@@ -448,13 +448,21 @@ int ssl3_accept(SSL_HANDSHAKE *hs) {
         }
         break;
 
-      case SSL_ST_TLS13:
-        ret = tls13_handshake(hs);
+      case SSL_ST_TLS13: {
+        int early_return = 0;
+        ret = tls13_handshake(hs, &early_return);
         if (ret <= 0) {
           goto end;
         }
+
+        if (early_return) {
+          ret = 1;
+          goto end;
+        }
+
         hs->state = SSL_ST_OK;
         break;
+      }
 
       case SSL_ST_OK:
         ssl->method->release_current_message(ssl, 1 /* free_buffer */);
@@ -812,11 +820,11 @@ static int ssl3_process_client_hello(SSL_HANDSHAKE *hs) {
   /* Run the early callback. */
   if (ssl->ctx->select_certificate_cb != NULL) {
     switch (ssl->ctx->select_certificate_cb(&client_hello)) {
-      case 0:
+      case ssl_select_cert_retry:
         ssl->rwstate = SSL_CERTIFICATE_SELECTION_PENDING;
         return -1;
 
-      case -1:
+      case ssl_select_cert_error:
         /* Connection rejected. */
         OPENSSL_PUT_ERROR(SSL, SSL_R_CONNECTION_REJECTED);
         ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_HANDSHAKE_FAILURE);
