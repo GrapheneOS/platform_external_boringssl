@@ -171,8 +171,8 @@ crypto_sources := \
   src/crypto/pem/pem_x509.c\
   src/crypto/pem/pem_xaux.c\
   src/crypto/pkcs8/p5_pbev2.c\
-  src/crypto/pkcs8/p8_pkey.c\
   src/crypto/pkcs8/pkcs8.c\
+  src/crypto/pkcs8/pkcs8_x509.c\
   src/crypto/poly1305/poly1305.c\
   src/crypto/poly1305/poly1305_arm.c\
   src/crypto/poly1305/poly1305_vec.c\

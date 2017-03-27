@@ -865,6 +865,11 @@ int ssl_check_leaf_certificate(SSL_HANDSHAKE *hs, EVP_PKEY *pkey,
  * It returns one on success and zero on error. */
 int tls13_init_key_schedule(SSL_HANDSHAKE *hs);
 
+/* tls13_init_early_key_schedule initializes the handshake hash and key
+ * derivation state from the resumption secret to derive the early secrets. It
+ * returns one on success and zero on error. */
+int tls13_init_early_key_schedule(SSL_HANDSHAKE *hs);
+
 /* tls13_advance_key_schedule incorporates |in| into the key schedule with
  * HKDF-Extract. It returns one on success and zero on error. */
 int tls13_advance_key_schedule(SSL_HANDSHAKE *hs, const uint8_t *in,
@@ -875,6 +880,10 @@ int tls13_advance_key_schedule(SSL_HANDSHAKE *hs, const uint8_t *in,
 int tls13_set_traffic_key(SSL *ssl, enum evp_aead_direction_t direction,
                           const uint8_t *traffic_secret,
                           size_t traffic_secret_len);
+
+/* tls13_derive_early_secrets derives the early traffic secret. It returns one
+ * on success and zero on error. */
+int tls13_derive_early_secrets(SSL_HANDSHAKE *hs);
 
 /* tls13_derive_handshake_secrets derives the handshake traffic secret. It
  * returns one on success and zero on error. */
@@ -930,6 +939,7 @@ enum ssl_hs_wait_t {
   ssl_hs_channel_id_lookup,
   ssl_hs_private_key_operation,
   ssl_hs_pending_ticket,
+  ssl_hs_read_end_of_early_data,
 };
 
 struct ssl_handshake_st {
@@ -957,10 +967,12 @@ struct ssl_handshake_st {
 
   size_t hash_len;
   uint8_t secret[EVP_MAX_MD_SIZE];
+  uint8_t early_traffic_secret[EVP_MAX_MD_SIZE];
   uint8_t client_handshake_secret[EVP_MAX_MD_SIZE];
   uint8_t server_handshake_secret[EVP_MAX_MD_SIZE];
   uint8_t client_traffic_secret_0[EVP_MAX_MD_SIZE];
   uint8_t server_traffic_secret_0[EVP_MAX_MD_SIZE];
+  uint8_t expected_client_finished[EVP_MAX_MD_SIZE];
 
   union {
     /* sent is a bitset where the bits correspond to elements of kExtensions
@@ -1063,10 +1075,6 @@ struct ssl_handshake_st {
   uint8_t *key_block;
   uint8_t key_block_len;
 
-  /* session_tickets_sent, in TLS 1.3, is the number of tickets the server has
-   * sent. */
-  uint8_t session_tickets_sent;
-
   /* scts_requested is one if the SCT extension is in the ClientHello. */
   unsigned scts_requested:1;
 
@@ -1100,6 +1108,17 @@ struct ssl_handshake_st {
    * Start. The client may write data at this point. */
   unsigned in_false_start:1;
 
+  /* early_data_offered is one if the client sent the early_data extension. */
+  unsigned early_data_offered:1;
+
+  /* can_early_read is one if application data may be read at this point in the
+   * handshake. */
+  unsigned can_early_read:1;
+
+  /* can_early_write is one if application data may be written at this point in
+   * the handshake. */
+  unsigned can_early_write:1;
+
   /* next_proto_neg_seen is one of NPN was negotiated. */
   unsigned next_proto_neg_seen:1;
 
@@ -1128,8 +1147,9 @@ void ssl_handshake_free(SSL_HANDSHAKE *hs);
 int ssl_check_message_type(SSL *ssl, int type);
 
 /* tls13_handshake runs the TLS 1.3 handshake. It returns one on success and <=
- * 0 on error. */
-int tls13_handshake(SSL_HANDSHAKE *hs);
+ * 0 on error. It sets |out_early_return| to one if we've completed the
+ * handshake early. */
+int tls13_handshake(SSL_HANDSHAKE *hs, int *out_early_return);
 
 /* The following are implementations of |do_tls13_handshake| for the client and
  * server. */
@@ -1142,7 +1162,11 @@ int tls13_post_handshake(SSL *ssl);
 
 int tls13_process_certificate(SSL_HANDSHAKE *hs, int allow_anonymous);
 int tls13_process_certificate_verify(SSL_HANDSHAKE *hs);
-int tls13_process_finished(SSL_HANDSHAKE *hs);
+
+/* tls13_process_finished processes the current message as a Finished message
+ * from the peer. If |use_saved_value| is one, the verify_data is compared
+ * against |hs->expected_client_finished| rather than computed fresh. */
+int tls13_process_finished(SSL_HANDSHAKE *hs, int use_saved_value);
 
 int tls13_add_certificate(SSL_HANDSHAKE *hs);
 enum ssl_private_key_result_t tls13_add_certificate_verify(SSL_HANDSHAKE *hs,
@@ -1629,9 +1653,11 @@ typedef struct ssl3_state_st {
   uint8_t write_traffic_secret[EVP_MAX_MD_SIZE];
   uint8_t read_traffic_secret[EVP_MAX_MD_SIZE];
   uint8_t exporter_secret[EVP_MAX_MD_SIZE];
+  uint8_t early_exporter_secret[EVP_MAX_MD_SIZE];
   uint8_t write_traffic_secret_len;
   uint8_t read_traffic_secret_len;
   uint8_t exporter_secret_len;
+  uint8_t early_exporter_secret_len;
 
   /* Connection binding to prevent renegotiation attacks */
   uint8_t previous_client_finished[12];
@@ -1933,6 +1959,9 @@ struct ssl_st {
    * hash of the peer's certificate and then discard it to save memory and
    * session space. Only effective on the server side. */
   unsigned retain_only_sha256_of_client_certs:1;
+
+  /* early_data_accepted is true if early data was accepted by the server. */
+  unsigned early_data_accepted:1;
 };
 
 /* From draft-ietf-tls-tls13-18, used in determining PSK modes. */
@@ -2208,6 +2237,12 @@ int ssl_do_channel_id_callback(SSL *ssl);
 /* ssl3_can_false_start returns one if |ssl| is allowed to False Start and zero
  * otherwise. */
 int ssl3_can_false_start(const SSL *ssl);
+
+/* ssl_can_write returns one if |ssl| is allowed to write and zero otherwise. */
+int ssl_can_write(const SSL *ssl);
+
+/* ssl_can_read returns one if |ssl| is allowed to read and zero otherwise. */
+int ssl_can_read(const SSL *ssl);
 
 /* ssl_get_version_range sets |*out_min_version| and |*out_max_version| to the
  * minimum and maximum enabled protocol versions, respectively. */
