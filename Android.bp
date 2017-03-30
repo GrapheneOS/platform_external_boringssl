@@ -212,6 +212,7 @@ cc_test {
 
 cc_test {
   name: "boringssl_crypto_test",
+  test_suites: ["device-tests"],
   host_supported: true,
   defaults: ["boringssl_crypto_test_sources", "boringssl_flags"],
   whole_static_libs: ["boringssl_test_support"],
@@ -222,6 +223,7 @@ cc_test {
 
 cc_test {
   name: "boringssl_ssl_test",
+  test_suites: ["device-tests"],
   host_supported: true,
   defaults: ["boringssl_ssl_test_sources", "boringssl_flags"],
   whole_static_libs: ["boringssl_test_support"],
