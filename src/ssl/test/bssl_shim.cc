@@ -1793,7 +1793,8 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
   }
   if (config->enable_all_curves) {
     static const int kAllCurves[] = {
-      NID_X9_62_prime256v1, NID_secp384r1, NID_secp521r1, NID_X25519,
+        NID_secp224r1, NID_X9_62_prime256v1, NID_secp384r1,
+        NID_secp521r1, NID_X25519,
     };
     if (!SSL_set1_curves(ssl.get(), kAllCurves,
                          OPENSSL_ARRAY_SIZE(kAllCurves))) {
@@ -1880,6 +1881,22 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
     } while (config->async && RetryAsync(ssl.get(), ret));
     if (ret != 1 ||
         !CheckHandshakeProperties(ssl.get(), is_resume)) {
+      return false;
+    }
+
+    if (config->handshake_twice) {
+      do {
+        ret = SSL_do_handshake(ssl.get());
+      } while (config->async && RetryAsync(ssl.get(), ret));
+      if (ret != 1) {
+        return false;
+      }
+    }
+
+    // Skip the |config->async| logic as this should be a no-op.
+    if (config->no_op_extra_handshake &&
+        SSL_do_handshake(ssl.get()) != 1) {
+      fprintf(stderr, "Extra SSL_do_handshake was not a no-op.\n");
       return false;
     }
 
