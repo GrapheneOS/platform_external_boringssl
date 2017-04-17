@@ -8,6 +8,7 @@ build = ["sources.bp"]
 // Used by libcrypto, libssl, bssl tool, and native tests
 cc_defaults {
     name: "boringssl_flags",
+    vendor_available: true,
 
     cflags: [
         "-fvisibility=hidden",
