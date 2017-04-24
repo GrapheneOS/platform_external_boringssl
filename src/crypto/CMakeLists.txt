@@ -80,7 +80,6 @@ add_subdirectory(bytestring)
 add_subdirectory(pool)
 
 # Level 0.2 - depends on nothing but itself
-add_subdirectory(modes)
 add_subdirectory(des)
 add_subdirectory(rc4)
 add_subdirectory(conf)
@@ -91,7 +90,7 @@ add_subdirectory(curve25519)
 # Level 1, depends only on 0.*
 add_subdirectory(digest_extra)
 add_subdirectory(cipher)
-add_subdirectory(rand)
+add_subdirectory(rand_extra)
 add_subdirectory(bio)
 add_subdirectory(bn)
 add_subdirectory(obj)
@@ -116,6 +115,7 @@ add_subdirectory(x509)
 add_subdirectory(x509v3)
 
 # Level 4
+add_subdirectory(pkcs7)
 add_subdirectory(pkcs8)
 
 # Test support code
@@ -168,7 +168,6 @@ add_library(
   $<TARGET_OBJECTS:fipsmodule>
   $<TARGET_OBJECTS:digest_extra>
   $<TARGET_OBJECTS:cipher>
-  $<TARGET_OBJECTS:modes>
   $<TARGET_OBJECTS:des>
   $<TARGET_OBJECTS:rc4>
   $<TARGET_OBJECTS:conf>
@@ -178,7 +177,7 @@ add_library(
   $<TARGET_OBJECTS:buf>
   $<TARGET_OBJECTS:bn>
   $<TARGET_OBJECTS:bio>
-  $<TARGET_OBJECTS:rand>
+  $<TARGET_OBJECTS:rand_extra>
   $<TARGET_OBJECTS:obj>
   $<TARGET_OBJECTS:asn1>
   $<TARGET_OBJECTS:engine>
@@ -194,6 +193,7 @@ add_library(
   $<TARGET_OBJECTS:pem>
   $<TARGET_OBJECTS:x509>
   $<TARGET_OBJECTS:x509v3>
+  $<TARGET_OBJECTS:pkcs7>
   $<TARGET_OBJECTS:pkcs8_lib>
 
   ${CRYPTO_FIPS_OBJECTS}
@@ -238,6 +238,7 @@ add_executable(
   bio/bio_test.cc
   bytestring/bytestring_test.cc
   chacha/chacha_test.cc
+  compiler_test.cc
   constant_time_test.cc
   curve25519/x25519_test.cc
   dh/dh_test.cc
@@ -245,7 +246,7 @@ add_executable(
   ec/ec_test.cc
   err/err_test.cc
   evp/evp_extra_test.cc
-  rand/ctrdrbg_test.cc
+  fipsmodule/rand/ctrdrbg_test.cc
   rsa/rsa_test.cc
 
   $<TARGET_OBJECTS:gtest_main>
