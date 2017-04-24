@@ -153,12 +153,6 @@ crypto_sources := \
   src/crypto/hkdf/hkdf.c\
   src/crypto/lhash/lhash.c\
   src/crypto/mem.c\
-  src/crypto/modes/cbc.c\
-  src/crypto/modes/cfb.c\
-  src/crypto/modes/ctr.c\
-  src/crypto/modes/gcm.c\
-  src/crypto/modes/ofb.c\
-  src/crypto/modes/polyval.c\
   src/crypto/obj/obj.c\
   src/crypto/obj/obj_xref.c\
   src/crypto/pem/pem_all.c\
@@ -169,6 +163,8 @@ crypto_sources := \
   src/crypto/pem/pem_pkey.c\
   src/crypto/pem/pem_x509.c\
   src/crypto/pem/pem_xaux.c\
+  src/crypto/pkcs7/pkcs7.c\
+  src/crypto/pkcs7/pkcs7_x509.c\
   src/crypto/pkcs8/p5_pbev2.c\
   src/crypto/pkcs8/pkcs8.c\
   src/crypto/pkcs8/pkcs8_x509.c\
@@ -176,13 +172,11 @@ crypto_sources := \
   src/crypto/poly1305/poly1305_arm.c\
   src/crypto/poly1305/poly1305_vec.c\
   src/crypto/pool/pool.c\
-  src/crypto/rand/ctrdrbg.c\
-  src/crypto/rand/deterministic.c\
-  src/crypto/rand/forkunsafe.c\
-  src/crypto/rand/fuchsia.c\
-  src/crypto/rand/rand.c\
-  src/crypto/rand/urandom.c\
-  src/crypto/rand/windows.c\
+  src/crypto/rand_extra/deterministic.c\
+  src/crypto/rand_extra/forkunsafe.c\
+  src/crypto/rand_extra/fuchsia.c\
+  src/crypto/rand_extra/rand_extra.c\
+  src/crypto/rand_extra/windows.c\
   src/crypto/rc4/rc4.c\
   src/crypto/refcount_c11.c\
   src/crypto/refcount_lock.c\
@@ -205,7 +199,6 @@ crypto_sources := \
   src/crypto/x509/by_dir.c\
   src/crypto/x509/by_file.c\
   src/crypto/x509/i2d_pr.c\
-  src/crypto/x509/pkcs7.c\
   src/crypto/x509/rsa_pss.c\
   src/crypto/x509/t_crl.c\
   src/crypto/x509/t_req.c\
@@ -284,10 +277,10 @@ linux_aarch64_sources := \
   linux-aarch64/crypto/bn/armv8-mont.S\
   linux-aarch64/crypto/chacha/chacha-armv8.S\
   linux-aarch64/crypto/fipsmodule/aesv8-armx64.S\
+  linux-aarch64/crypto/fipsmodule/ghashv8-armx64.S\
   linux-aarch64/crypto/fipsmodule/sha1-armv8.S\
   linux-aarch64/crypto/fipsmodule/sha256-armv8.S\
   linux-aarch64/crypto/fipsmodule/sha512-armv8.S\
-  linux-aarch64/crypto/modes/ghashv8-armx64.S\
 
 linux_arm_sources := \
   linux-arm/crypto/bn/armv4-mont.S\
@@ -295,17 +288,17 @@ linux_arm_sources := \
   linux-arm/crypto/fipsmodule/aes-armv4.S\
   linux-arm/crypto/fipsmodule/aesv8-armx32.S\
   linux-arm/crypto/fipsmodule/bsaes-armv7.S\
+  linux-arm/crypto/fipsmodule/ghash-armv4.S\
+  linux-arm/crypto/fipsmodule/ghashv8-armx32.S\
   linux-arm/crypto/fipsmodule/sha1-armv4-large.S\
   linux-arm/crypto/fipsmodule/sha256-armv4.S\
   linux-arm/crypto/fipsmodule/sha512-armv4.S\
-  linux-arm/crypto/modes/ghash-armv4.S\
-  linux-arm/crypto/modes/ghashv8-armx32.S\
   src/crypto/curve25519/asm/x25519-asm-arm.S\
   src/crypto/poly1305/poly1305_arm_asm.S\
 
 linux_ppc64le_sources := \
   linux-ppc64le/crypto/fipsmodule/aesp8-ppc.S\
-  linux-ppc64le/crypto/modes/ghashp8-ppc.S\
+  linux-ppc64le/crypto/fipsmodule/ghashp8-ppc.S\
 
 linux_x86_sources := \
   linux-x86/crypto/bn/bn-586.S\
@@ -314,12 +307,12 @@ linux_x86_sources := \
   linux-x86/crypto/chacha/chacha-x86.S\
   linux-x86/crypto/fipsmodule/aes-586.S\
   linux-x86/crypto/fipsmodule/aesni-x86.S\
+  linux-x86/crypto/fipsmodule/ghash-x86.S\
   linux-x86/crypto/fipsmodule/md5-586.S\
   linux-x86/crypto/fipsmodule/sha1-586.S\
   linux-x86/crypto/fipsmodule/sha256-586.S\
   linux-x86/crypto/fipsmodule/sha512-586.S\
   linux-x86/crypto/fipsmodule/vpaes-x86.S\
-  linux-x86/crypto/modes/ghash-x86.S\
 
 linux_x86_64_sources := \
   linux-x86_64/crypto/bn/rsaz-avx2.S\
@@ -329,15 +322,15 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/cipher/chacha20_poly1305_x86_64.S\
   linux-x86_64/crypto/ec/p256-x86_64-asm.S\
   linux-x86_64/crypto/fipsmodule/aes-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S\
   linux-x86_64/crypto/fipsmodule/aesni-x86_64.S\
   linux-x86_64/crypto/fipsmodule/bsaes-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/ghash-x86_64.S\
   linux-x86_64/crypto/fipsmodule/md5-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/rdrand-x86_64.S\
   linux-x86_64/crypto/fipsmodule/sha1-x86_64.S\
   linux-x86_64/crypto/fipsmodule/sha256-x86_64.S\
   linux-x86_64/crypto/fipsmodule/sha512-x86_64.S\
   linux-x86_64/crypto/fipsmodule/vpaes-x86_64.S\
-  linux-x86_64/crypto/modes/aesni-gcm-x86_64.S\
-  linux-x86_64/crypto/modes/ghash-x86_64.S\
-  linux-x86_64/crypto/rand/rdrand-x86_64.S\
   src/crypto/curve25519/asm/x25519-asm-x86_64.S\
 
