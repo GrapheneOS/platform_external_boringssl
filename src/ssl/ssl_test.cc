@@ -126,16 +126,10 @@ static const CipherTest kCipherTests[] = {
     // ECDHE_RSA.
     {
         "ALL:-kECDHE:"
-#ifdef BORINGSSL_ENABLE_DHE_TLS
-        "-kDHE:"
-#endif
         "-kRSA:-ALL:"
         "AESGCM+AES128+aRSA",
         {
             {TLS1_CK_RSA_WITH_AES_128_GCM_SHA256, 0},
-#ifdef BORINGSSL_ENABLE_DHE_TLS
-            {TLS1_CK_DHE_RSA_WITH_AES_128_GCM_SHA256, 0},
-#endif
             {TLS1_CK_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 0},
         },
         false,
@@ -188,9 +182,6 @@ static const CipherTest kCipherTests[] = {
     {
         // To simplify things, banish all but {ECDHE_RSA,RSA} x
         // {CHACHA20,AES_256_CBC,AES_128_CBC} x SHA1.
-#ifdef BORINGSSL_ENABLE_DHE_TLS
-        "!kEDH:"
-#endif
         "!AESGCM:!3DES:!SHA256:!SHA384:"
         // Order some ciphers backwards by strength.
         "ALL:-CHACHA20:-AES256:-AES128:-ALL:"
@@ -800,11 +791,6 @@ typedef struct {
 static const CIPHER_RFC_NAME_TEST kCipherRFCNameTests[] = {
     {SSL3_CK_RSA_DES_192_CBC3_SHA, "TLS_RSA_WITH_3DES_EDE_CBC_SHA"},
     {TLS1_CK_RSA_WITH_AES_128_SHA, "TLS_RSA_WITH_AES_128_CBC_SHA"},
-#ifdef BORINGSSL_ENABLE_DHE_TLS
-    {TLS1_CK_DHE_RSA_WITH_AES_256_SHA, "TLS_DHE_RSA_WITH_AES_256_CBC_SHA"},
-    {TLS1_CK_DHE_RSA_WITH_AES_256_SHA256,
-     "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"},
-#endif
     {TLS1_CK_ECDHE_RSA_WITH_AES_128_SHA256,
      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256"},
     {TLS1_CK_ECDHE_RSA_WITH_AES_256_SHA384,
@@ -1850,13 +1836,10 @@ static bool ClientHelloMatches(uint16_t version, const uint8_t *expected,
   bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
   // Our default cipher list varies by CPU capabilities, so manually place the
   // ChaCha20 ciphers in front.
-  const char* cipher_list =
-#ifdef BORINGSSL_ENABLE_DHE_TLS
-      "!DHE:CHACHA20:ALL";
-#else
-      "CHACHA20:ALL";
-#endif
+  const char* cipher_list = "CHACHA20:ALL";
   if (!ctx ||
+      // SSLv3 is off by default.
+      !SSL_CTX_set_min_proto_version(ctx.get(), SSL3_VERSION) ||
       !SSL_CTX_set_max_proto_version(ctx.get(), version) ||
       !SSL_CTX_set_strict_cipher_list(ctx.get(), cipher_list)) {
     return false;
@@ -2650,7 +2633,13 @@ TEST(SSLTest, SetVersion) {
   EXPECT_TRUE(SSL_CTX_set_max_proto_version(ctx.get(), 0));
   EXPECT_EQ(TLS1_2_VERSION, ctx->max_version);
   EXPECT_TRUE(SSL_CTX_set_min_proto_version(ctx.get(), 0));
+  EXPECT_EQ(TLS1_VERSION, ctx->min_version);
+
+  // SSL 3.0 and TLS 1.3 are available, but not by default.
+  EXPECT_TRUE(SSL_CTX_set_min_proto_version(ctx.get(), SSL3_VERSION));
   EXPECT_EQ(SSL3_VERSION, ctx->min_version);
+  EXPECT_TRUE(SSL_CTX_set_max_proto_version(ctx.get(), TLS1_3_VERSION));
+  EXPECT_EQ(TLS1_3_VERSION, ctx->max_version);
 
   ctx.reset(SSL_CTX_new(DTLS_method()));
   ASSERT_TRUE(ctx);
@@ -3517,6 +3506,42 @@ INSTANTIATE_TEST_CASE_P(
                         ssl_test_ticket_aead_open_soft_fail,
                         ssl_test_ticket_aead_open_hard_fail)));
 
+TEST(SSLTest, SSL3Method) {
+  bssl::UniquePtr<X509> cert = GetTestCertificate();
+  ASSERT_TRUE(cert);
+
+  // For compatibility, SSLv3_method should work up to SSL_CTX_new and SSL_new.
+  bssl::UniquePtr<SSL_CTX> ssl3_ctx(SSL_CTX_new(SSLv3_method()));
+  ASSERT_TRUE(ssl3_ctx);
+  ASSERT_TRUE(SSL_CTX_use_certificate(ssl3_ctx.get(), cert.get()));
+  bssl::UniquePtr<SSL> ssl(SSL_new(ssl3_ctx.get()));
+  EXPECT_TRUE(ssl);
+
+  // Create a normal TLS context to test against.
+  bssl::UniquePtr<SSL_CTX> tls_ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(tls_ctx);
+  ASSERT_TRUE(SSL_CTX_use_certificate(tls_ctx.get(), cert.get()));
+
+  // However, handshaking an SSLv3_method server should fail to resolve the
+  // version range. Explicit calls to SSL_CTX_set_min_proto_version are the only
+  // way to enable SSL 3.0.
+  bssl::UniquePtr<SSL> client, server;
+  EXPECT_FALSE(ConnectClientAndServer(&client, &server, tls_ctx.get(),
+                                      ssl3_ctx.get(),
+                                      nullptr /* no session */));
+  uint32_t err = ERR_get_error();
+  EXPECT_EQ(ERR_LIB_SSL, ERR_GET_LIB(err));
+  EXPECT_EQ(SSL_R_NO_SUPPORTED_VERSIONS_ENABLED, ERR_GET_REASON(err));
+
+  // Likewise for SSLv3_method clients.
+  EXPECT_FALSE(ConnectClientAndServer(&client, &server, ssl3_ctx.get(),
+                                      tls_ctx.get(),
+                                      nullptr /* no session */));
+  err = ERR_get_error();
+  EXPECT_EQ(ERR_LIB_SSL, ERR_GET_LIB(err));
+  EXPECT_EQ(SSL_R_NO_SUPPORTED_VERSIONS_ENABLED, ERR_GET_REASON(err));
+}
+
 // TODO(davidben): Convert this file to GTest properly.
 TEST(SSLTest, AllTests) {
   if (!TestCipherRules() ||
@@ -3528,8 +3553,7 @@ TEST(SSLTest, AllTests) {
       !TestBadSSL_SESSIONEncoding(kBadSessionVersion) ||
       !TestBadSSL_SESSIONEncoding(kBadSessionTrailingData) ||
       // TODO(svaldez): Update this when TLS 1.3 is enabled by default.
-      !TestDefaultVersion(SSL3_VERSION, TLS1_2_VERSION, &TLS_method) ||
-      !TestDefaultVersion(SSL3_VERSION, SSL3_VERSION, &SSLv3_method) ||
+      !TestDefaultVersion(TLS1_VERSION, TLS1_2_VERSION, &TLS_method) ||
       !TestDefaultVersion(TLS1_VERSION, TLS1_VERSION, &TLSv1_method) ||
       !TestDefaultVersion(TLS1_1_VERSION, TLS1_1_VERSION, &TLSv1_1_method) ||
       !TestDefaultVersion(TLS1_2_VERSION, TLS1_2_VERSION, &TLSv1_2_method) ||
