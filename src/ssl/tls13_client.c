@@ -525,7 +525,7 @@ static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
     }
   }
 
-  if (!ssl->ctx->x509_method->ssl_auto_chain_if_needed(ssl) ||
+  if (!ssl_on_certificate_selected(hs) ||
       !tls13_add_certificate(hs)) {
     return ssl_hs_error;
   }
@@ -704,7 +704,7 @@ int tls13_process_new_session_ticket(SSL *ssl) {
     goto err;
   }
 
-  if (have_early_data_info && ssl->ctx->enable_early_data) {
+  if (have_early_data_info && ssl->cert->enable_early_data) {
     if (!CBS_get_u32(&early_data_info, &session->ticket_max_early_data) ||
         CBS_len(&early_data_info) != 0) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);

@@ -167,7 +167,7 @@ static int add_new_session_tickets(SSL_HANDSHAKE *hs) {
       goto err;
     }
 
-    if (ssl->ctx->enable_early_data) {
+    if (ssl->cert->enable_early_data) {
       session->ticket_max_early_data = kMaxEarlyDataAccepted;
 
       CBB early_data_info;
@@ -355,7 +355,7 @@ static enum ssl_hs_wait_t do_select_session(SSL_HANDSHAKE *hs) {
       hs->new_session = SSL_SESSION_dup(session, SSL_SESSION_DUP_AUTH_ONLY);
 
       if (/* Early data must be acceptable for this ticket. */
-          ssl->ctx->enable_early_data &&
+          ssl->cert->enable_early_data &&
           session->ticket_max_early_data != 0 &&
           /* The client must have offered early data. */
           hs->early_data_offered &&
@@ -555,23 +555,10 @@ static enum ssl_hs_wait_t do_send_server_hello(SSL_HANDSHAKE *hs) {
     CBB sigalgs_cbb;
     if (!ssl->method->init_message(ssl, &cbb, &body,
                                    SSL3_MT_CERTIFICATE_REQUEST) ||
-        !CBB_add_u8(&body, 0 /* no certificate_request_context. */)) {
-      goto err;
-    }
-
-    const uint16_t *sigalgs;
-    size_t num_sigalgs = tls12_get_verify_sigalgs(ssl, &sigalgs);
-    if (!CBB_add_u16_length_prefixed(&body, &sigalgs_cbb)) {
-      goto err;
-    }
-
-    for (size_t i = 0; i < num_sigalgs; i++) {
-      if (!CBB_add_u16(&sigalgs_cbb, sigalgs[i])) {
-        goto err;
-      }
-    }
-
-    if (!ssl_add_client_CA_list(ssl, &body) ||
+        !CBB_add_u8(&body, 0 /* no certificate_request_context. */) ||
+        !CBB_add_u16_length_prefixed(&body, &sigalgs_cbb) ||
+        !tls12_add_verify_sigalgs(ssl, &sigalgs_cbb) ||
+        !ssl_add_client_CA_list(ssl, &body) ||
         !CBB_add_u16(&body, 0 /* empty certificate_extensions. */) ||
         !ssl_add_message_cbb(ssl, &cbb)) {
       goto err;

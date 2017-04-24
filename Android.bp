@@ -43,8 +43,8 @@ cc_defaults {
 
 // This should be removed when clang can compile everything.
 libcrypto_sources_no_clang = [
-    "linux-arm/crypto/aes/aes-armv4.S",
-    "linux-arm/crypto/aes/bsaes-armv7.S",
+    "linux-arm/crypto/fipsmodule/aes-armv4.S",
+    "linux-arm/crypto/fipsmodule/bsaes-armv7.S",
 ]
 
 cc_defaults {
