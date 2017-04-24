@@ -113,24 +113,6 @@
 
 #include "internal.h"
 
-/* number of Miller-Rabin iterations for an error rate  of less than 2^-80
- * for random 'b'-bit input, b >= 100 (taken from table 4.4 in the Handbook
- * of Applied Cryptography [Menezes, van Oorschot, Vanstone; CRC Press 1996];
- * original paper: Damgaard, Landrock, Pomerance: Average case error estimates
- * for the strong probable prime test. -- Math. Comp. 61 (1993) 177-194) */
-#define BN_prime_checks_for_size(b) ((b) >= 1300 ?  2 : \
-                                (b) >=  850 ?  3 : \
-                                (b) >=  650 ?  4 : \
-                                (b) >=  550 ?  5 : \
-                                (b) >=  450 ?  6 : \
-                                (b) >=  400 ?  7 : \
-                                (b) >=  350 ?  8 : \
-                                (b) >=  300 ?  9 : \
-                                (b) >=  250 ? 12 : \
-                                (b) >=  200 ? 15 : \
-                                (b) >=  150 ? 18 : \
-                                /* b >= 100 */ 27)
-
 /* The quick sieve algorithm approach to weeding out primes is Philip
  * Zimmermann's, as implemented in PGP.  I have had a read of his comments and
  * implemented my own version. */
@@ -328,6 +310,37 @@ static const uint16_t primes[NUMPRIMES] = {
     17737, 17747, 17749, 17761, 17783, 17789, 17791, 17807, 17827, 17837, 17839,
     17851, 17863,
 };
+
+/* BN_prime_checks_for_size returns the number of Miller-Rabin iterations
+ * necessary for a 'bits'-bit prime, in order to maintain an error rate greater
+ * than the security level for an RSA prime of that many bits (calculated using
+ * the FIPS SP 800-57 security level and 186-4 Section F.1; original paper:
+ * Damgaard, Landrock, Pomerance: Average case error estimates for the strong
+ * probable prime test. -- Math. Comp. 61 (1993) 177-194) */
+static int BN_prime_checks_for_size(int bits) {
+  if (bits >= 3747) {
+    return 3;
+  }
+  if (bits >= 1345) {
+    return 4;
+  }
+  if (bits >= 476) {
+    return 5;
+  }
+  if (bits >= 400) {
+    return 6;
+  }
+  if (bits >= 308) {
+    return 8;
+  }
+  if (bits >= 205) {
+    return 13;
+  }
+  if (bits >= 155) {
+    return 19;
+  }
+  return 28;
+}
 
 static int witness(BIGNUM *w, const BIGNUM *a, const BIGNUM *a1,
                    const BIGNUM *a1_odd, int k, BN_CTX *ctx, BN_MONT_CTX *mont);
@@ -636,13 +649,6 @@ static int witness(BIGNUM *w, const BIGNUM *a, const BIGNUM *a1,
   return 1;
 }
 
-static BN_ULONG get_word(const BIGNUM *bn) {
-  if (bn->top == 1) {
-    return bn->d[0];
-  }
-  return 0;
-}
-
 static int probable_prime(BIGNUM *rnd, int bits) {
   int i;
   uint16_t mods[NUMPRIMES];
@@ -669,9 +675,9 @@ again:
     BN_ULONG size_limit;
     if (bits == BN_BITS2) {
       /* Avoid undefined behavior. */
-      size_limit = ~((BN_ULONG)0) - get_word(rnd);
+      size_limit = ~((BN_ULONG)0) - BN_get_word(rnd);
     } else {
-      size_limit = (((BN_ULONG)1) << bits) - get_word(rnd) - 1;
+      size_limit = (((BN_ULONG)1) << bits) - BN_get_word(rnd) - 1;
     }
     if (size_limit < maxdelta) {
       maxdelta = size_limit;
@@ -681,7 +687,7 @@ again:
 
 loop:
   if (is_single_word) {
-    BN_ULONG rnd_word = get_word(rnd);
+    BN_ULONG rnd_word = BN_get_word(rnd);
 
     /* In the case that the candidate prime is a single word then
      * we check that:

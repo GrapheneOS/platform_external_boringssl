@@ -13,7 +13,9 @@ add_library(
 
   OBJECT
 
+  ctrdrbg.c
   deterministic.c
+  forkunsafe.c
   fuchsia.c
   rand.c
   urandom.c
@@ -23,3 +25,14 @@ add_library(
 )
 
 perlasm(rdrand-x86_64.${ASM_EXT} asm/rdrand-x86_64.pl)
+
+add_executable(
+  ctrdrbg_vector_test
+
+  ctrdrbg_vector_test.cc
+
+  $<TARGET_OBJECTS:test_support>
+)
+
+target_link_libraries(ctrdrbg_vector_test crypto)
+add_dependencies(all_tests ctrdrbg_vector_test)
