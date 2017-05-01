@@ -69,7 +69,7 @@ crypto_sources := \
   src/crypto/bn/exponentiation.c\
   src/crypto/bn/gcd.c\
   src/crypto/bn/generic.c\
-  src/crypto/bn/kronecker.c\
+  src/crypto/bn/jacobi.c\
   src/crypto/bn/montgomery.c\
   src/crypto/bn/montgomery_inv.c\
   src/crypto/bn/mul.c\

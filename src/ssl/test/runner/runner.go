@@ -1106,10 +1106,7 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 	}
 
 	if len(extraStderr) > 0 || (!failed && len(stderr) > 0) {
-		lines := strings.Split(stderr, "\n")
-		if len(lines) != 2 || lines[1] != "" || !strings.Contains(lines[0], "The kernel entropy pool contains too few bits") {
-			return fmt.Errorf("unexpected error output:\n%s\n%s", stderr, extraStderr)
-		}
+		return fmt.Errorf("unexpected error output:\n%s\n%s", stderr, extraStderr)
 	}
 
 	if *useValgrind && isValgrindError {
@@ -3644,8 +3641,7 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 				MaxVersion: VersionTLS13,
 				MinVersion: VersionTLS13,
 				Bugs: ProtocolBugs{
-					SendEarlyData:           [][]byte{bytes.Repeat([]byte{1},
-					                                               14336 + 1)},
+					SendEarlyData:           [][]byte{bytes.Repeat([]byte{1}, 14336+1)},
 					ExpectEarlyDataAccepted: true,
 				},
 			},
