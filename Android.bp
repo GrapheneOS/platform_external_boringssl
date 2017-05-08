@@ -149,21 +149,6 @@ cc_library {
     shared_libs: ["libcrypto"],
 }
 
-// Host static library
-cc_library_host_static {
-    name: "libssl_static-host",
-    defaults: ["libssl_sources", "boringssl_defaults", "boringssl_flags"],
-
-    // TODO: b/26160319. ASAN breaks use of this library in JVM.
-    // Re-enable sanitization when the issue with making clients of this library
-    // preload ASAN runtime is resolved. Without that, clients are getting runtime
-    // errors due to unresolved ASAN symbols, such as
-    // __asan_option_detect_stack_use_after_return.
-    sanitize: {
-        never: true,
-    },
-}
-
 // Tool
 cc_binary {
     name: "bssl",
