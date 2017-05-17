@@ -82,6 +82,7 @@ cc_defaults {
 // Target and host library
 cc_library {
     name: "libcrypto",
+    vendor_available: true,
     defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
     unique_host_soname: true,
 }
