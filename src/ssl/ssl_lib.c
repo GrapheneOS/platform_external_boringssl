@@ -2048,10 +2048,10 @@ char *SSL_get_shared_ciphers(const SSL *ssl, char *buf, int len) {
 }
 
 int SSL_get_ex_new_index(long argl, void *argp, CRYPTO_EX_unused *unused,
-                         CRYPTO_EX_dup *dup_func, CRYPTO_EX_free *free_func) {
+                         CRYPTO_EX_dup *dup_unused, CRYPTO_EX_free *free_func) {
   int index;
   if (!CRYPTO_get_ex_new_index(&g_ex_data_class_ssl, &index, argl, argp,
-                               dup_func, free_func)) {
+                               free_func)) {
     return -1;
   }
   return index;
@@ -2066,11 +2066,11 @@ void *SSL_get_ex_data(const SSL *ssl, int idx) {
 }
 
 int SSL_CTX_get_ex_new_index(long argl, void *argp, CRYPTO_EX_unused *unused,
-                             CRYPTO_EX_dup *dup_func,
+                             CRYPTO_EX_dup *dup_unused,
                              CRYPTO_EX_free *free_func) {
   int index;
   if (!CRYPTO_get_ex_new_index(&g_ex_data_class_ssl_ctx, &index, argl, argp,
-                               dup_func, free_func)) {
+                               free_func)) {
     return -1;
   }
   return index;
@@ -2706,22 +2706,6 @@ void ssl_get_current_time(const SSL *ssl, struct OPENSSL_timeval *out_clock) {
     out_clock->tv_usec = (uint32_t)clock.tv_usec;
   }
 #endif
-}
-
-int SSL_CTX_set_min_version(SSL_CTX *ctx, uint16_t version) {
-  return SSL_CTX_set_min_proto_version(ctx, version);
-}
-
-int SSL_CTX_set_max_version(SSL_CTX *ctx, uint16_t version) {
-  return SSL_CTX_set_max_proto_version(ctx, version);
-}
-
-int SSL_set_min_version(SSL *ssl, uint16_t version) {
-  return SSL_set_min_proto_version(ssl, version);
-}
-
-int SSL_set_max_version(SSL *ssl, uint16_t version) {
-  return SSL_set_max_proto_version(ssl, version);
 }
 
 void SSL_CTX_set_ticket_aead_method(SSL_CTX *ctx,
