@@ -19,7 +19,7 @@
  * something to compile. */
 
 int FIPS_mode(void) {
-#if defined(BORINGSSL_FIPS)
+#if defined(BORINGSSL_FIPS) && !defined(OPENSSL_ASAN)
   return 1;
 #else
   return 0;
