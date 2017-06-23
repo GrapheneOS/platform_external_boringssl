@@ -24,9 +24,11 @@ import json
 # OS_ARCH_COMBOS maps from OS and platform to the OpenSSL assembly "style" for
 # that platform and the extension used by asm files.
 OS_ARCH_COMBOS = [
+    ('ios', 'arm', 'ios32', [], 'S'),
+    ('ios', 'aarch64', 'ios64', [], 'S'),
     ('linux', 'arm', 'linux32', [], 'S'),
     ('linux', 'aarch64', 'linux64', [], 'S'),
-    ('linux', 'ppc64le', 'ppc64le', [], 'S'),
+    ('linux', 'ppc64le', 'linux64le', [], 'S'),
     ('linux', 'x86', 'elf', ['-fPIC', '-DOPENSSL_IA32_SSE2'], 'S'),
     ('linux', 'x86_64', 'elf', [], 'S'),
     ('mac', 'x86', 'macosx', ['-fPIC', '-DOPENSSL_IA32_SSE2'], 'S'),
@@ -299,7 +301,7 @@ class Bazel(object):
               out.write('          "%s",\n' % arg)
           out.write('      ],\n')
 
-        out.write('      copts = copts + ["-DBORINGSSL_SHARED_LIBRARY"],\n')
+        out.write('      copts = copts,\n')
 
         if len(data_files) > 0:
           out.write('      data = [\n')
@@ -387,7 +389,8 @@ class GN(object):
         out.write('      configs -= invoker.configs_exclude\n')
         out.write('    }\n')
         out.write('    configs += invoker.configs\n')
-        out.write('    deps = invoker.deps\n')
+        out.write('    deps = invoker.deps + ')
+        out.write('[ "//build/config:exe_and_shlib_deps" ]\n')
         out.write('  }\n')
         out.write('\n')
 
@@ -448,8 +451,9 @@ def FindCMakeFiles(directory):
   return cmakefiles
 
 def OnlyFIPSFragments(path, dent, is_dir):
-  return is_dir or path.startswith(
-      os.path.join('src', 'crypto', 'fipsmodule', ''))
+  return is_dir or (path.startswith(
+      os.path.join('src', 'crypto', 'fipsmodule', '')) and
+      NoTests(path, dent, is_dir))
 
 def NoTestsNorFIPSFragments(path, dent, is_dir):
   return (NoTests(path, dent, is_dir) and
@@ -485,8 +489,8 @@ def NoTestRunnerFiles(path, dent, is_dir):
   return not is_dir or dent != 'runner'
 
 
-def NotGTestMain(path, dent, is_dir):
-  return dent != 'gtest_main.cc'
+def NotGTestSupport(path, dent, is_dir):
+  return 'gtest' not in dent
 
 
 def SSLHeaderFiles(path, dent, is_dir):
@@ -629,12 +633,42 @@ def WriteAsmFiles(perlasms):
   return asmfiles
 
 
+def ExtractVariablesFromCMakeFile(cmakefile):
+  """Parses the contents of the CMakeLists.txt file passed as an argument and
+  returns a dictionary of exported source lists."""
+  variables = {}
+  in_set_command = False
+  set_command = []
+  with open(cmakefile) as f:
+    for line in f:
+      if '#' in line:
+        line = line[:line.index('#')]
+      line = line.strip()
+
+      if not in_set_command:
+        if line.startswith('set('):
+          in_set_command = True
+          set_command = []
+      elif line == ')':
+        in_set_command = False
+        if not set_command:
+          raise ValueError('Empty set command')
+        variables[set_command[0]] = set_command[1:]
+      else:
+        set_command.extend([c for c in line.split(' ') if c])
+
+  if in_set_command:
+    raise ValueError('Unfinished set command')
+  return variables
+
+
 def IsGTest(path):
   with open(path) as f:
     return "#include <gtest/gtest.h>" in f.read()
 
 
 def main(platforms):
+  cmake = ExtractVariablesFromCMakeFile(os.path.join('src', 'sources.cmake'))
   crypto_c_files = FindCFiles(os.path.join('src', 'crypto'), NoTestsNorFIPSFragments)
   fips_fragments = FindCFiles(os.path.join('src', 'crypto', 'fipsmodule'), OnlyFIPSFragments)
   ssl_source_files = FindCFiles(os.path.join('src', 'ssl'), NoTests)
@@ -649,13 +683,24 @@ def main(platforms):
   crypto_c_files.append('err_data.c')
 
   test_support_c_files = FindCFiles(os.path.join('src', 'crypto', 'test'),
-                                    NotGTestMain)
+                                    NotGTestSupport)
   test_support_h_files = (
       FindHeaderFiles(os.path.join('src', 'crypto', 'test'), AllFiles) +
       FindHeaderFiles(os.path.join('src', 'ssl', 'test'), NoTestRunnerFiles))
 
+  # Generate crypto_test_data.cc
+  with open('crypto_test_data.cc', 'w+') as out:
+    subprocess.check_call(
+        ['go', 'run', 'util/embed_test_data.go'] + cmake['CRYPTO_TEST_DATA'],
+        cwd='src',
+        stdout=out)
+
   test_c_files = []
-  crypto_test_files = ['src/crypto/test/gtest_main.cc']
+  crypto_test_files = [
+      'crypto_test_data.cc',
+      'src/crypto/test/file_test_gtest.cc',
+      'src/crypto/test/gtest_main.cc',
+  ]
   # TODO(davidben): Remove this loop once all tests are converted.
   for path in FindCFiles(os.path.join('src', 'crypto'), OnlyTests):
     if IsGTest(path):
