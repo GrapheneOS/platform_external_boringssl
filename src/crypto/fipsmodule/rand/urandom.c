@@ -12,6 +12,10 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
+#if !defined(_GNU_SOURCE)
+#define _GNU_SOURCE  /* needed for syscall() on Linux. */
+#endif
+
 #include <openssl/rand.h>
 
 #if !defined(OPENSSL_WINDOWS) && !defined(OPENSSL_FUCHSIA) && \
@@ -230,10 +234,8 @@ void RAND_set_urandom_fd(int fd) {
   }
 }
 
-#if defined(USE_SYS_getrandom) && defined(__has_feature)
-#if __has_feature(memory_sanitizer)
+#if defined(USE_SYS_getrandom) && defined(OPENSSL_MSAN)
 void __msan_unpoison(void *, size_t);
-#endif
 #endif
 
 /* fill_with_entropy writes |len| bytes of entropy into |out|. It returns one
@@ -248,15 +250,13 @@ static char fill_with_entropy(uint8_t *out, size_t len) {
         r = syscall(SYS_getrandom, out, len, 0 /* no flags */);
       } while (r == -1 && errno == EINTR);
 
-#if defined(__has_feature)
-#if __has_feature(memory_sanitizer)
+#if defined(OPENSSL_MSAN)
       if (r > 0) {
         /* MSAN doesn't recognise |syscall| and thus doesn't notice that we
          * have initialised the output buffer. */
         __msan_unpoison(out, r);
       }
-#endif /* memory_sanitizer */
-#endif /*__has_feature */
+#endif /* OPENSSL_MSAN */
 
 #else /* USE_SYS_getrandom */
       abort();
@@ -288,6 +288,12 @@ void CRYPTO_sysrand(uint8_t *out, size_t requested) {
   if (!fill_with_entropy(out, requested)) {
     abort();
   }
+
+#if defined(BORINGSSL_FIPS_BREAK_CRNG)
+  // This breaks the "continuous random number generator test" defined in FIPS
+  // 140-2, section 4.9.2, and implemented in rand_get_seed().
+  OPENSSL_memset(out, 0, requested);
+#endif
 }
 
 #endif /* !OPENSSL_WINDOWS && !defined(OPENSSL_FUCHSIA) && \

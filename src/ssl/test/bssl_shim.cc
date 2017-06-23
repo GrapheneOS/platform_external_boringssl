@@ -60,6 +60,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include <vector>
 
 #include "../../crypto/internal.h"
+#include "../internal.h"
 #include "async_bio.h"
 #include "packeted_bio.h"
 #include "test_config.h"
@@ -294,13 +295,6 @@ static ssl_private_key_result_t AsyncPrivateKeySign(
     abort();
   }
 
-  bssl::UniquePtr<EVP_PKEY_CTX> ctx(
-      EVP_PKEY_CTX_new(test_state->private_key.get(), nullptr));
-  if (!ctx ||
-      !EVP_PKEY_sign_init(ctx.get())) {
-    return ssl_private_key_failure;
-  }
-
   // Determine the hash.
   const EVP_MD *md;
   switch (signature_algorithm) {
@@ -335,8 +329,10 @@ static ssl_private_key_result_t AsyncPrivateKeySign(
       return ssl_private_key_failure;
   }
 
-  if (md != nullptr &&
-      !EVP_PKEY_CTX_set_signature_md(ctx.get(), md)) {
+  bssl::ScopedEVP_MD_CTX ctx;
+  EVP_PKEY_CTX *pctx;
+  if (!EVP_DigestSignInit(ctx.get(), &pctx, md, nullptr,
+                          test_state->private_key.get())) {
     return ssl_private_key_failure;
   }
 
@@ -345,8 +341,8 @@ static ssl_private_key_result_t AsyncPrivateKeySign(
     case SSL_SIGN_RSA_PSS_SHA256:
     case SSL_SIGN_RSA_PSS_SHA384:
     case SSL_SIGN_RSA_PSS_SHA512:
-      if (!EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) ||
-          !EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(),
+      if (!EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) ||
+          !EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx,
                                             -1 /* salt len = hash len */)) {
         return ssl_private_key_failure;
       }
@@ -354,12 +350,12 @@ static ssl_private_key_result_t AsyncPrivateKeySign(
 
   // Write the signature into |test_state|.
   size_t len = 0;
-  if (!EVP_PKEY_sign_message(ctx.get(), nullptr, &len, in, in_len)) {
+  if (!EVP_DigestSign(ctx.get(), nullptr, &len, in, in_len)) {
     return ssl_private_key_failure;
   }
   test_state->private_key_result.resize(len);
-  if (!EVP_PKEY_sign_message(ctx.get(), test_state->private_key_result.data(),
-                             &len, in, in_len)) {
+  if (!EVP_DigestSign(ctx.get(), test_state->private_key_result.data(), &len,
+                      in, in_len)) {
     return ssl_private_key_failure;
   }
   test_state->private_key_result.resize(len);
@@ -446,8 +442,8 @@ static bool GetCertificate(SSL *ssl, bssl::UniquePtr<X509> *out_x509,
   const TestConfig *config = GetTestConfig(ssl);
 
   if (!config->digest_prefs.empty()) {
-    std::unique_ptr<char, Free<char>> digest_prefs(
-        strdup(config->digest_prefs.c_str()));
+    bssl::UniquePtr<char> digest_prefs(
+        OPENSSL_strdup(config->digest_prefs.c_str()));
     std::vector<int> digest_list;
 
     for (;;) {
@@ -754,10 +750,6 @@ static int AlpnSelectCallback(SSL* ssl, const uint8_t** out, uint8_t* outlen,
 
   *out = (const uint8_t*)config->select_alpn.data();
   *outlen = config->select_alpn.size();
-  if (GetTestState(ssl)->is_resume && config->select_resume_alpn.size() > 0) {
-    *out = (const uint8_t*)config->select_resume_alpn.data();
-    *outlen = config->select_resume_alpn.size();
-  }
   return SSL_TLSEXT_ERR_OK;
 }
 
@@ -973,34 +965,51 @@ static int ServerNameCallback(SSL *ssl, int *out_alert, void *arg) {
 // Connect returns a new socket connected to localhost on |port| or -1 on
 // error.
 static int Connect(uint16_t port) {
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock == -1) {
-    PrintSocketError("socket");
-    return -1;
-  }
-  int nodelay = 1;
-  if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
-          reinterpret_cast<const char*>(&nodelay), sizeof(nodelay)) != 0) {
-    PrintSocketError("setsockopt");
+  for (int af : { AF_INET6, AF_INET }) {
+    int sock = socket(af, SOCK_STREAM, 0);
+    if (sock == -1) {
+      PrintSocketError("socket");
+      return -1;
+    }
+    int nodelay = 1;
+    if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+            reinterpret_cast<const char*>(&nodelay), sizeof(nodelay)) != 0) {
+      PrintSocketError("setsockopt");
+      closesocket(sock);
+      return -1;
+    }
+
+    sockaddr_storage ss;
+    OPENSSL_memset(&ss, 0, sizeof(ss));
+    ss.ss_family = af;
+    socklen_t len = 0;
+
+    if (af == AF_INET6) {
+      sockaddr_in6 *sin6 = (sockaddr_in6 *) &ss;
+      len = sizeof(*sin6);
+      sin6->sin6_port = htons(port);
+      if (!inet_pton(AF_INET6, "::1", &sin6->sin6_addr)) {
+        PrintSocketError("inet_pton");
+        closesocket(sock);
+        return -1;
+      }
+    } else if (af == AF_INET) {
+      sockaddr_in *sin = (sockaddr_in *) &ss;
+      len = sizeof(*sin);
+      sin->sin_port = htons(port);
+      if (!inet_pton(AF_INET, "127.0.0.1", &sin->sin_addr)) {
+        PrintSocketError("inet_pton");
+        closesocket(sock);
+        return -1;
+      }
+    }
+
+    if (connect(sock, reinterpret_cast<const sockaddr*>(&ss), len) == 0) {
+      return sock;
+    }
     closesocket(sock);
-    return -1;
   }
-  sockaddr_in sin;
-  OPENSSL_memset(&sin, 0, sizeof(sin));
-  sin.sin_family = AF_INET;
-  sin.sin_port = htons(port);
-  if (!inet_pton(AF_INET, "127.0.0.1", &sin.sin_addr)) {
-    PrintSocketError("inet_pton");
-    closesocket(sock);
-    return -1;
-  }
-  if (connect(sock, reinterpret_cast<const sockaddr*>(&sin),
-              sizeof(sin)) != 0) {
-    PrintSocketError("connect");
-    closesocket(sock);
-    return -1;
-  }
-  return sock;
+  return -1;
 }
 
 class SocketCloser {
@@ -1028,7 +1037,17 @@ class SocketCloser {
   const int sock_;
 };
 
-static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
+static void ssl_ctx_add_session(SSL_SESSION *session, void *void_param) {
+  SSL_SESSION *new_session = SSL_SESSION_dup(
+      session, SSL_SESSION_INCLUDE_NONAUTH | SSL_SESSION_INCLUDE_TICKET);
+  if (new_session != nullptr) {
+    SSL_CTX_add_session((SSL_CTX *)void_param, new_session);
+  }
+  SSL_SESSION_free(new_session);
+}
+
+static bssl::UniquePtr<SSL_CTX> SetupCtx(SSL_CTX *old_ctx,
+                                         const TestConfig *config) {
   bssl::UniquePtr<SSL_CTX> ssl_ctx(SSL_CTX_new(
       config->is_dtls ? DTLS_method() : TLS_method()));
   if (!ssl_ctx) {
@@ -1076,8 +1095,7 @@ static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
                                      NULL);
   }
 
-  if (!config->select_alpn.empty() || !config->select_resume_alpn.empty() ||
-      config->decline_alpn) {
+  if (!config->select_alpn.empty() || config->decline_alpn) {
     SSL_CTX_set_alpn_select_cb(ssl_ctx.get(), AlpnSelectCallback, NULL);
   }
 
@@ -1164,6 +1182,16 @@ static bssl::UniquePtr<SSL_CTX> SetupCtx(const TestConfig *config) {
                                             u16s.size())) {
       return nullptr;
     }
+  }
+
+  if (old_ctx) {
+    uint8_t keys[48];
+    if (!SSL_CTX_get_tlsext_ticket_keys(old_ctx, &keys, sizeof(keys)) ||
+        !SSL_CTX_set_tlsext_ticket_keys(ssl_ctx.get(), keys, sizeof(keys))) {
+      return nullptr;
+    }
+    lh_SSL_SESSION_doall_arg(old_ctx->sessions, ssl_ctx_add_session,
+                             ssl_ctx.get());
   }
 
   return ssl_ctx;
@@ -1410,22 +1438,13 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
     }
   }
 
-  std::string expected_alpn = config->expected_alpn;
-  if (is_resume && !config->expected_resume_alpn.empty()) {
-    expected_alpn = config->expected_resume_alpn;
-  }
-  bool expect_no_alpn = (!is_resume && config->expect_no_alpn) ||
-      (is_resume && config->expect_no_resume_alpn);
-  if (expect_no_alpn) {
-    expected_alpn.clear();
-  }
-
-  if (!expected_alpn.empty() || expect_no_alpn) {
+  if (!config->is_server) {
     const uint8_t *alpn_proto;
     unsigned alpn_proto_len;
     SSL_get0_alpn_selected(ssl, &alpn_proto, &alpn_proto_len);
-    if (alpn_proto_len != expected_alpn.size() ||
-        OPENSSL_memcmp(alpn_proto, expected_alpn.data(), alpn_proto_len) != 0) {
+    if (alpn_proto_len != config->expected_alpn.size() ||
+        OPENSSL_memcmp(alpn_proto, config->expected_alpn.data(),
+                       alpn_proto_len) != 0) {
       fprintf(stderr, "negotiated alpn proto mismatch\n");
       return false;
     }
@@ -1506,15 +1525,11 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
     return false;
   }
 
-  int expect_curve_id = config->expect_curve_id;
-  if (is_resume && config->expect_resume_curve_id != 0) {
-    expect_curve_id = config->expect_resume_curve_id;
-  }
-  if (expect_curve_id != 0) {
+  if (config->expect_curve_id != 0) {
     uint16_t curve_id = SSL_get_curve_id(ssl);
-    if (static_cast<uint16_t>(expect_curve_id) != curve_id) {
+    if (static_cast<uint16_t>(config->expect_curve_id) != curve_id) {
       fprintf(stderr, "curve_id was %04x, wanted %04x\n", curve_id,
-              static_cast<uint16_t>(expect_curve_id));
+              static_cast<uint16_t>(config->expect_curve_id));
       return false;
     }
   }
@@ -1635,10 +1650,6 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume) {
 static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
                        SSL_CTX *ssl_ctx, const TestConfig *config,
                        bool is_resume, SSL_SESSION *session) {
-  if (is_resume && config->enable_resume_early_data) {
-    SSL_CTX_set_early_data_enabled(ssl_ctx, 1);
-  }
-
   bssl::UniquePtr<SSL> ssl(SSL_new(ssl_ctx));
   if (!ssl) {
     return false;
@@ -2130,8 +2141,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  TestConfig config;
-  if (!ParseConfig(argc - 1, argv + 1, &config)) {
+  TestConfig initial_config, resume_config;
+  if (!ParseConfig(argc - 1, argv + 1, false, &initial_config) ||
+      !ParseConfig(argc - 1, argv + 1, true, &resume_config)) {
     return Usage(argv[0]);
   }
 
@@ -2142,30 +2154,33 @@ int main(int argc, char **argv) {
   g_clock.tv_sec = 1234;
   g_clock.tv_usec = 1234;
 
-  bssl::UniquePtr<SSL_CTX> ssl_ctx = SetupCtx(&config);
-  if (!ssl_ctx) {
-    ERR_print_errors_fp(stderr);
-    return 1;
-  }
+  bssl::UniquePtr<SSL_CTX> ssl_ctx;
 
   bssl::UniquePtr<SSL_SESSION> session;
-  for (int i = 0; i < config.resume_count + 1; i++) {
+  for (int i = 0; i < initial_config.resume_count + 1; i++) {
     bool is_resume = i > 0;
-    if (is_resume && !config.is_server && !session) {
+    TestConfig *config = is_resume ? &resume_config : &initial_config;
+    ssl_ctx = SetupCtx(ssl_ctx.get(), config);
+    if (!ssl_ctx) {
+      ERR_print_errors_fp(stderr);
+      return 1;
+    }
+
+    if (is_resume && !initial_config.is_server && !session) {
       fprintf(stderr, "No session to offer.\n");
       return 1;
     }
 
     bssl::UniquePtr<SSL_SESSION> offer_session = std::move(session);
-    if (!DoExchange(&session, ssl_ctx.get(), &config, is_resume,
+    if (!DoExchange(&session, ssl_ctx.get(), config, is_resume,
                     offer_session.get())) {
       fprintf(stderr, "Connection %d failed.\n", i + 1);
       ERR_print_errors_fp(stderr);
       return 1;
     }
 
-    if (config.resumption_delay != 0) {
-      g_clock.tv_sec += config.resumption_delay;
+    if (config->resumption_delay != 0) {
+      g_clock.tv_sec += config->resumption_delay;
     }
   }
 
