@@ -39,7 +39,6 @@ crypto_sources := \
   src/crypto/asn1/f_enum.c\
   src/crypto/asn1/f_int.c\
   src/crypto/asn1/f_string.c\
-  src/crypto/asn1/t_bitst.c\
   src/crypto/asn1/tasn_dec.c\
   src/crypto/asn1/tasn_enc.c\
   src/crypto/asn1/tasn_fre.c\
@@ -58,46 +57,25 @@ crypto_sources := \
   src/crypto/bio/printf.c\
   src/crypto/bio/socket.c\
   src/crypto/bio/socket_helper.c\
-  src/crypto/bn/add.c\
-  src/crypto/bn/asm/x86_64-gcc.c\
-  src/crypto/bn/bn.c\
-  src/crypto/bn/bn_asn1.c\
-  src/crypto/bn/cmp.c\
-  src/crypto/bn/convert.c\
-  src/crypto/bn/ctx.c\
-  src/crypto/bn/div.c\
-  src/crypto/bn/exponentiation.c\
-  src/crypto/bn/gcd.c\
-  src/crypto/bn/generic.c\
-  src/crypto/bn/jacobi.c\
-  src/crypto/bn/montgomery.c\
-  src/crypto/bn/montgomery_inv.c\
-  src/crypto/bn/mul.c\
-  src/crypto/bn/prime.c\
-  src/crypto/bn/random.c\
-  src/crypto/bn/rsaz_exp.c\
-  src/crypto/bn/shift.c\
-  src/crypto/bn/sqrt.c\
+  src/crypto/bn_extra/bn_asn1.c\
+  src/crypto/bn_extra/convert.c\
   src/crypto/buf/buf.c\
   src/crypto/bytestring/asn1_compat.c\
   src/crypto/bytestring/ber.c\
   src/crypto/bytestring/cbb.c\
   src/crypto/bytestring/cbs.c\
   src/crypto/chacha/chacha.c\
-  src/crypto/cipher/aead.c\
-  src/crypto/cipher/cipher.c\
-  src/crypto/cipher/derive_key.c\
-  src/crypto/cipher/e_aes.c\
-  src/crypto/cipher/e_aesctrhmac.c\
-  src/crypto/cipher/e_aesgcmsiv.c\
-  src/crypto/cipher/e_chacha20poly1305.c\
-  src/crypto/cipher/e_des.c\
-  src/crypto/cipher/e_null.c\
-  src/crypto/cipher/e_rc2.c\
-  src/crypto/cipher/e_rc4.c\
-  src/crypto/cipher/e_ssl3.c\
-  src/crypto/cipher/e_tls.c\
-  src/crypto/cipher/tls_cbc.c\
+  src/crypto/cipher_extra/cipher_extra.c\
+  src/crypto/cipher_extra/derive_key.c\
+  src/crypto/cipher_extra/e_aesctrhmac.c\
+  src/crypto/cipher_extra/e_aesgcmsiv.c\
+  src/crypto/cipher_extra/e_chacha20poly1305.c\
+  src/crypto/cipher_extra/e_null.c\
+  src/crypto/cipher_extra/e_rc2.c\
+  src/crypto/cipher_extra/e_rc4.c\
+  src/crypto/cipher_extra/e_ssl3.c\
+  src/crypto/cipher_extra/e_tls.c\
+  src/crypto/cipher_extra/tls_cbc.c\
   src/crypto/cmac/cmac.c\
   src/crypto/conf/conf.c\
   src/crypto/cpu-aarch64-linux.c\
@@ -109,7 +87,6 @@ crypto_sources := \
   src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\
   src/crypto/curve25519/x25519-x86_64.c\
-  src/crypto/des/des.c\
   src/crypto/dh/check.c\
   src/crypto/dh/dh.c\
   src/crypto/dh/dh_asn1.c\
@@ -117,20 +94,9 @@ crypto_sources := \
   src/crypto/digest_extra/digest_extra.c\
   src/crypto/dsa/dsa.c\
   src/crypto/dsa/dsa_asn1.c\
-  src/crypto/ec/ec.c\
-  src/crypto/ec/ec_asn1.c\
-  src/crypto/ec/ec_key.c\
-  src/crypto/ec/ec_montgomery.c\
-  src/crypto/ec/oct.c\
-  src/crypto/ec/p224-64.c\
-  src/crypto/ec/p256-64.c\
-  src/crypto/ec/p256-x86_64.c\
-  src/crypto/ec/simple.c\
-  src/crypto/ec/util-64.c\
-  src/crypto/ec/wnaf.c\
+  src/crypto/ec_extra/ec_asn1.c\
   src/crypto/ecdh/ecdh.c\
-  src/crypto/ecdsa/ecdsa.c\
-  src/crypto/ecdsa/ecdsa_asn1.c\
+  src/crypto/ecdsa_extra/ecdsa_asn1.c\
   src/crypto/engine/engine.c\
   src/crypto/err/err.c\
   src/crypto/evp/digestsign.c\
@@ -146,6 +112,7 @@ crypto_sources := \
   src/crypto/evp/p_rsa_asn1.c\
   src/crypto/evp/pbkdf.c\
   src/crypto/evp/print.c\
+  src/crypto/evp/scrypt.c\
   src/crypto/evp/sign.c\
   src/crypto/ex_data.c\
   src/crypto/fipsmodule/bcm.c\
@@ -180,11 +147,7 @@ crypto_sources := \
   src/crypto/rc4/rc4.c\
   src/crypto/refcount_c11.c\
   src/crypto/refcount_lock.c\
-  src/crypto/rsa/blinding.c\
-  src/crypto/rsa/padding.c\
-  src/crypto/rsa/rsa.c\
-  src/crypto/rsa/rsa_asn1.c\
-  src/crypto/rsa/rsa_impl.c\
+  src/crypto/rsa_extra/rsa_asn1.c\
   src/crypto/stack/stack.c\
   src/crypto/thread.c\
   src/crypto/thread_none.c\
@@ -224,7 +187,6 @@ crypto_sources := \
   src/crypto/x509/x509name.c\
   src/crypto/x509/x509rset.c\
   src/crypto/x509/x509spki.c\
-  src/crypto/x509/x509type.c\
   src/crypto/x509/x_algor.c\
   src/crypto/x509/x_all.c\
   src/crypto/x509/x_attrib.c\
@@ -274,19 +236,19 @@ crypto_sources := \
   src/crypto/x509v3/v3_utl.c\
 
 linux_aarch64_sources := \
-  linux-aarch64/crypto/bn/armv8-mont.S\
   linux-aarch64/crypto/chacha/chacha-armv8.S\
   linux-aarch64/crypto/fipsmodule/aesv8-armx64.S\
+  linux-aarch64/crypto/fipsmodule/armv8-mont.S\
   linux-aarch64/crypto/fipsmodule/ghashv8-armx64.S\
   linux-aarch64/crypto/fipsmodule/sha1-armv8.S\
   linux-aarch64/crypto/fipsmodule/sha256-armv8.S\
   linux-aarch64/crypto/fipsmodule/sha512-armv8.S\
 
 linux_arm_sources := \
-  linux-arm/crypto/bn/armv4-mont.S\
   linux-arm/crypto/chacha/chacha-armv4.S\
   linux-arm/crypto/fipsmodule/aes-armv4.S\
   linux-arm/crypto/fipsmodule/aesv8-armx32.S\
+  linux-arm/crypto/fipsmodule/armv4-mont.S\
   linux-arm/crypto/fipsmodule/bsaes-armv7.S\
   linux-arm/crypto/fipsmodule/ghash-armv4.S\
   linux-arm/crypto/fipsmodule/ghashv8-armx32.S\
@@ -301,36 +263,37 @@ linux_ppc64le_sources := \
   linux-ppc64le/crypto/fipsmodule/ghashp8-ppc.S\
 
 linux_x86_sources := \
-  linux-x86/crypto/bn/bn-586.S\
-  linux-x86/crypto/bn/co-586.S\
-  linux-x86/crypto/bn/x86-mont.S\
   linux-x86/crypto/chacha/chacha-x86.S\
   linux-x86/crypto/fipsmodule/aes-586.S\
   linux-x86/crypto/fipsmodule/aesni-x86.S\
+  linux-x86/crypto/fipsmodule/bn-586.S\
+  linux-x86/crypto/fipsmodule/co-586.S\
   linux-x86/crypto/fipsmodule/ghash-x86.S\
   linux-x86/crypto/fipsmodule/md5-586.S\
   linux-x86/crypto/fipsmodule/sha1-586.S\
   linux-x86/crypto/fipsmodule/sha256-586.S\
   linux-x86/crypto/fipsmodule/sha512-586.S\
   linux-x86/crypto/fipsmodule/vpaes-x86.S\
+  linux-x86/crypto/fipsmodule/x86-mont.S\
 
 linux_x86_64_sources := \
-  linux-x86_64/crypto/bn/rsaz-avx2.S\
-  linux-x86_64/crypto/bn/x86_64-mont.S\
-  linux-x86_64/crypto/bn/x86_64-mont5.S\
   linux-x86_64/crypto/chacha/chacha-x86_64.S\
-  linux-x86_64/crypto/cipher/chacha20_poly1305_x86_64.S\
-  linux-x86_64/crypto/ec/p256-x86_64-asm.S\
+  linux-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.S\
+  linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S\
   linux-x86_64/crypto/fipsmodule/aes-x86_64.S\
   linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S\
   linux-x86_64/crypto/fipsmodule/aesni-x86_64.S\
   linux-x86_64/crypto/fipsmodule/bsaes-x86_64.S\
   linux-x86_64/crypto/fipsmodule/ghash-x86_64.S\
   linux-x86_64/crypto/fipsmodule/md5-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/p256-x86_64-asm.S\
   linux-x86_64/crypto/fipsmodule/rdrand-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/rsaz-avx2.S\
   linux-x86_64/crypto/fipsmodule/sha1-x86_64.S\
   linux-x86_64/crypto/fipsmodule/sha256-x86_64.S\
   linux-x86_64/crypto/fipsmodule/sha512-x86_64.S\
   linux-x86_64/crypto/fipsmodule/vpaes-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/x86_64-mont.S\
+  linux-x86_64/crypto/fipsmodule/x86_64-mont5.S\
   src/crypto/curve25519/asm/x25519-asm-x86_64.S\
 
