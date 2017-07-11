@@ -24,6 +24,7 @@ struct TestConfig {
   bool is_server = false;
   bool is_dtls = false;
   int resume_count = 0;
+  std::string write_settings;
   bool fallback_scsv = false;
   std::string digest_prefs;
   std::vector<int> signing_prefs;
@@ -68,6 +69,7 @@ struct TestConfig {
   std::string expected_signed_cert_timestamps;
   int min_version = 0;
   int max_version = 0;
+  int expect_version = 0;
   int mtu = 0;
   bool implicit_handshake = false;
   bool use_early_callback = false;
@@ -100,6 +102,7 @@ struct TestConfig {
   bool shim_shuts_down = false;
   bool verify_fail = false;
   bool verify_peer = false;
+  bool verify_peer_if_no_obc = false;
   bool expect_verify_result = false;
   std::string signed_cert_timestamps;
   int expect_total_renegotiations = 0;

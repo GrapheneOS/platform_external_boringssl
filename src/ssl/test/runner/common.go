@@ -26,8 +26,26 @@ const (
 	VersionTLS13 = 0x0304
 )
 
+const (
+	VersionDTLS10 = 0xfeff
+	VersionDTLS12 = 0xfefd
+)
+
 // A draft version of TLS 1.3 that is sent over the wire for the current draft.
 const tls13DraftVersion = 0x7f12
+
+var allTLSWireVersions = []uint16{
+	tls13DraftVersion,
+	VersionTLS12,
+	VersionTLS11,
+	VersionTLS10,
+	VersionSSL30,
+}
+
+var allDTLSWireVersions = []uint16{
+	VersionDTLS12,
+	VersionDTLS10,
+}
 
 const (
 	maxPlaintext        = 16384        // maximum plaintext payload length
@@ -625,12 +643,12 @@ type ProtocolBugs struct {
 	SendSupportedVersions []uint16
 
 	// NegotiateVersion, if non-zero, causes the server to negotiate the
-	// specifed TLS version rather than the version supported by either
+	// specifed wire version rather than the version supported by either
 	// peer.
 	NegotiateVersion uint16
 
 	// NegotiateVersionOnRenego, if non-zero, causes the server to negotiate
-	// the specified TLS version on renegotiation rather than retaining it.
+	// the specified wire version on renegotiation rather than retaining it.
 	NegotiateVersionOnRenego uint16
 
 	// ExpectFalseStart causes the server to, on full handshakes,
@@ -710,8 +728,12 @@ type ProtocolBugs struct {
 	EmptyRenegotiationInfo bool
 
 	// BadRenegotiationInfo causes the renegotiation extension value in a
-	// renegotiation handshake to be incorrect.
+	// renegotiation handshake to be incorrect at the start.
 	BadRenegotiationInfo bool
+
+	// BadRenegotiationInfoEnd causes the renegotiation extension value in
+	// a renegotiation handshake to be incorrect at the end.
+	BadRenegotiationInfoEnd bool
 
 	// NoRenegotiationInfo disables renegotiation info support in all
 	// handshakes.
@@ -1257,6 +1279,10 @@ type ProtocolBugs struct {
 	// send in the ClientHello.
 	SendCompressionMethods []byte
 
+	// SendCompressionMethod is the compression method to send in the
+	// ServerHello.
+	SendCompressionMethod byte
+
 	// AlwaysSendPreSharedKeyIdentityHint, if true, causes the server to
 	// always send a ServerKeyExchange for PSK ciphers, even if the identity
 	// hint is empty.
@@ -1438,10 +1464,29 @@ func (c *Config) defaultCurves() map[CurveID]bool {
 	return defaultCurves
 }
 
-// isSupportedVersion returns true if the specified protocol version is
-// acceptable.
-func (c *Config) isSupportedVersion(vers uint16, isDTLS bool) bool {
-	return c.minVersion(isDTLS) <= vers && vers <= c.maxVersion(isDTLS)
+// isSupportedVersion checks if the specified wire version is acceptable. If so,
+// it returns true and the corresponding protocol version. Otherwise, it returns
+// false.
+func (c *Config) isSupportedVersion(wireVers uint16, isDTLS bool) (uint16, bool) {
+	vers, ok := wireToVersion(wireVers, isDTLS)
+	if !ok || c.minVersion(isDTLS) > vers || vers > c.maxVersion(isDTLS) {
+		return 0, false
+	}
+	return vers, true
+}
+
+func (c *Config) supportedVersions(isDTLS bool) []uint16 {
+	versions := allTLSWireVersions
+	if isDTLS {
+		versions = allDTLSWireVersions
+	}
+	var ret []uint16
+	for _, vers := range versions {
+		if _, ok := c.isSupportedVersion(vers, isDTLS); ok {
+			ret = append(ret, vers)
+		}
+	}
+	return ret
 }
 
 // getCertificateForName returns the best certificate for the given name,
@@ -1717,3 +1762,12 @@ var (
 	downgradeTLS13 = []byte{0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x01}
 	downgradeTLS12 = []byte{0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x00}
 )
+
+func containsGREASE(values []uint16) bool {
+	for _, v := range values {
+		if isGREASEValue(v) {
+			return true
+		}
+	}
+	return false
+}
