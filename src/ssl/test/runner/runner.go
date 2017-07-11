@@ -263,6 +263,31 @@ func getShimKey(t testCert) string {
 	panic("Unknown test certificate")
 }
 
+// configVersionToWire maps a protocol version to the default wire version to
+// test at that protocol.
+//
+// TODO(davidben): Rather than mapping these, make tlsVersions contains a list
+// of wire versions and test all of them.
+func configVersionToWire(vers uint16, protocol protocol) uint16 {
+	if protocol == dtls {
+		switch vers {
+		case VersionTLS12:
+			return VersionDTLS12
+		case VersionTLS10:
+			return VersionDTLS10
+		}
+	} else {
+		switch vers {
+		case VersionSSL30, VersionTLS10, VersionTLS11, VersionTLS12:
+			return vers
+		case VersionTLS13:
+			return tls13DraftVersion
+		}
+	}
+
+	panic("unknown version")
+}
+
 // encodeDERValues encodes a series of bytestrings in comma-separated-hex form.
 func encodeDERValues(values [][]byte) string {
 	var ret string
@@ -440,30 +465,20 @@ type testCase struct {
 
 var testCases []testCase
 
-func writeTranscript(test *testCase, num int, data []byte) {
+func writeTranscript(test *testCase, path string, data []byte) {
 	if len(data) == 0 {
 		return
 	}
 
-	protocol := "tls"
-	if test.protocol == dtls {
-		protocol = "dtls"
-	}
-
-	side := "client"
-	if test.testType == serverTest {
-		side = "server"
-	}
-
-	dir := path.Join(*transcriptDir, protocol, side)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error making %s: %s\n", dir, err)
+	settings, err := ioutil.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading %s: %s.\n", path, err)
 		return
 	}
 
-	name := fmt.Sprintf("%s-%d", test.name, num)
-	if err := ioutil.WriteFile(path.Join(dir, name), data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing %s: %s\n", name, err)
+	settings = append(settings, data...)
+	if err := ioutil.WriteFile(path, settings, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %s\n", path, err)
 	}
 }
 
@@ -487,7 +502,7 @@ func (t *timeoutConn) Write(b []byte) (int, error) {
 	return t.Conn.Write(b)
 }
 
-func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, num int) error {
+func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, transcriptPrefix string, num int) error {
 	if !test.noSessionCache {
 		if config.ClientSessionCache == nil {
 			config.ClientSessionCache = NewLRUClientSessionCache(1)
@@ -536,9 +551,10 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, nu
 		if *flagDebug {
 			defer connDebug.WriteTo(os.Stdout)
 		}
-		if len(*transcriptDir) != 0 {
+		if len(transcriptPrefix) != 0 {
 			defer func() {
-				writeTranscript(test, num, connDebug.Transcript())
+				path := transcriptPrefix + strconv.Itoa(num)
+				writeTranscript(test, path, connDebug.Transcript())
 			}()
 		}
 
@@ -613,6 +629,8 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, nu
 			channelIDKey.Y.Cmp(channelIDKey.Y) != 0 {
 			return fmt.Errorf("incorrect channel ID")
 		}
+	} else if connState.ChannelID != nil {
+		return fmt.Errorf("channel ID unexpectedly negotiated")
 	}
 
 	if expected := test.expectedNextProto; expected != "" {
@@ -1000,6 +1018,26 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 		flags = append(flags, "-tls-unique")
 	}
 
+	var transcriptPrefix string
+	if len(*transcriptDir) != 0 {
+		protocol := "tls"
+		if test.protocol == dtls {
+			protocol = "dtls"
+		}
+
+		side := "client"
+		if test.testType == serverTest {
+			side = "server"
+		}
+
+		dir := filepath.Join(*transcriptDir, protocol, side)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+		transcriptPrefix = filepath.Join(dir, test.name+"-")
+		flags = append(flags, "-write-settings", transcriptPrefix)
+	}
+
 	flags = append(flags, test.flags...)
 
 	var shim *exec.Cmd
@@ -1039,7 +1077,7 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 
 	conn, err := acceptOrWait(listener, waitChan)
 	if err == nil {
-		err = doExchange(test, &config, conn, false /* not a resumption */, 0)
+		err = doExchange(test, &config, conn, false /* not a resumption */, transcriptPrefix, 0)
 		conn.Close()
 	}
 
@@ -1059,7 +1097,7 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 		var connResume net.Conn
 		connResume, err = acceptOrWait(listener, waitChan)
 		if err == nil {
-			err = doExchange(test, &resumeConfig, connResume, true /* resumption */, i+1)
+			err = doExchange(test, &resumeConfig, connResume, true /* resumption */, transcriptPrefix, i+1)
 			connResume.Close()
 		}
 	}
@@ -1155,16 +1193,27 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 type tlsVersion struct {
 	name    string
 	version uint16
-	flag    string
-	hasDTLS bool
+	// excludeFlag is the legacy shim flag to disable the version.
+	excludeFlag string
+	hasDTLS     bool
+	// shimTLS and shimDTLS are values the shim uses to refer to these
+	// versions in TLS and DTLS, respectively.
+	shimTLS, shimDTLS int
+}
+
+func (vers tlsVersion) shimFlag(protocol protocol) string {
+	if protocol == dtls {
+		return strconv.Itoa(vers.shimDTLS)
+	}
+	return strconv.Itoa(vers.shimTLS)
 }
 
 var tlsVersions = []tlsVersion{
-	{"SSL3", VersionSSL30, "-no-ssl3", false},
-	{"TLS1", VersionTLS10, "-no-tls1", true},
-	{"TLS11", VersionTLS11, "-no-tls11", false},
-	{"TLS12", VersionTLS12, "-no-tls12", true},
-	{"TLS13", VersionTLS13, "-no-tls13", false},
+	{"SSL3", VersionSSL30, "-no-ssl3", false, VersionSSL30, 0},
+	{"TLS1", VersionTLS10, "-no-tls1", true, VersionTLS10, VersionDTLS10},
+	{"TLS11", VersionTLS11, "-no-tls11", false, VersionTLS11, 0},
+	{"TLS12", VersionTLS12, "-no-tls12", true, VersionTLS12, VersionDTLS12},
+	{"TLS13", VersionTLS13, "-no-tls13", false, VersionTLS13, 0},
 }
 
 type testCipherSuite struct {
@@ -2461,6 +2510,21 @@ func addBasicTests() {
 			expectedError:      ":INVALID_COMPRESSION_LIST:",
 			expectedLocalError: "remote error: illegal parameter",
 		},
+		// Test that the client rejects invalid compression methods
+		// from the server.
+		{
+			testType: clientTest,
+			name:     "InvalidCompressionMethod",
+			config: Config{
+				MaxVersion: VersionTLS12,
+				Bugs: ProtocolBugs{
+					SendCompressionMethod: 1,
+				},
+			},
+			shouldFail:         true,
+			expectedError:      ":UNSUPPORTED_COMPRESSION_ALGORITHM:",
+			expectedLocalError: "remote error: illegal parameter",
+		},
 		{
 			name: "GREASE-Client-TLS12",
 			config: Config{
@@ -2957,6 +3021,116 @@ func addCipherSuiteTests() {
 		shouldFail:    true,
 		expectedError: ":NO_SHARED_CIPHER:",
 	})
+
+	// Test cipher suite negotiation works as expected. Configure a
+	// complicated cipher suite configuration.
+	const negotiationTestCiphers = "" +
+		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:" +
+		"[TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384|TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256|TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA]:" +
+		"TLS_RSA_WITH_AES_128_GCM_SHA256:" +
+		"TLS_RSA_WITH_AES_128_CBC_SHA:" +
+		"[TLS_RSA_WITH_AES_256_GCM_SHA384|TLS_RSA_WITH_AES_256_CBC_SHA]"
+	negotiationTests := []struct {
+		ciphers  []uint16
+		expected uint16
+	}{
+		// Server preferences are honored, including when
+		// equipreference groups are involved.
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_RSA_WITH_AES_128_CBC_SHA,
+				TLS_RSA_WITH_AES_128_GCM_SHA256,
+				TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+				TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			},
+			TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_RSA_WITH_AES_128_CBC_SHA,
+				TLS_RSA_WITH_AES_128_GCM_SHA256,
+				TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+			},
+			TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		},
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_RSA_WITH_AES_128_CBC_SHA,
+				TLS_RSA_WITH_AES_128_GCM_SHA256,
+			},
+			TLS_RSA_WITH_AES_128_GCM_SHA256,
+		},
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_RSA_WITH_AES_128_CBC_SHA,
+			},
+			TLS_RSA_WITH_AES_128_CBC_SHA,
+		},
+		// Equipreference groups use the client preference.
+		{
+			[]uint16{
+				TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			},
+			TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		},
+		{
+			[]uint16{
+				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			},
+			TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+		},
+		{
+			[]uint16{
+				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			},
+			TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		},
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_RSA_WITH_AES_256_CBC_SHA,
+			},
+			TLS_RSA_WITH_AES_256_GCM_SHA384,
+		},
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_CBC_SHA,
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+			},
+			TLS_RSA_WITH_AES_256_CBC_SHA,
+		},
+		// If there are two equipreference groups, the preferred one
+		// takes precedence.
+		{
+			[]uint16{
+				TLS_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_RSA_WITH_AES_256_CBC_SHA,
+				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			},
+			TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		},
+	}
+	for i, t := range negotiationTests {
+		testCases = append(testCases, testCase{
+			testType: serverTest,
+			name:     "CipherNegotiation-" + strconv.Itoa(i),
+			config: Config{
+				MaxVersion:   VersionTLS12,
+				CipherSuites: t.ciphers,
+			},
+			flags:          []string{"-cipher", negotiationTestCiphers},
+			expectedCipher: t.expected,
+		})
+	}
 }
 
 func addBadECDSASignatureTests() {
@@ -3036,36 +3210,46 @@ func addCBCPaddingTests() {
 }
 
 func addCBCSplittingTests() {
-	testCases = append(testCases, testCase{
-		name: "CBCRecordSplitting",
-		config: Config{
-			MaxVersion:   VersionTLS10,
-			MinVersion:   VersionTLS10,
-			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
-		},
-		messageLen:    -1, // read until EOF
-		resumeSession: true,
-		flags: []string{
-			"-async",
-			"-write-different-record-sizes",
-			"-cbc-record-splitting",
-		},
-	})
-	testCases = append(testCases, testCase{
-		name: "CBCRecordSplittingPartialWrite",
-		config: Config{
-			MaxVersion:   VersionTLS10,
-			MinVersion:   VersionTLS10,
-			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
-		},
-		messageLen: -1, // read until EOF
-		flags: []string{
-			"-async",
-			"-write-different-record-sizes",
-			"-cbc-record-splitting",
-			"-partial-write",
-		},
-	})
+	var cbcCiphers = []struct {
+		name   string
+		cipher uint16
+	}{
+		{"3DES", TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+		{"AES128", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+		{"AES256", TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA},
+	}
+	for _, t := range cbcCiphers {
+		testCases = append(testCases, testCase{
+			name: "CBCRecordSplitting-" + t.name,
+			config: Config{
+				MaxVersion:   VersionTLS10,
+				MinVersion:   VersionTLS10,
+				CipherSuites: []uint16{t.cipher},
+			},
+			messageLen:    -1, // read until EOF
+			resumeSession: true,
+			flags: []string{
+				"-async",
+				"-write-different-record-sizes",
+				"-cbc-record-splitting",
+			},
+		})
+		testCases = append(testCases, testCase{
+			name: "CBCRecordSplittingPartialWrite-" + t.name,
+			config: Config{
+				MaxVersion:   VersionTLS10,
+				MinVersion:   VersionTLS10,
+				CipherSuites: []uint16{t.cipher},
+			},
+			messageLen: -1, // read until EOF
+			flags: []string{
+				"-async",
+				"-write-different-record-sizes",
+				"-cbc-record-splitting",
+				"-partial-write",
+			},
+		})
+	}
 }
 
 func addClientAuthTests() {
@@ -3208,6 +3392,37 @@ func addClientAuthTests() {
 				flags:         []string{"-verify-peer"},
 				shouldFail:    true,
 				expectedError: ":UNEXPECTED_MESSAGE:",
+			})
+
+			testCases = append(testCases, testCase{
+				testType: serverTest,
+				name:     "VerifyPeerIfNoOBC-NoChannelID-" + ver.name,
+				config: Config{
+					MinVersion: ver.version,
+					MaxVersion: ver.version,
+				},
+				flags: []string{
+					"-enable-channel-id",
+					"-verify-peer-if-no-obc",
+				},
+				shouldFail:         true,
+				expectedError:      ":PEER_DID_NOT_RETURN_A_CERTIFICATE:",
+				expectedLocalError: certificateRequired,
+			})
+
+			testCases = append(testCases, testCase{
+				testType: serverTest,
+				name:     "VerifyPeerIfNoOBC-ChannelID-" + ver.name,
+				config: Config{
+					MinVersion: ver.version,
+					MaxVersion: ver.version,
+					ChannelID:  channelIDKey,
+				},
+				expectChannelID: true,
+				flags: []string{
+					"-enable-channel-id",
+					"-verify-peer-if-no-obc",
+				},
 			})
 		}
 
@@ -4363,6 +4578,36 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 				shouldFail:    true,
 				expectedError: ":CHANNEL_ID_SIGNATURE_INVALID:",
 			})
+
+			if ver.version < VersionTLS13 {
+				// Channel ID requires ECDHE ciphers.
+				tests = append(tests, testCase{
+					testType: serverTest,
+					name:     "ChannelID-NoECDHE-" + ver.name,
+					config: Config{
+						MaxVersion:   ver.version,
+						CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
+						ChannelID:    channelIDKey,
+					},
+					expectChannelID: false,
+					flags:           []string{"-enable-channel-id"},
+				})
+
+				// Sanity-check setting expectChannelID false works.
+				tests = append(tests, testCase{
+					testType: serverTest,
+					name:     "ChannelID-ECDHE-" + ver.name,
+					config: Config{
+						MaxVersion:   ver.version,
+						CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+						ChannelID:    channelIDKey,
+					},
+					expectChannelID:    false,
+					flags:              []string{"-enable-channel-id"},
+					shouldFail:         true,
+					expectedLocalError: "channel ID unexpectedly negotiated",
+				})
+			}
 		}
 
 		// Channel ID and NPN at the same time, to ensure their relative
@@ -4541,7 +4786,7 @@ func addVersionNegotiationTests() {
 		// Assemble flags to disable all newer versions on the shim.
 		var flags []string
 		for _, vers := range tlsVersions[i+1:] {
-			flags = append(flags, vers.flag)
+			flags = append(flags, vers.excludeFlag)
 		}
 
 		// Test configuring the runner's maximum version.
@@ -4561,19 +4806,17 @@ func addVersionNegotiationTests() {
 					suffix += "-DTLS"
 				}
 
-				shimVersFlag := strconv.Itoa(int(versionToWire(shimVers.version, protocol == dtls)))
-
 				// Determine the expected initial record-layer versions.
 				clientVers := shimVers.version
 				if clientVers > VersionTLS10 {
 					clientVers = VersionTLS10
 				}
-				clientVers = versionToWire(clientVers, protocol == dtls)
+				clientVers = configVersionToWire(clientVers, protocol)
 				serverVers := expectedVersion
 				if expectedVersion >= VersionTLS13 {
 					serverVers = VersionTLS10
 				}
-				serverVers = versionToWire(serverVers, protocol == dtls)
+				serverVers = configVersionToWire(serverVers, protocol)
 
 				testCases = append(testCases, testCase{
 					protocol: protocol,
@@ -4598,7 +4841,7 @@ func addVersionNegotiationTests() {
 							ExpectInitialRecordVersion: clientVers,
 						},
 					},
-					flags:           []string{"-max-version", shimVersFlag},
+					flags:           []string{"-max-version", shimVers.shimFlag(protocol)},
 					expectedVersion: expectedVersion,
 				})
 
@@ -4625,7 +4868,7 @@ func addVersionNegotiationTests() {
 							ExpectInitialRecordVersion: serverVers,
 						},
 					},
-					flags:           []string{"-max-version", shimVersFlag},
+					flags:           []string{"-max-version", shimVers.shimFlag(protocol)},
 					expectedVersion: expectedVersion,
 				})
 			}
@@ -4644,7 +4887,7 @@ func addVersionNegotiationTests() {
 				suffix += "-DTLS"
 			}
 
-			wireVersion := versionToWire(vers.version, protocol == dtls)
+			wireVersion := configVersionToWire(vers.version, protocol)
 			testCases = append(testCases, testCase{
 				protocol: protocol,
 				testType: serverTest,
@@ -4882,7 +5125,7 @@ func addMinimumVersionTests() {
 		// Assemble flags to disable all older versions on the shim.
 		var flags []string
 		for _, vers := range tlsVersions[:i] {
-			flags = append(flags, vers.flag)
+			flags = append(flags, vers.excludeFlag)
 		}
 
 		for _, runnerVers := range tlsVersions {
@@ -4895,7 +5138,6 @@ func addMinimumVersionTests() {
 				if protocol == dtls {
 					suffix += "-DTLS"
 				}
-				shimVersFlag := strconv.Itoa(int(versionToWire(shimVers.version, protocol == dtls)))
 
 				var expectedVersion uint16
 				var shouldFail bool
@@ -4918,7 +5160,7 @@ func addMinimumVersionTests() {
 							// Ensure the server does not decline to
 							// select a version (versions extension) or
 							// cipher (some ciphers depend on versions).
-							NegotiateVersion:            runnerVers.version,
+							NegotiateVersion:            configVersionToWire(runnerVers.version, protocol),
 							IgnorePeerCipherPreferences: shouldFail,
 						},
 					},
@@ -4938,11 +5180,11 @@ func addMinimumVersionTests() {
 							// Ensure the server does not decline to
 							// select a version (versions extension) or
 							// cipher (some ciphers depend on versions).
-							NegotiateVersion:            runnerVers.version,
+							NegotiateVersion:            configVersionToWire(runnerVers.version, protocol),
 							IgnorePeerCipherPreferences: shouldFail,
 						},
 					},
-					flags:              []string{"-min-version", shimVersFlag},
+					flags:              []string{"-min-version", shimVers.shimFlag(protocol)},
 					expectedVersion:    expectedVersion,
 					shouldFail:         shouldFail,
 					expectedError:      expectedError,
@@ -4969,7 +5211,7 @@ func addMinimumVersionTests() {
 					config: Config{
 						MaxVersion: runnerVers.version,
 					},
-					flags:              []string{"-min-version", shimVersFlag},
+					flags:              []string{"-min-version", shimVers.shimFlag(protocol)},
 					expectedVersion:    expectedVersion,
 					shouldFail:         shouldFail,
 					expectedError:      expectedError,
@@ -6457,6 +6699,19 @@ func addRenegotiationTests() {
 			MaxVersion: VersionTLS12,
 			Bugs: ProtocolBugs{
 				BadRenegotiationInfo: true,
+			},
+		},
+		flags:         []string{"-renegotiate-freely"},
+		shouldFail:    true,
+		expectedError: ":RENEGOTIATION_MISMATCH:",
+	})
+	testCases = append(testCases, testCase{
+		name:        "Renegotiate-Client-BadExt2",
+		renegotiate: 1,
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				BadRenegotiationInfoEnd: true,
 			},
 		},
 		flags:         []string{"-renegotiate-freely"},
@@ -10898,6 +11153,24 @@ func addTLS13HandshakeTests() {
 		expectedLocalError: "remote error: unexpected message",
 		flags: []string{
 			"-enable-early-data",
+		},
+	})
+
+	// Test that the client reports TLS 1.3 as the version while sending
+	// early data.
+	testCases = append(testCases, testCase{
+		testType: clientTest,
+		name:     "TLS13-EarlyData-Client-VersionAPI",
+		config: Config{
+			MaxVersion:       VersionTLS13,
+			MaxEarlyDataSize: 16384,
+		},
+		resumeSession: true,
+		flags: []string{
+			"-enable-early-data",
+			"-expect-early-data-info",
+			"-expect-accept-early-data",
+			"-expect-version", strconv.Itoa(VersionTLS13),
 		},
 	})
 }
