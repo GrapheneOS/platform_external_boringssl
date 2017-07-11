@@ -95,6 +95,7 @@ const Flag<bool> kBoolFlags[] = {
   { "-shim-shuts-down", &TestConfig::shim_shuts_down },
   { "-verify-fail", &TestConfig::verify_fail },
   { "-verify-peer", &TestConfig::verify_peer },
+  { "-verify-peer-if-no-obc", &TestConfig::verify_peer_if_no_obc },
   { "-expect-verify-result", &TestConfig::expect_verify_result },
   { "-renegotiate-once", &TestConfig::renegotiate_once },
   { "-renegotiate-freely", &TestConfig::renegotiate_freely },
@@ -131,6 +132,7 @@ const Flag<bool> kBoolFlags[] = {
 };
 
 const Flag<std::string> kStringFlags[] = {
+  { "-write-settings", &TestConfig::write_settings },
   { "-digest-prefs", &TestConfig::digest_prefs },
   { "-key-file", &TestConfig::key_file },
   { "-cert-file", &TestConfig::cert_file },
@@ -172,6 +174,7 @@ const Flag<int> kIntFlags[] = {
   { "-resume-count", &TestConfig::resume_count },
   { "-min-version", &TestConfig::min_version },
   { "-max-version", &TestConfig::max_version },
+  { "-expect-version", &TestConfig::expect_version },
   { "-mtu", &TestConfig::mtu },
   { "-export-keying-material", &TestConfig::export_keying_material },
   { "-expect-total-renegotiations", &TestConfig::expect_total_renegotiations },
