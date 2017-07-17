@@ -32,6 +32,7 @@ enum client_hs_state_t {
   state_process_hello_retry_request = 0,
   state_send_second_client_hello,
   state_process_server_hello,
+  state_process_change_cipher_spec,
   state_process_encrypted_extensions,
   state_continue_second_server_flight,
   state_process_certificate_request,
@@ -55,9 +56,9 @@ static enum ssl_hs_wait_t do_process_hello_retry_request(SSL_HANDSHAKE *hs) {
   }
 
   CBS cbs, extensions;
-  uint16_t server_wire_version;
+  uint16_t server_version;
   CBS_init(&cbs, ssl->init_msg, ssl->init_num);
-  if (!CBS_get_u16(&cbs, &server_wire_version) ||
+  if (!CBS_get_u16(&cbs, &server_version) ||
       !CBS_get_u16_length_prefixed(&cbs, &extensions) ||
       /* HelloRetryRequest may not be empty. */
       CBS_len(&extensions) == 0 ||
@@ -165,13 +166,18 @@ static enum ssl_hs_wait_t do_process_server_hello(SSL_HANDSHAKE *hs) {
     return ssl_hs_error;
   }
 
-  CBS cbs, server_random, extensions;
-  uint16_t server_wire_version;
+  CBS cbs, server_random, session_id, extensions;
+  uint16_t server_version;
   uint16_t cipher_suite;
+  uint8_t compression_method;
   CBS_init(&cbs, ssl->init_msg, ssl->init_num);
-  if (!CBS_get_u16(&cbs, &server_wire_version) ||
+  if (!CBS_get_u16(&cbs, &server_version) ||
       !CBS_get_bytes(&cbs, &server_random, SSL3_RANDOM_SIZE) ||
+      (ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+       !CBS_get_u8_length_prefixed(&cbs, &session_id)) ||
       !CBS_get_u16(&cbs, &cipher_suite) ||
+      (ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+       (!CBS_get_u8(&cbs, &compression_method) || compression_method != 0)) ||
       !CBS_get_u16_length_prefixed(&cbs, &extensions) ||
       CBS_len(&cbs) != 0) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
@@ -179,7 +185,9 @@ static enum ssl_hs_wait_t do_process_server_hello(SSL_HANDSHAKE *hs) {
     return ssl_hs_error;
   }
 
-  if (server_wire_version != ssl->version) {
+  uint16_t expected_version =
+      ssl->version == TLS1_3_EXPERIMENT_VERSION ? TLS1_2_VERSION : ssl->version;
+  if (server_version != expected_version) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_VERSION_NUMBER);
     return ssl_hs_error;
@@ -205,11 +213,13 @@ static enum ssl_hs_wait_t do_process_server_hello(SSL_HANDSHAKE *hs) {
   }
 
   /* Parse out the extensions. */
-  int have_key_share = 0, have_pre_shared_key = 0;
-  CBS key_share, pre_shared_key;
+  int have_key_share = 0, have_pre_shared_key = 0, have_supported_versions = 0;
+  CBS key_share, pre_shared_key, supported_versions;
   const SSL_EXTENSION_TYPE ext_types[] = {
       {TLSEXT_TYPE_key_share, &have_key_share, &key_share},
       {TLSEXT_TYPE_pre_shared_key, &have_pre_shared_key, &pre_shared_key},
+      {TLSEXT_TYPE_supported_versions, &have_supported_versions,
+       &supported_versions},
   };
 
   uint8_t alert = SSL_AD_DECODE_ERROR;
@@ -217,6 +227,14 @@ static enum ssl_hs_wait_t do_process_server_hello(SSL_HANDSHAKE *hs) {
                             OPENSSL_ARRAY_SIZE(ext_types),
                             0 /* reject unknown */)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
+    return ssl_hs_error;
+  }
+
+  /* supported_versions is parsed in handshake_client to select the experimental
+   * TLS 1.3 version. */
+  if (have_supported_versions && ssl->version != TLS1_3_EXPERIMENT_VERSION) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_EXTENSION);
+    ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNSUPPORTED_EXTENSION);
     return ssl_hs_error;
   }
 
@@ -313,18 +331,31 @@ static enum ssl_hs_wait_t do_process_server_hello(SSL_HANDSHAKE *hs) {
   OPENSSL_free(dhe_secret);
 
   if (!ssl_hash_current_message(hs) ||
-      !tls13_derive_handshake_secrets(hs) ||
-      !tls13_set_traffic_key(ssl, evp_aead_open, hs->server_handshake_secret,
+      !tls13_derive_handshake_secrets(hs)) {
+    return ssl_hs_error;
+  }
+  hs->tls13_state = state_process_change_cipher_spec;
+  return ssl->version == TLS1_3_EXPERIMENT_VERSION
+             ? ssl_hs_read_change_cipher_spec
+             : ssl_hs_ok;
+}
+
+static enum ssl_hs_wait_t do_process_change_cipher_spec(SSL_HANDSHAKE *hs) {
+  SSL *const ssl = hs->ssl;
+  if (!tls13_set_traffic_key(ssl, evp_aead_open, hs->server_handshake_secret,
                              hs->hash_len)) {
     return ssl_hs_error;
   }
 
-  /* If not sending early data, set client traffic keys now so that alerts are
-   * encrypted. */
-  if (!hs->early_data_offered &&
-      !tls13_set_traffic_key(ssl, evp_aead_seal, hs->client_handshake_secret,
-                             hs->hash_len)) {
-    return ssl_hs_error;
+  if (!hs->early_data_offered) {
+    /* If not sending early data, set client traffic keys now so that alerts are
+     * encrypted. */
+    if ((ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+         !ssl3_add_change_cipher_spec(ssl)) ||
+        !tls13_set_traffic_key(ssl, evp_aead_seal, hs->client_handshake_secret,
+                               hs->hash_len)) {
+      return ssl_hs_error;
+    }
   }
 
   hs->tls13_state = state_process_encrypted_extensions;
@@ -351,8 +382,8 @@ static enum ssl_hs_wait_t do_process_encrypted_extensions(SSL_HANDSHAKE *hs) {
 
   /* Store the negotiated ALPN in the session. */
   if (ssl->s3->alpn_selected != NULL) {
-    hs->new_session->early_alpn =
-        BUF_memdup(ssl->s3->alpn_selected, ssl->s3->alpn_selected_len);
+    hs->new_session->early_alpn = (uint8_t *)BUF_memdup(
+        ssl->s3->alpn_selected, ssl->s3->alpn_selected_len);
     if (hs->new_session->early_alpn == NULL) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
       return ssl_hs_error;
@@ -500,10 +531,13 @@ static enum ssl_hs_wait_t do_send_end_of_early_data(SSL_HANDSHAKE *hs) {
     }
   }
 
-  if (hs->early_data_offered &&
-      !tls13_set_traffic_key(ssl, evp_aead_seal, hs->client_handshake_secret,
-                             hs->hash_len)) {
-    return ssl_hs_error;
+  if (hs->early_data_offered) {
+    if ((ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+         !ssl3_add_change_cipher_spec(ssl)) ||
+        !tls13_set_traffic_key(ssl, evp_aead_seal, hs->client_handshake_secret,
+                               hs->hash_len)) {
+      return ssl_hs_error;
+    }
   }
 
   hs->tls13_state = state_send_client_certificate;
@@ -611,7 +645,8 @@ static enum ssl_hs_wait_t do_complete_second_flight(SSL_HANDSHAKE *hs) {
 enum ssl_hs_wait_t tls13_client_handshake(SSL_HANDSHAKE *hs) {
   while (hs->tls13_state != state_done) {
     enum ssl_hs_wait_t ret = ssl_hs_error;
-    enum client_hs_state_t state = hs->tls13_state;
+    enum client_hs_state_t state =
+        static_cast<enum client_hs_state_t>(hs->tls13_state);
     switch (state) {
       case state_process_hello_retry_request:
         ret = do_process_hello_retry_request(hs);
@@ -621,6 +656,9 @@ enum ssl_hs_wait_t tls13_client_handshake(SSL_HANDSHAKE *hs) {
         break;
       case state_process_server_hello:
         ret = do_process_server_hello(hs);
+        break;
+      case state_process_change_cipher_spec:
+        ret = do_process_change_cipher_spec(hs);
         break;
       case state_process_encrypted_extensions:
         ret = do_process_encrypted_extensions(hs);
@@ -666,14 +704,13 @@ enum ssl_hs_wait_t tls13_client_handshake(SSL_HANDSHAKE *hs) {
 }
 
 int tls13_process_new_session_ticket(SSL *ssl) {
-  int ret = 0;
-  SSL_SESSION *session = SSL_SESSION_dup(ssl->s3->established_session,
-                                         SSL_SESSION_INCLUDE_NONAUTH);
-  if (session == NULL) {
+  bssl::UniquePtr<SSL_SESSION> session(SSL_SESSION_dup(
+      ssl->s3->established_session, SSL_SESSION_INCLUDE_NONAUTH));
+  if (!session) {
     return 0;
   }
 
-  ssl_session_rebase_time(ssl, session);
+  ssl_session_rebase_time(ssl, session.get());
 
   uint32_t server_timeout;
   CBS cbs, ticket, extensions;
@@ -686,7 +723,7 @@ int tls13_process_new_session_ticket(SSL *ssl) {
       CBS_len(&cbs) != 0) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
-    goto err;
+    return 0;
   }
 
   /* Cap the renewable lifetime by the server advertised value. This avoids
@@ -708,7 +745,7 @@ int tls13_process_new_session_ticket(SSL *ssl) {
                             OPENSSL_ARRAY_SIZE(ext_types),
                             1 /* ignore unknown */)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
-    goto err;
+    return 0;
   }
 
   if (have_early_data_info && ssl->cert->enable_early_data) {
@@ -716,7 +753,7 @@ int tls13_process_new_session_ticket(SSL *ssl) {
         CBS_len(&early_data_info) != 0) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
       OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
-      goto err;
+      return 0;
     }
   }
 
@@ -724,16 +761,12 @@ int tls13_process_new_session_ticket(SSL *ssl) {
   session->not_resumable = 0;
 
   if (ssl->ctx->new_session_cb != NULL &&
-      ssl->ctx->new_session_cb(ssl, session)) {
+      ssl->ctx->new_session_cb(ssl, session.get())) {
     /* |new_session_cb|'s return value signals that it took ownership. */
-    session = NULL;
+    session.release();
   }
 
-  ret = 1;
-
-err:
-  SSL_SESSION_free(session);
-  return ret;
+  return 1;
 }
 
 void ssl_clear_tls13_state(SSL_HANDSHAKE *hs) {

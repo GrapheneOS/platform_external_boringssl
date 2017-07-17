@@ -492,8 +492,7 @@ OPENSSL_EXPORT int SSL_get_error(const SSL *ssl, int ret_code);
 
 /* SSL_ERROR_PENDING_CERTIFICATE indicates the operation failed because the
  * early callback indicated certificate lookup was incomplete. The caller may
- * retry the operation when lookup has completed. Note: when the operation is
- * retried, the early callback will not be called a second time.
+ * retry the operation when lookup has completed.
  *
  * See also |SSL_CTX_set_select_certificate_cb|. */
 #define SSL_ERROR_PENDING_CERTIFICATE 12
@@ -578,6 +577,8 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_2_VERSION 0xfefd
 
 #define TLS1_3_DRAFT_VERSION 0x7f12
+#define TLS1_3_EXPERIMENT_VERSION 0x7e01
+#define TLS1_3_RECORD_TYPE_EXPERIMENT_VERSION 0x7a12
 
 /* SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
  * |version|. If |version| is zero, the default minimum version is used. It
@@ -1874,12 +1875,17 @@ OPENSSL_EXPORT void SSL_CTX_flush_sessions(SSL_CTX *ctx, uint64_t time);
  * unset), the callback is not called.
  *
  * The callback is passed a reference to |session|. It returns one if it takes
- * ownership and zero otherwise.
+ * ownership (and then calls |SSL_SESSION_free| when done) and zero otherwise. A
+ * consumer which places |session| into an in-memory cache will likely return
+ * one, with the cache calling |SSL_SESSION_free|. A consumer which serializes
+ * |session| with |SSL_SESSION_to_bytes| may not need to retain |session| and
+ * will likely return zero. Returning one is equivalent to calling
+ * |SSL_SESSION_up_ref| and then returning zero.
  *
  * Note: For a client, the callback may be called on abbreviated handshakes if a
  * ticket is renewed. Further, it may not be called until some time after
  * |SSL_do_handshake| or |SSL_connect| completes if False Start is enabled. Thus
- * it's recommended to use this callback over checking |SSL_session_reused| on
+ * it's recommended to use this callback over calling |SSL_get_session| on
  * handshake completion. */
 OPENSSL_EXPORT void SSL_CTX_sess_set_new_cb(
     SSL_CTX *ctx, int (*new_session_cb)(SSL *ssl, SSL_SESSION *session));
@@ -3131,6 +3137,24 @@ OPENSSL_EXPORT int SSL_renegotiate_pending(SSL *ssl);
  * performed by |ssl|. This includes the pending renegotiation, if any. */
 OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
+enum tls13_variant_t {
+  tls13_default = 0,
+  tls13_experiment = 1,
+  tls13_record_type_experiment = 2,
+};
+
+/* SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
+ * server, if |variant| is not |tls13_default|, all variants are enabled. On the
+ * client, only the configured variant is enabled. */
+OPENSSL_EXPORT void SSL_CTX_set_tls13_variant(SSL_CTX *ctx,
+                                              enum tls13_variant_t variant);
+
+/* SSL_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
+ * server, if |variant| is not |tls13_default|, all variants are enabled. On the
+ * client, only the configured variant is enabled. */
+OPENSSL_EXPORT void SSL_set_tls13_variant(SSL *ssl,
+                                          enum tls13_variant_t variant);
+
 /* SSL_MAX_CERT_LIST_DEFAULT is the default maximum length, in bytes, of a peer
  * certificate chain. */
 #define SSL_MAX_CERT_LIST_DEFAULT (1024 * 100)
@@ -4118,6 +4142,10 @@ struct ssl_ctx_st {
    * |SSL_CTX_set_min_proto_version|. Note this version is normalized in DTLS
    * and is further constrainted by |SSL_OP_NO_*|. */
   uint16_t conf_min_version;
+
+  /* tls13_variant is the variant of TLS 1.3 we are using for this
+   * configuration. */
+  enum tls13_variant_t tls13_variant;
 
   struct ssl_cipher_preference_list_st *cipher_list;
 
