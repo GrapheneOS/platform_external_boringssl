@@ -122,7 +122,6 @@
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/rand.h>
-#include <openssl/type_check.h>
 
 #include "../crypto/internal.h"
 #include "internal.h"
@@ -153,7 +152,7 @@ static void dtls1_hm_fragment_free(hm_fragment *frag) {
 }
 
 static hm_fragment *dtls1_hm_fragment_new(const struct hm_header_st *msg_hdr) {
-  hm_fragment *frag = OPENSSL_malloc(sizeof(hm_fragment));
+  hm_fragment *frag = (hm_fragment *)OPENSSL_malloc(sizeof(hm_fragment));
   if (frag == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     return NULL;
@@ -164,7 +163,8 @@ static hm_fragment *dtls1_hm_fragment_new(const struct hm_header_st *msg_hdr) {
   frag->msg_len = msg_hdr->msg_len;
 
   /* Allocate space for the reassembled message and fill in the header. */
-  frag->data = OPENSSL_malloc(DTLS1_HM_HEADER_LENGTH + msg_hdr->msg_len);
+  frag->data =
+      (uint8_t *)OPENSSL_malloc(DTLS1_HM_HEADER_LENGTH + msg_hdr->msg_len);
   if (frag->data == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto err;
@@ -191,7 +191,7 @@ static hm_fragment *dtls1_hm_fragment_new(const struct hm_header_st *msg_hdr) {
       goto err;
     }
     size_t bitmask_len = (msg_hdr->msg_len + 7) / 8;
-    frag->reassembly = OPENSSL_malloc(bitmask_len);
+    frag->reassembly = (uint8_t *)OPENSSL_malloc(bitmask_len);
     if (frag->reassembly == NULL) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       goto err;
@@ -537,9 +537,9 @@ int dtls1_finish_message(SSL *ssl, CBB *cbb, uint8_t **out_msg,
  * it takes ownership of |data| and releases it with |OPENSSL_free| when
  * done. */
 static int add_outgoing(SSL *ssl, int is_ccs, uint8_t *data, size_t len) {
-  OPENSSL_COMPILE_ASSERT(SSL_MAX_HANDSHAKE_FLIGHT <
-                             (1 << 8 * sizeof(ssl->d1->outgoing_messages_len)),
-                         outgoing_messages_len_is_too_small);
+  static_assert(SSL_MAX_HANDSHAKE_FLIGHT <
+                    (1 << 8 * sizeof(ssl->d1->outgoing_messages_len)),
+                "outgoing_messages_len is too small");
   if (ssl->d1->outgoing_messages_len >= SSL_MAX_HANDSHAKE_FLIGHT) {
     assert(0);
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
@@ -760,7 +760,7 @@ int dtls1_flush_flight(SSL *ssl) {
   dtls1_update_mtu(ssl);
 
   int ret = -1;
-  uint8_t *packet = OPENSSL_malloc(ssl->d1->mtu);
+  uint8_t *packet = (uint8_t *)OPENSSL_malloc(ssl->d1->mtu);
   if (packet == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto err;
