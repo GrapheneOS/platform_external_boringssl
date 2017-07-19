@@ -185,19 +185,6 @@ cc_library_static {
 
 // Tests
 cc_test {
-    name: "boringssl_tests",
-    host_supported: true,
-    test_per_src: true,
-    defaults: ["boringssl_tests_sources", "boringssl_flags"],
-    whole_static_libs: ["boringssl_test_support"],
-
-    shared_libs: [
-        "libcrypto",
-        "libssl",
-    ],
-}
-
-cc_test {
   name: "boringssl_crypto_test",
   test_suites: ["device-tests"],
   host_supported: true,
