@@ -12,6 +12,13 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
+/* Per C99, various stdint.h macros are unavailable in C++ unless some macros
+ * are defined. C++11 overruled this decision, but older Android NDKs still
+ * require it. */
+#if !defined(__STDC_LIMIT_MACROS)
+#define __STDC_LIMIT_MACROS
+#endif
+
 #include <openssl/ssl.h>
 
 #include <assert.h>
@@ -38,6 +45,7 @@ enum server_hs_state_t {
   state_send_server_certificate_verify,
   state_send_server_finished,
   state_read_second_client_flight,
+  state_process_change_cipher_spec,
   state_process_end_of_early_data,
   state_process_client_certificate,
   state_process_client_certificate_verify,
@@ -82,6 +90,19 @@ static int resolve_ecdhe_secret(SSL_HANDSHAKE *hs, int *out_need_retry,
   int ok = tls13_advance_key_schedule(hs, dhe_secret, dhe_secret_len);
   OPENSSL_free(dhe_secret);
   return ok;
+}
+
+static int ssl_ext_supported_versions_add_serverhello(SSL_HANDSHAKE *hs,
+                                                      CBB *out) {
+  CBB contents;
+  if (!CBB_add_u16(out, TLSEXT_TYPE_supported_versions) ||
+      !CBB_add_u16_length_prefixed(out, &contents) ||
+      !CBB_add_u16(&contents, hs->ssl->version) ||
+      !CBB_flush(out)) {
+    return 0;
+  }
+
+  return 1;
 }
 
 static const SSL_CIPHER *choose_tls13_cipher(
@@ -199,11 +220,16 @@ static enum ssl_hs_wait_t do_select_parameters(SSL_HANDSHAKE *hs) {
 
   SSL_CLIENT_HELLO client_hello;
   if (!ssl_client_hello_init(ssl, &client_hello, ssl->init_msg,
-                             ssl->init_num)) {
+                             ssl->init_num) ||
+      client_hello.session_id_len > sizeof(hs->session_id)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_CLIENTHELLO_PARSE_FAILED);
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     return ssl_hs_error;
   }
+
+  OPENSSL_memcpy(hs->session_id, client_hello.session_id,
+                 client_hello.session_id_len);
+  hs->session_id_len = client_hello.session_id_len;
 
   /* Negotiate the cipher suite. */
   hs->new_cipher = choose_tls13_cipher(ssl, &client_hello);
@@ -398,8 +424,8 @@ static enum ssl_hs_wait_t do_select_session(SSL_HANDSHAKE *hs) {
 
   /* Store the initial negotiated ALPN in the session. */
   if (ssl->s3->alpn_selected != NULL) {
-    hs->new_session->early_alpn =
-        BUF_memdup(ssl->s3->alpn_selected, ssl->s3->alpn_selected_len);
+    hs->new_session->early_alpn = (uint8_t *)BUF_memdup(
+        ssl->s3->alpn_selected, ssl->s3->alpn_selected_len);
     if (hs->new_session->early_alpn == NULL) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
       return ssl_hs_error;
@@ -508,17 +534,33 @@ static enum ssl_hs_wait_t do_process_second_client_hello(SSL_HANDSHAKE *hs) {
 static enum ssl_hs_wait_t do_send_server_hello(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
 
+  uint16_t version = ssl->version;
+  if (ssl->version == TLS1_3_EXPERIMENT_VERSION) {
+    version = TLS1_2_VERSION;
+  }
+
   /* Send a ServerHello. */
-  CBB cbb, body, extensions;
+  CBB cbb, body, extensions, session_id;
   if (!ssl->method->init_message(ssl, &cbb, &body, SSL3_MT_SERVER_HELLO) ||
-      !CBB_add_u16(&body, ssl->version) ||
+      !CBB_add_u16(&body, version) ||
       !RAND_bytes(ssl->s3->server_random, sizeof(ssl->s3->server_random)) ||
       !CBB_add_bytes(&body, ssl->s3->server_random, SSL3_RANDOM_SIZE) ||
+      (ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+       (!CBB_add_u8_length_prefixed(&body, &session_id) ||
+        !CBB_add_bytes(&session_id, hs->session_id, hs->session_id_len))) ||
       !CBB_add_u16(&body, ssl_cipher_get_value(hs->new_cipher)) ||
+      (ssl->version == TLS1_3_EXPERIMENT_VERSION && !CBB_add_u8(&body, 0)) ||
       !CBB_add_u16_length_prefixed(&body, &extensions) ||
       !ssl_ext_pre_shared_key_add_serverhello(hs, &extensions) ||
       !ssl_ext_key_share_add_serverhello(hs, &extensions) ||
+      (ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+       !ssl_ext_supported_versions_add_serverhello(hs, &extensions)) ||
       !ssl_add_message_cbb(ssl, &cbb)) {
+    goto err;
+  }
+
+  if (ssl->version == TLS1_3_EXPERIMENT_VERSION &&
+      !ssl3_add_change_cipher_spec(ssl)) {
     goto err;
   }
 
@@ -635,7 +677,8 @@ static enum ssl_hs_wait_t do_send_server_finished(SSL_HANDSHAKE *hs) {
      *
      * TODO(davidben): This will need to be updated for DTLS 1.3. */
     assert(!SSL_is_dtls(hs->ssl));
-    uint8_t header[4] = {SSL3_MT_FINISHED, 0, 0, hs->hash_len};
+    assert(hs->hash_len <= 0xff);
+    uint8_t header[4] = {SSL3_MT_FINISHED, 0, 0, static_cast<uint8_t>(hs->hash_len)};
     if (!SSL_TRANSCRIPT_update(&hs->transcript, header, sizeof(header)) ||
         !SSL_TRANSCRIPT_update(&hs->transcript, hs->expected_client_finished,
                                hs->hash_len) ||
@@ -667,6 +710,18 @@ static enum ssl_hs_wait_t do_read_second_client_flight(SSL_HANDSHAKE *hs) {
 }
 
 static enum ssl_hs_wait_t do_process_end_of_early_data(SSL_HANDSHAKE *hs) {
+  hs->tls13_state = state_process_change_cipher_spec;
+  /* If early data was accepted, the ChangeCipherSpec message will be in the
+   * discarded early data. */
+  if (hs->early_data_offered && !hs->ssl->early_data_accepted) {
+    return ssl_hs_ok;
+  }
+  return hs->ssl->version == TLS1_3_EXPERIMENT_VERSION
+             ? ssl_hs_read_change_cipher_spec
+             : ssl_hs_ok;
+}
+
+static enum ssl_hs_wait_t do_process_change_cipher_spec(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
   if (!tls13_set_traffic_key(ssl, evp_aead_open, hs->client_handshake_secret,
                              hs->hash_len)) {
@@ -785,7 +840,8 @@ static enum ssl_hs_wait_t do_send_new_session_ticket(SSL_HANDSHAKE *hs) {
 enum ssl_hs_wait_t tls13_server_handshake(SSL_HANDSHAKE *hs) {
   while (hs->tls13_state != state_done) {
     enum ssl_hs_wait_t ret = ssl_hs_error;
-    enum server_hs_state_t state = hs->tls13_state;
+    enum server_hs_state_t state =
+        static_cast<enum server_hs_state_t>(hs->tls13_state);
     switch (state) {
       case state_select_parameters:
         ret = do_select_parameters(hs);
@@ -813,6 +869,9 @@ enum ssl_hs_wait_t tls13_server_handshake(SSL_HANDSHAKE *hs) {
         break;
       case state_process_end_of_early_data:
         ret = do_process_end_of_early_data(hs);
+        break;
+      case state_process_change_cipher_spec:
+        ret = do_process_change_cipher_spec(hs);
         break;
       case state_process_client_certificate:
         ret = do_process_client_certificate(hs);

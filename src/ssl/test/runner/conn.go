@@ -762,6 +762,11 @@ RestartReadRecord:
 		return 0, nil, c.in.setErrorLocked(errors.New("tls: unsupported SSLv2 handshake received"))
 	}
 
+	// Accept server_plaintext_handshake records when the content type TLS 1.3 variant is enabled.
+	if c.isClient && c.in.cipher == nil && c.config.TLS13Variant == TLS13RecordTypeExperiment && want == recordTypeHandshake && typ == recordTypePlaintextHandshake {
+		typ = recordTypeHandshake
+	}
+
 	vers := uint16(b.data[1])<<8 | uint16(b.data[2])
 	n := int(b.data[3])<<8 | int(b.data[4])
 
@@ -916,9 +921,11 @@ Again:
 			c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 			break
 		}
-		err := c.in.changeCipherSpec(c.config)
-		if err != nil {
-			c.in.setErrorLocked(c.sendAlert(err.(alert)))
+		if c.wireVersion != tls13ExperimentVersion {
+			err := c.in.changeCipherSpec(c.config)
+			if err != nil {
+				c.in.setErrorLocked(c.sendAlert(err.(alert)))
+			}
 		}
 
 	case recordTypeApplicationData:
@@ -1138,15 +1145,10 @@ func (c *Conn) doWriteRecord(typ recordType, data []byte) (n int, err error) {
 	}
 	c.out.freeBlock(b)
 
-	if typ == recordTypeChangeCipherSpec {
+	if typ == recordTypeChangeCipherSpec && c.wireVersion != tls13ExperimentVersion {
 		err = c.out.changeCipherSpec(c.config)
 		if err != nil {
-			// Cannot call sendAlert directly,
-			// because we already hold c.out.Mutex.
-			c.tmp[0] = alertLevelError
-			c.tmp[1] = byte(err.(alert))
-			c.writeRecord(recordTypeAlert, c.tmp[0:2])
-			return n, c.out.setErrorLocked(&net.OpError{Op: "local error", Err: err})
+			return n, c.sendAlertLocked(alertLevelError, err.(alert))
 		}
 	}
 	return
