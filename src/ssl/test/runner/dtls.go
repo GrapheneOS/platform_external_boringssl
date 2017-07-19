@@ -35,7 +35,7 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 		switch vers {
 		case VersionSSL30, VersionTLS10, VersionTLS11, VersionTLS12:
 			return vers, true
-		case tls13DraftVersion:
+		case tls13DraftVersion, tls13ExperimentVersion, tls13RecordTypeExperimentVersion:
 			return VersionTLS13, true
 		}
 	}
@@ -159,12 +159,7 @@ func (c *Conn) dtlsWriteRecord(typ recordType, data []byte) (n int, err error) {
 		if typ == recordTypeChangeCipherSpec {
 			err = c.out.changeCipherSpec(c.config)
 			if err != nil {
-				// Cannot call sendAlert directly,
-				// because we already hold c.out.Mutex.
-				c.tmp[0] = alertLevelError
-				c.tmp[1] = byte(err.(alert))
-				c.writeRecord(recordTypeAlert, c.tmp[0:2])
-				return n, c.out.setErrorLocked(&net.OpError{Op: "local error", Err: err})
+				return n, c.sendAlertLocked(alertLevelError, err.(alert))
 			}
 		}
 		return

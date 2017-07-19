@@ -84,7 +84,6 @@ func (c *Conn) clientHandshake() error {
 		sctListSupported:        !c.config.Bugs.NoSignedCertificateTimestamps,
 		serverName:              c.config.ServerName,
 		supportedCurves:         c.config.curvePreferences(),
-		pskKEModes:              []byte{pskDHEKEMode},
 		supportedPoints:         []uint8{pointFormatUncompressed},
 		nextProtoNeg:            len(c.config.NextProtos) > 0,
 		secureRenegotiation:     []byte{},
@@ -97,6 +96,8 @@ func (c *Conn) clientHandshake() error {
 		srtpMasterKeyIdentifier: c.config.Bugs.SRTPMasterKeyIdentifer,
 		customExtension:         c.config.Bugs.CustomExtension,
 		pskBinderFirst:          c.config.Bugs.PSKBinderFirst,
+		omitExtensions:          c.config.Bugs.OmitExtensions,
+		emptyExtensions:         c.config.Bugs.EmptyExtensions,
 	}
 
 	if maxVersion >= VersionTLS13 {
@@ -104,6 +105,7 @@ func (c *Conn) clientHandshake() error {
 		if !c.config.Bugs.OmitSupportedVersions {
 			hello.supportedVersions = c.config.supportedVersions(c.isDTLS)
 		}
+		hello.pskKEModes = []byte{pskDHEKEMode}
 	} else {
 		hello.vers = mapClientHelloVersion(maxVersion, c.isDTLS)
 	}
@@ -732,6 +734,12 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		hs.finishedHash.addEntropy(zeroSecret)
 	}
 
+	if c.wireVersion == tls13ExperimentVersion {
+		if err := c.readRecord(recordTypeChangeCipherSpec); err != nil {
+			return err
+		}
+	}
+
 	// Derive handshake traffic keys and switch read key to handshake
 	// traffic key.
 	clientHandshakeTrafficSecret := hs.finishedHash.deriveSecret(clientHandshakeTrafficLabel)
@@ -911,6 +919,11 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		}
 		c.sendAlert(alertEndOfEarlyData)
 	}
+
+	if c.wireVersion == tls13ExperimentVersion {
+		c.writeRecord(recordTypeChangeCipherSpec, []byte{1})
+	}
+
 	c.out.useTrafficSecret(c.vers, hs.suite, clientHandshakeTrafficSecret, clientWrite)
 
 	if certReq != nil && !c.config.Bugs.SkipClientCertificate {
