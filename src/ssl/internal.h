@@ -217,38 +217,38 @@ uint16_t ssl3_protocol_version(const SSL *ssl);
 /* Cipher suites. */
 
 /* Bits for |algorithm_mkey| (key exchange algorithm). */
-#define SSL_kRSA 0x00000001L
-#define SSL_kECDHE 0x00000002L
+#define SSL_kRSA 0x00000001u
+#define SSL_kECDHE 0x00000002u
 /* SSL_kPSK is only set for plain PSK, not ECDHE_PSK. */
-#define SSL_kPSK 0x00000004L
-#define SSL_kGENERIC 0x00000008L
+#define SSL_kPSK 0x00000004u
+#define SSL_kGENERIC 0x00000008u
 
 /* Bits for |algorithm_auth| (server authentication). */
-#define SSL_aRSA 0x00000001L
-#define SSL_aECDSA 0x00000002L
+#define SSL_aRSA 0x00000001u
+#define SSL_aECDSA 0x00000002u
 /* SSL_aPSK is set for both PSK and ECDHE_PSK. */
-#define SSL_aPSK 0x00000004L
-#define SSL_aGENERIC 0x00000008L
+#define SSL_aPSK 0x00000004u
+#define SSL_aGENERIC 0x00000008u
 
 #define SSL_aCERT (SSL_aRSA | SSL_aECDSA)
 
 /* Bits for |algorithm_enc| (symmetric encryption). */
-#define SSL_3DES                 0x00000001L
-#define SSL_AES128               0x00000002L
-#define SSL_AES256               0x00000004L
-#define SSL_AES128GCM            0x00000008L
-#define SSL_AES256GCM            0x00000010L
-#define SSL_eNULL                0x00000020L
-#define SSL_CHACHA20POLY1305     0x00000040L
+#define SSL_3DES                 0x00000001u
+#define SSL_AES128               0x00000002u
+#define SSL_AES256               0x00000004u
+#define SSL_AES128GCM            0x00000008u
+#define SSL_AES256GCM            0x00000010u
+#define SSL_eNULL                0x00000020u
+#define SSL_CHACHA20POLY1305     0x00000040u
 
 #define SSL_AES (SSL_AES128 | SSL_AES256 | SSL_AES128GCM | SSL_AES256GCM)
 
 /* Bits for |algorithm_mac| (symmetric authentication). */
-#define SSL_SHA1 0x00000001L
-#define SSL_SHA256 0x00000002L
-#define SSL_SHA384 0x00000004L
+#define SSL_SHA1 0x00000001u
+#define SSL_SHA256 0x00000002u
+#define SSL_SHA384 0x00000004u
 /* SSL_AEAD is set for all AEADs. */
-#define SSL_AEAD 0x00000008L
+#define SSL_AEAD 0x00000008u
 
 /* Bits for |algorithm_prf| (handshake digest). */
 #define SSL_HANDSHAKE_MAC_DEFAULT 0x1
@@ -447,6 +447,13 @@ size_t SSL_AEAD_CTX_explicit_nonce_len(const SSL_AEAD_CTX *ctx);
  * |SSL_AEAD_CTX_seal|. |ctx| may be NULL to denote the null cipher. */
 size_t SSL_AEAD_CTX_max_overhead(const SSL_AEAD_CTX *ctx);
 
+/* SSL_AEAD_CTX_max_suffix_len returns the maximum suffix length written by
+ * |SSL_AEAD_CTX_seal_scatter|. |ctx| may be NULL to denote the null cipher.
+ * |extra_in_len| should equal the argument of the same name passed to
+ * |SSL_AEAD_CTX_seal_scatter|. */
+size_t SSL_AEAD_CTX_max_suffix_len(const SSL_AEAD_CTX *ctx,
+                                   size_t extra_in_len);
+
 /* SSL_AEAD_CTX_open authenticates and decrypts |in_len| bytes from |in|
  * in-place. On success, it sets |*out| to the plaintext in |in| and returns
  * one. Otherwise, it returns zero. |ctx| may be NULL to denote the null cipher.
@@ -464,6 +471,31 @@ int SSL_AEAD_CTX_seal(SSL_AEAD_CTX *ctx, uint8_t *out, size_t *out_len,
                       size_t max_out, uint8_t type, uint16_t wire_version,
                       const uint8_t seqnum[8], const uint8_t *in,
                       size_t in_len);
+
+/* SSL_AEAD_CTX_seal_scatter encrypts and authenticates |in_len| bytes from |in|
+ * and splits the result between |out_prefix|, |out| and |out_suffix|. It
+ * returns one on success and zero on error. |ctx| may be NULL to denote the
+ * null cipher.
+ *
+ * On successful return, exactly |SSL_AEAD_CTX_explicit_nonce_len| bytes are
+ * written to |out_prefix|, |in_len| bytes to |out|, and up to
+ * |SSL_AEAD_CTX_max_suffix_len| bytes to |out_suffix|. |*out_suffix_len| is set
+ * to the actual number of bytes written to |out_suffix|.
+ *
+ * |extra_in| may point to an additional plaintext buffer. If present,
+ * |extra_in_len| additional bytes are encrypted and authenticated, and the
+ * ciphertext is written to the beginning of |out_suffix|.
+ * |SSL_AEAD_CTX_max_suffix_len| may be used to size |out_suffix| accordingly.
+ *
+ * If |in| and |out| alias then |out| must be == |in|. Other arguments may not
+ * alias anything. */
+int SSL_AEAD_CTX_seal_scatter(SSL_AEAD_CTX *aead, uint8_t *out_prefix,
+                              uint8_t *out, uint8_t *out_suffix,
+                              size_t *out_suffix_len, size_t max_out_suffix_len,
+                              uint8_t type, uint16_t wire_version,
+                              const uint8_t seqnum[8], const uint8_t *in,
+                              size_t in_len, const uint8_t *extra_in,
+                              size_t extra_in_len);
 
 
 /* DTLS replay bitmap. */
@@ -974,6 +1006,7 @@ enum ssl_hs_wait_t {
   ssl_hs_pending_ticket,
   ssl_hs_early_data_rejected,
   ssl_hs_read_end_of_early_data,
+  ssl_hs_read_change_cipher_spec,
 };
 
 struct ssl_handshake_st {
@@ -1006,6 +1039,11 @@ struct ssl_handshake_st {
   /* max_version is the maximum accepted protocol version, taking account both
    * |SSL_OP_NO_*| and |SSL_CTX_set_max_proto_version| APIs. */
   uint16_t max_version;
+
+  /* session_id is the session ID in the ClientHello, used for the experimental
+   * TLS 1.3 variant. */
+  uint8_t session_id[SSL_MAX_SSL_SESSION_ID_LENGTH];
+  uint8_t session_id_len;
 
   size_t hash_len;
   uint8_t secret[EVP_MAX_MD_SIZE];
@@ -1895,6 +1933,10 @@ struct ssl_st {
    * |SSL_set_min_proto_version|. Note this version is normalized in DTLS and is
    * further constrainted by |SSL_OP_NO_*|. */
   uint16_t conf_min_version;
+
+  /* tls13_variant is the variant of TLS 1.3 we are using for this
+   * configuration. */
+  enum tls13_variant_t tls13_variant;
 
   uint16_t max_send_fragment;
 
