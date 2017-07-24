@@ -83,6 +83,9 @@ cc_defaults {
 cc_library {
     name: "libcrypto",
     vendor_available: true,
+    vndk: {
+        enabled: true,
+    },
     defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
     unique_host_soname: true,
 }
@@ -144,6 +147,10 @@ cc_library_static {
 // Static and Shared library
 cc_library {
     name: "libssl",
+    vendor_available: true,
+    vndk: {
+        enabled: true,
+    },
     host_supported: true,
     defaults: ["libssl_sources", "boringssl_defaults", "boringssl_flags"],
     unique_host_soname: true,
