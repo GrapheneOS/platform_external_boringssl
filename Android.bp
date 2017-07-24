@@ -115,7 +115,6 @@ cc_library_static {
 cc_library_static {
     name: "libcrypto_static",
     defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
-    cflags: ["-DOPENSSL_NO_CXX"],
 
     target: {
         host: {

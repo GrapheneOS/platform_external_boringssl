@@ -938,8 +938,7 @@ OPENSSL_EXPORT unsigned BN_num_bits_word(BN_ULONG l);
 #if defined(__cplusplus)
 }  /* extern C */
 
-#if (__cplusplus >= 201103L || (__cplusplus < 200000 && __cplusplus > 199711L)) && !defined(OPENSSL_NO_CXX)
-
+#if !defined(BORINGSSL_NO_CXX)
 extern "C++" {
 
 namespace bssl {
