@@ -317,7 +317,6 @@ typedef struct spake2_ctx_st SPAKE2_CTX;
 typedef struct srtp_protection_profile_st SRTP_PROTECTION_PROFILE;
 typedef struct ssl_cipher_st SSL_CIPHER;
 typedef struct ssl_ctx_st SSL_CTX;
-typedef struct ssl_custom_extension SSL_CUSTOM_EXTENSION;
 typedef struct ssl_method_st SSL_METHOD;
 typedef struct ssl_private_key_method_st SSL_PRIVATE_KEY_METHOD;
 typedef struct ssl_session_st SSL_SESSION;
@@ -341,6 +340,9 @@ typedef void *OPENSSL_BLOCK;
 
 #if defined(__cplusplus)
 }  /* extern C */
+#elif !defined(BORINGSSL_NO_CXX)
+#define BORINGSSL_NO_CXX
+#endif
 
 // MSVC doesn't set __cplusplus to 201103 to indicate C++11 support (see
 // https://connect.microsoft.com/VisualStudio/feedback/details/763051/a-value-of-predefined-macro-cplusplus-is-still-199711l)
@@ -371,13 +373,13 @@ extern "C++" {
 
 extern "C++" {
 
-#include <memory>
-
 namespace bssl {
 
 namespace internal {
 
-template <typename T>
+// The Enable parameter is ignored and only exists so specializations can use
+// SFINAE.
+template <typename T, typename Enable = void>
 struct DeleterImpl {};
 
 template <typename T>
@@ -450,7 +452,5 @@ using UniquePtr = std::unique_ptr<T, internal::Deleter<T>>;
 }  /* extern C++ */
 
 #endif  // !BORINGSSL_NO_CXX
-
-#endif
 
 #endif  /* OPENSSL_HEADER_BASE_H */
