@@ -39,9 +39,10 @@ const (
 )
 
 const (
-	TLS13Default              = 0
-	TLS13Experiment           = 1
-	TLS13RecordTypeExperiment = 2
+	TLS13Default               = 0
+	TLS13Experiment            = 1
+	TLS13RecordTypeExperiment  = 2
+	TLS13NoSessionIDExperiment = 3
 )
 
 var allTLSWireVersions = []uint16{
@@ -717,6 +718,18 @@ type ProtocolBugs struct {
 	// normally expected to look ahead for ChangeCipherSpec.)
 	EmptyTicketSessionID bool
 
+	// SendClientHelloSessionID, if not nil, is the session ID sent in the
+	// ClientHello.
+	SendClientHelloSessionID []byte
+
+	// ExpectClientHelloSessionID, if true, causes the server to fail the
+	// connection if there is not a SessionID in the ClientHello.
+	ExpectClientHelloSessionID bool
+
+	// ExpectEmptyClientHelloSessionID, if true, causes the server to fail the
+	// connection if there is a SessionID in the ClientHello.
+	ExpectEmptyClientHelloSessionID bool
+
 	// ExpectNoTLS12Session, if true, causes the server to fail the
 	// connection if either a session ID or TLS 1.2 ticket is offered.
 	ExpectNoTLS12Session bool
@@ -1389,9 +1402,13 @@ type ProtocolBugs struct {
 	// and ServerHello messages to be omitted.
 	OmitExtensions bool
 
-	// EmptyExtensions, if true, causese the extensions field in ClientHello
+	// EmptyExtensions, if true, causes the extensions field in ClientHello
 	// and ServerHello messages to be present, but empty.
 	EmptyExtensions bool
+
+	// ExpectRecordSplitting, if true, causes application records to only be
+	// accepted if they follow a 1/n-1 record split.
+	ExpectRecordSplitting bool
 }
 
 func (c *Config) serverInit() {
@@ -1496,7 +1513,7 @@ func (c *Config) defaultCurves() map[CurveID]bool {
 // it returns true and the corresponding protocol version. Otherwise, it returns
 // false.
 func (c *Config) isSupportedVersion(wireVers uint16, isDTLS bool) (uint16, bool) {
-	if (c.TLS13Variant != TLS13Experiment && wireVers == tls13ExperimentVersion) ||
+	if (c.TLS13Variant != TLS13Experiment && c.TLS13Variant != TLS13NoSessionIDExperiment && wireVers == tls13ExperimentVersion) ||
 		(c.TLS13Variant != TLS13RecordTypeExperiment && wireVers == tls13RecordTypeExperimentVersion) ||
 		(c.TLS13Variant != TLS13Default && wireVers == tls13DraftVersion) {
 		return 0, false

@@ -517,6 +517,13 @@ OPENSSL_EXPORT int SSL_get_error(const SSL *ssl, int ret_code);
  * used to reuse the underlying connection for the retry. */
 #define SSL_ERROR_EARLY_DATA_REJECTED 15
 
+/* SSL_ERROR_WANT_CERTIFICATE_VERIFY indicates the operation failed because
+ * certificate verification was incomplete. The caller may retry the operation
+ * when certificate verification is complete.
+ *
+ * See also |SSL_CTX_set_custom_verify|. */
+#define SSL_ERROR_WANT_CERTIFICATE_VERIFY 16
+
 /* SSL_set_mtu sets the |ssl|'s MTU in DTLS to |mtu|. It returns one on success
  * and zero on failure. */
 OPENSSL_EXPORT int SSL_set_mtu(SSL *ssl, unsigned mtu);
@@ -2201,6 +2208,39 @@ OPENSSL_EXPORT void SSL_set_verify(SSL *ssl, int mode,
                                    int (*callback)(int ok,
                                                    X509_STORE_CTX *store_ctx));
 
+enum ssl_verify_result_t {
+  ssl_verify_ok,
+  ssl_verify_invalid,
+  ssl_verify_retry,
+};
+
+/* SSL_CTX_set_custom_verify configures certificate verification. |mode| is one
+ * of the |SSL_VERIFY_*| values defined above. |callback| performs the
+ * certificate verification.
+ *
+ * The callback may call |SSL_get0_peer_certificates| for the certificate chain
+ * to validate. The callback should return |ssl_verify_ok| if the certificate is
+ * valid. If the certificate is invalid, the callback should return
+ * |ssl_verify_invalid| and optionally set |*out_alert| to an alert to send to
+ * the peer. Some useful alerts include |SSL_AD_CERTIFICATE_EXPIRED|,
+ * |SSL_AD_CERTIFICATE_REVOKED|, |SSL_AD_UNKNOWN_CA|, |SSL_AD_BAD_CERTIFICATE|,
+ * |SSL_AD_CERTIFICATE_UNKNOWN|, and |SSL_AD_INTERNAL_ERROR|. See RFC 5246
+ * section 7.2.2 for their precise meanings. If unspecified,
+ * |SSL_AD_CERTIFICATE_UNKNOWN| will be sent by default.
+ *
+ * To verify a certificate asynchronously, the callback may return
+ * |ssl_verify_retry|. The handshake will then pause with |SSL_get_error|
+ * returning |SSL_ERROR_WANT_CERTIFICATE_VERIFY|. */
+OPENSSL_EXPORT void SSL_CTX_set_custom_verify(
+    SSL_CTX *ctx, int mode,
+    enum ssl_verify_result_t (*callback)(SSL *ssl, uint8_t *out_alert));
+
+/* SSL_set_custom_verify behaves like |SSL_CTX_set_custom_verify| but configures
+ * an individual |SSL|. */
+OPENSSL_EXPORT void SSL_set_custom_verify(
+    SSL *ssl, int mode,
+    enum ssl_verify_result_t (*callback)(SSL *ssl, uint8_t *out_alert));
+
 /* SSL_CTX_get_verify_mode returns |ctx|'s verify mode, set by
  * |SSL_CTX_set_verify|. */
 OPENSSL_EXPORT int SSL_CTX_get_verify_mode(const SSL_CTX *ctx);
@@ -2320,13 +2360,6 @@ OPENSSL_EXPORT void SSL_CTX_set_cert_verify_callback(
     SSL_CTX *ctx, int (*callback)(X509_STORE_CTX *store_ctx, void *arg),
     void *arg);
 
-/* SSL_CTX_i_promise_to_verify_certs_after_the_handshake indicates that the
- * caller understands that the |CRYPTO_BUFFER|-based methods currently require
- * post-handshake verification of certificates and thus it's ok to accept any
- * certificates during the handshake. */
-OPENSSL_EXPORT void SSL_CTX_i_promise_to_verify_certs_after_the_handshake(
-    SSL_CTX *ctx);
-
 /* SSL_enable_signed_cert_timestamps causes |ssl| (which must be the client end
  * of a connection) to request SCTs from the server. See
  * https://tools.ietf.org/html/rfc6962.
@@ -2406,6 +2439,18 @@ OPENSSL_EXPORT void SSL_set_client_CA_list(SSL *ssl,
  * |name_list|. It takes ownership of |name_list|. */
 OPENSSL_EXPORT void SSL_CTX_set_client_CA_list(SSL_CTX *ctx,
                                                STACK_OF(X509_NAME) *name_list);
+
+/* SSL_set0_client_CAs sets |ssl|'s client certificate CA list to |name_list|,
+ * which should contain DER-encoded distinguished names (RFC 5280). It takes
+ * ownership of |name_list|. */
+OPENSSL_EXPORT void SSL_set0_client_CAs(SSL *ssl,
+                                        STACK_OF(CRYPTO_BUFFER) *name_list);
+
+/* SSL_CTX_set0_client_CAs sets |ctx|'s client certificate CA list to
+ * |name_list|, which should contain DER-encoded distinguished names (RFC 5280).
+ * It takes ownership of |name_list|. */
+OPENSSL_EXPORT void SSL_CTX_set0_client_CAs(SSL_CTX *ctx,
+                                            STACK_OF(CRYPTO_BUFFER) *name_list);
 
 /* SSL_get_client_CA_list returns |ssl|'s client certificate CA list. If |ssl|
  * has not been configured as a client, this is the list configured by
@@ -3141,6 +3186,7 @@ enum tls13_variant_t {
   tls13_default = 0,
   tls13_experiment = 1,
   tls13_record_type_experiment = 2,
+  tls13_no_session_id_experiment = 3,
 };
 
 /* SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
@@ -3748,6 +3794,7 @@ OPENSSL_EXPORT void SSL_CTX_set_client_cert_cb(
 #define SSL_PRIVATE_KEY_OPERATION 9
 #define SSL_PENDING_TICKET 10
 #define SSL_EARLY_DATA_REJECTED 11
+#define SSL_CERTIFICATE_VERIFY 12
 
 /* SSL_want returns one of the above values to determine what the most recent
  * operation on |ssl| was blocked on. Use |SSL_get_error| instead. */
@@ -3936,8 +3983,12 @@ OPENSSL_EXPORT SSL_SESSION *SSL_get1_session(SSL *ssl);
  * This structures are exposed for historical reasons, but access to them is
  * deprecated. */
 
+/* TODO(davidben): Opaquify most or all of |SSL_CTX| and |SSL_SESSION| so these
+ * forward declarations are not needed. */
 typedef struct ssl_protocol_method_st SSL_PROTOCOL_METHOD;
 typedef struct ssl_x509_method_st SSL_X509_METHOD;
+
+DECLARE_STACK_OF(SSL_CUSTOM_EXTENSION)
 
 struct ssl_cipher_st {
   /* name is the OpenSSL name for the cipher. */
@@ -4122,8 +4173,6 @@ struct ssl_cipher_preference_list_st {
   uint8_t *in_group_flags;
 };
 
-DECLARE_STACK_OF(SSL_CUSTOM_EXTENSION)
-
 /* ssl_ctx_st (aka |SSL_CTX|) contains configuration common to several SSL
  * connections. */
 struct ssl_ctx_st {
@@ -4194,6 +4243,9 @@ struct ssl_ctx_st {
   int (*app_verify_callback)(X509_STORE_CTX *store_ctx, void *arg);
   void *app_verify_arg;
 
+  enum ssl_verify_result_t (*custom_verify_callback)(SSL *ssl,
+                                                     uint8_t *out_alert);
+
   /* Default password callback. */
   pem_password_cb *default_passwd_callback;
 
@@ -4232,7 +4284,7 @@ struct ssl_ctx_st {
   uint32_t mode;
   uint32_t max_cert_list;
 
-  struct cert_st /* CERT */ *cert;
+  struct cert_st *cert;
 
   /* callback that allows applications to peek at protocol messages */
   void (*msg_callback)(int write_p, int version, int content_type,
@@ -4373,12 +4425,6 @@ struct ssl_ctx_st {
   /* grease_enabled is one if draft-davidben-tls-grease-01 is enabled and zero
    * otherwise. */
   unsigned grease_enabled:1;
-
-  /* i_promise_to_verify_certs_after_the_handshake indicates that the
-   * application is using the |CRYPTO_BUFFER|-based methods and understands
-   * that this currently requires post-handshake verification of
-   * certificates. */
-  unsigned i_promise_to_verify_certs_after_the_handshake:1;
 
   /* allow_unknown_alpn_protos is one if the client allows unsolicited ALPN
    * protocols from the peer. */
