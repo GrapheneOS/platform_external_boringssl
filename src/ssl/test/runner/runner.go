@@ -488,15 +488,19 @@ type timeoutConn struct {
 }
 
 func (t *timeoutConn) Read(b []byte) (int, error) {
-	if err := t.SetReadDeadline(time.Now().Add(t.timeout)); err != nil {
-		return 0, err
+	if !*useGDB {
+		if err := t.SetReadDeadline(time.Now().Add(t.timeout)); err != nil {
+			return 0, err
+		}
 	}
 	return t.Conn.Read(b)
 }
 
 func (t *timeoutConn) Write(b []byte) (int, error) {
-	if err := t.SetWriteDeadline(time.Now().Add(t.timeout)); err != nil {
-		return 0, err
+	if !*useGDB {
+		if err := t.SetWriteDeadline(time.Now().Add(t.timeout)); err != nil {
+			return 0, err
+		}
 	}
 	return t.Conn.Write(b)
 }
@@ -891,7 +895,9 @@ func acceptOrWait(listener *net.TCPListener, waitChan chan error) (net.Conn, err
 	connChan := make(chan connOrError, 1)
 	go func() {
 		startTime := time.Now()
-		listener.SetDeadline(time.Now().Add(*idleTimeout))
+		if !*useGDB {
+			listener.SetDeadline(time.Now().Add(*idleTimeout))
+		}
 		conn, err := listener.Accept()
 		endTime := time.Now()
 		connChan <- connOrError{conn, err, startTime, endTime}
@@ -1442,6 +1448,54 @@ func addBasicTests() {
 			},
 			flags: []string{
 				"-enable-ocsp-stapling",
+				// This test involves an optional message. Test the message callback
+				// trace to ensure we do not miss or double-report any.
+				"-expect-msg-callback",
+				`write hs 1
+read hs 2
+read hs 11
+read hs 12
+read hs 14
+write hs 16
+write ccs
+write hs 20
+read hs 4
+read ccs
+read hs 20
+read alert 1 0
+`,
+			},
+		},
+		{
+			protocol: dtls,
+			name:     "SkipCertificateStatus-DTLS",
+			config: Config{
+				MaxVersion:   VersionTLS12,
+				CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+				Bugs: ProtocolBugs{
+					SkipCertificateStatus: true,
+				},
+			},
+			flags: []string{
+				"-enable-ocsp-stapling",
+				// This test involves an optional message. Test the message callback
+				// trace to ensure we do not miss or double-report any.
+				"-expect-msg-callback",
+				`write hs 1
+read hs 3
+write hs 1
+read hs 2
+read hs 11
+read hs 12
+read hs 14
+write hs 16
+write ccs
+write hs 20
+read hs 4
+read ccs
+read hs 20
+read alert 1 0
+`,
 			},
 		},
 		{
@@ -4753,6 +4807,20 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 					SendV2ClientHello: true,
 				},
 			},
+			flags: []string{
+				"-expect-msg-callback",
+				`read v2clienthello
+write hs 2
+write hs 11
+write hs 14
+read hs 16
+read ccs
+read hs 20
+write ccs
+write hs 20
+read alert 1 0
+`,
+			},
 		})
 
 		// Test Channel ID
@@ -7044,9 +7112,10 @@ func addRenegotiationTests() {
 				EmptyRenegotiationInfo: true,
 			},
 		},
-		flags:         []string{"-renegotiate-freely"},
-		shouldFail:    true,
-		expectedError: ":RENEGOTIATION_MISMATCH:",
+		flags:              []string{"-renegotiate-freely"},
+		shouldFail:         true,
+		expectedError:      ":RENEGOTIATION_MISMATCH:",
+		expectedLocalError: "handshake failure",
 	})
 	testCases = append(testCases, testCase{
 		name:        "Renegotiate-Client-BadExt",
@@ -7057,9 +7126,10 @@ func addRenegotiationTests() {
 				BadRenegotiationInfo: true,
 			},
 		},
-		flags:         []string{"-renegotiate-freely"},
-		shouldFail:    true,
-		expectedError: ":RENEGOTIATION_MISMATCH:",
+		flags:              []string{"-renegotiate-freely"},
+		shouldFail:         true,
+		expectedError:      ":RENEGOTIATION_MISMATCH:",
+		expectedLocalError: "handshake failure",
 	})
 	testCases = append(testCases, testCase{
 		name:        "Renegotiate-Client-BadExt2",
@@ -7070,9 +7140,10 @@ func addRenegotiationTests() {
 				BadRenegotiationInfoEnd: true,
 			},
 		},
-		flags:         []string{"-renegotiate-freely"},
-		shouldFail:    true,
-		expectedError: ":RENEGOTIATION_MISMATCH:",
+		flags:              []string{"-renegotiate-freely"},
+		shouldFail:         true,
+		expectedError:      ":RENEGOTIATION_MISMATCH:",
+		expectedLocalError: "handshake failure",
 	})
 	testCases = append(testCases, testCase{
 		name:        "Renegotiate-Client-Downgrade",
@@ -7083,9 +7154,10 @@ func addRenegotiationTests() {
 				NoRenegotiationInfoAfterInitial: true,
 			},
 		},
-		flags:         []string{"-renegotiate-freely"},
-		shouldFail:    true,
-		expectedError: ":RENEGOTIATION_MISMATCH:",
+		flags:              []string{"-renegotiate-freely"},
+		shouldFail:         true,
+		expectedError:      ":RENEGOTIATION_MISMATCH:",
+		expectedLocalError: "handshake failure",
 	})
 	testCases = append(testCases, testCase{
 		name:        "Renegotiate-Client-Upgrade",
@@ -7096,9 +7168,10 @@ func addRenegotiationTests() {
 				NoRenegotiationInfoInInitial: true,
 			},
 		},
-		flags:         []string{"-renegotiate-freely"},
-		shouldFail:    true,
-		expectedError: ":RENEGOTIATION_MISMATCH:",
+		flags:              []string{"-renegotiate-freely"},
+		shouldFail:         true,
+		expectedError:      ":RENEGOTIATION_MISMATCH:",
+		expectedLocalError: "handshake failure",
 	})
 	testCases = append(testCases, testCase{
 		name:        "Renegotiate-Client-NoExt-Allowed",
@@ -10027,6 +10100,31 @@ func addChangeCipherSpecTests() {
 				StrayChangeCipherSpec: true,
 			},
 		},
+	})
+
+	// Test that reordered ChangeCipherSpecs are tolerated.
+	testCases = append(testCases, testCase{
+		protocol: dtls,
+		name:     "ReorderChangeCipherSpec-DTLS-Client",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				ReorderChangeCipherSpec: true,
+			},
+		},
+		resumeSession: true,
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		protocol: dtls,
+		name:     "ReorderChangeCipherSpec-DTLS-Server",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				ReorderChangeCipherSpec: true,
+			},
+		},
+		resumeSession: true,
 	})
 
 	// Test that the contents of ChangeCipherSpec are checked.
