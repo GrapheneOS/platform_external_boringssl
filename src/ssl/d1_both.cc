@@ -298,12 +298,10 @@ static hm_fragment *dtls1_get_incoming_message(
   return frag;
 }
 
-/* dtls1_process_handshake_record reads a handshake record and processes it. It
- * returns one if the record was successfully processed and 0 or -1 on error. */
+/* dtls1_process_handshake_record reads a record for the handshake and processes
+ * it. It returns one on success and 0 or -1 on error. */
 static int dtls1_process_handshake_record(SSL *ssl) {
   SSL3_RECORD *rr = &ssl->s3->rrec;
-
-start:
   if (rr->length == 0) {
     int ret = dtls1_get_record(ssl);
     if (ret <= 0) {
@@ -311,27 +309,53 @@ start:
     }
   }
 
-  /* Cross-epoch records are discarded, but we may receive out-of-order
-   * application data between ChangeCipherSpec and Finished or a
-   * ChangeCipherSpec before the appropriate point in the handshake. Those must
-   * be silently discarded.
-   *
-   * However, only allow the out-of-order records in the correct epoch.
-   * Application data must come in the encrypted epoch, and ChangeCipherSpec in
-   * the unencrypted epoch (we never renegotiate). Other cases fall through and
-   * fail with a fatal error. */
-  if ((rr->type == SSL3_RT_APPLICATION_DATA &&
-       !ssl->s3->aead_read_ctx->is_null_cipher()) ||
-      (rr->type == SSL3_RT_CHANGE_CIPHER_SPEC &&
-       ssl->s3->aead_read_ctx->is_null_cipher())) {
-    rr->length = 0;
-    goto start;
-  }
+  switch (rr->type) {
+    case SSL3_RT_APPLICATION_DATA:
+      /* Unencrypted application data records are always illegal. */
+      if (ssl->s3->aead_read_ctx->is_null_cipher()) {
+        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+        OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
+        return -1;
+      }
 
-  if (rr->type != SSL3_RT_HANDSHAKE) {
-    ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
-    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
-    return -1;
+      /* Out-of-order application data may be received between ChangeCipherSpec
+       * and finished. Discard it. */
+      rr->length = 0;
+      ssl_read_buffer_discard(ssl);
+      return 1;
+
+    case SSL3_RT_CHANGE_CIPHER_SPEC:
+      /* We do not support renegotiation, so encrypted ChangeCipherSpec records
+       * are illegal. */
+      if (!ssl->s3->aead_read_ctx->is_null_cipher()) {
+        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+        OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
+        return -1;
+      }
+
+      if (rr->length != 1 || rr->data[0] != SSL3_MT_CCS) {
+        OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_CHANGE_CIPHER_SPEC);
+        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+        return -1;
+      }
+
+      /* Flag the ChangeCipherSpec for later. */
+      ssl->d1->has_change_cipher_spec = true;
+      ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_CHANGE_CIPHER_SPEC,
+                          rr->data, rr->length);
+
+      rr->length = 0;
+      ssl_read_buffer_discard(ssl);
+      return 1;
+
+    case SSL3_RT_HANDSHAKE:
+      /* Break out to main processing. */
+      break;
+
+    default:
+      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+      OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
+      return -1;
   }
 
   CBS cbs;
@@ -418,14 +442,16 @@ int dtls1_get_message(SSL *ssl) {
   assert(frag->reassembly == NULL);
   assert(ssl->d1->handshake_read_seq == frag->seq);
 
+  if (ssl->init_msg == NULL) {
+    ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_HANDSHAKE, frag->data,
+                        frag->msg_len + DTLS1_HM_HEADER_LENGTH);
+  }
+
   /* TODO(davidben): This function has a lot of implicit outputs. Simplify the
    * |ssl_get_message| API. */
   ssl->s3->tmp.message_type = frag->type;
   ssl->init_msg = frag->data + DTLS1_HM_HEADER_LENGTH;
   ssl->init_num = frag->msg_len;
-
-  ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_HANDSHAKE, frag->data,
-                      ssl->init_num + DTLS1_HM_HEADER_LENGTH);
   return 1;
 }
 
@@ -490,6 +516,19 @@ int dtls1_parse_fragment(CBS *cbs, struct hm_header_st *out_hdr,
   return 1;
 }
 
+int dtls1_read_change_cipher_spec(SSL *ssl) {
+  /* Process handshake records until there is a ChangeCipherSpec. */
+  while (!ssl->d1->has_change_cipher_spec) {
+    int ret = dtls1_process_handshake_record(ssl);
+    if (ret <= 0) {
+      return ret;
+    }
+  }
+
+  ssl->d1->has_change_cipher_spec = false;
+  return 1;
+}
+
 
 /* Sending handshake messages. */
 
@@ -501,6 +540,7 @@ void dtls_clear_outgoing_messages(SSL *ssl) {
   ssl->d1->outgoing_messages_len = 0;
   ssl->d1->outgoing_written = 0;
   ssl->d1->outgoing_offset = 0;
+  ssl->d1->outgoing_messages_complete = false;
 }
 
 int dtls1_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type) {
@@ -538,6 +578,13 @@ int dtls1_finish_message(SSL *ssl, CBB *cbb, uint8_t **out_msg,
  * it takes ownership of |data| and releases it with |OPENSSL_free| when
  * done. */
 static int add_outgoing(SSL *ssl, int is_ccs, uint8_t *data, size_t len) {
+  if (ssl->d1->outgoing_messages_complete) {
+    /* If we've begun writing a new flight, we received the peer flight. Discard
+     * the timer and the our flight. */
+    dtls1_stop_timer(ssl);
+    dtls_clear_outgoing_messages(ssl);
+  }
+
   static_assert(SSL_MAX_HANDSHAKE_FLIGHT <
                     (1 << 8 * sizeof(ssl->d1->outgoing_messages_len)),
                 "outgoing_messages_len is too small");
@@ -756,7 +803,7 @@ packet_full:
   return 1;
 }
 
-int dtls1_flush_flight(SSL *ssl) {
+static int send_flight(SSL *ssl) {
   dtls1_update_mtu(ssl);
 
   int ret = -1;
@@ -798,6 +845,13 @@ err:
   return ret;
 }
 
+int dtls1_flush_flight(SSL *ssl) {
+  ssl->d1->outgoing_messages_complete = true;
+  /* Start the retransmission timer for the next flight (if any). */
+  dtls1_start_timer(ssl);
+  return send_flight(ssl);
+}
+
 int dtls1_retransmit_outgoing_messages(SSL *ssl) {
   /* Rewind to the start of the flight and write it again.
    *
@@ -806,7 +860,7 @@ int dtls1_retransmit_outgoing_messages(SSL *ssl) {
   ssl->d1->outgoing_written = 0;
   ssl->d1->outgoing_offset = 0;
 
-  return dtls1_flush_flight(ssl);
+  return send_flight(ssl);
 }
 
 unsigned int dtls1_min_mtu(void) {
