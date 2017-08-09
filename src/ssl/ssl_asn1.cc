@@ -92,6 +92,8 @@
 #include <limits.h>
 #include <string.h>
 
+#include <utility>
+
 #include <openssl/buf.h>
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
@@ -678,11 +680,9 @@ UniquePtr<SSL_SESSION> SSL_SESSION_parse(CBS *cbs,
     }
 
     if (has_peer) {
-      /* TODO(agl): this should use the |SSL_CTX|'s pool. */
-      CRYPTO_BUFFER *buffer = CRYPTO_BUFFER_new_from_CBS(&peer, pool);
-      if (buffer == NULL ||
-          !sk_CRYPTO_BUFFER_push(ret->certs, buffer)) {
-        CRYPTO_BUFFER_free(buffer);
+      UniquePtr<CRYPTO_BUFFER> buffer(CRYPTO_BUFFER_new_from_CBS(&peer, pool));
+      if (!buffer ||
+          !PushToStack(ret->certs, std::move(buffer))) {
         OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
         return nullptr;
       }
@@ -696,7 +696,6 @@ UniquePtr<SSL_SESSION> SSL_SESSION_parse(CBS *cbs,
         return nullptr;
       }
 
-      /* TODO(agl): this should use the |SSL_CTX|'s pool. */
       CRYPTO_BUFFER *buffer = CRYPTO_BUFFER_new_from_CBS(&cert, pool);
       if (buffer == NULL ||
           !sk_CRYPTO_BUFFER_push(ret->certs, buffer)) {

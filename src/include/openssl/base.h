@@ -107,6 +107,10 @@ extern "C" {
 #elif defined(__myriad2__)
 #define OPENSSL_32_BIT
 #else
+/* Note BoringSSL only supports standard 32-bit and 64-bit two's-complement,
+ * little-endian architectures. Functions will not produce the correct answer
+ * on other systems. Run the crypto_test binary, notably
+ * crypto/compiler_test.cc, before adding a new architecture. */
 #error "Unknown target CPU"
 #endif
 
@@ -367,7 +371,6 @@ extern "C++" {
 #if defined(BORINGSSL_NO_CXX)
 
 #define BORINGSSL_MAKE_DELETER(type, deleter)
-#define BORINGSSL_MAKE_STACK_DELETER(type, deleter)
 
 #else
 
@@ -410,6 +413,9 @@ class StackAllocated {
   T *get() { return &ctx_; }
   const T *get() const { return &ctx_; }
 
+  T *operator->() { return &ctx_; }
+  const T *operator->() const { return &ctx_; }
+
   void Reset() {
     cleanup(&ctx_);
     init(&ctx_);
@@ -427,18 +433,6 @@ class StackAllocated {
   struct DeleterImpl<type> {                      \
     static void Free(type *ptr) { deleter(ptr); } \
   };                                              \
-  }
-
-// This makes a unique_ptr to STACK_OF(type) that owns all elements on the
-// stack, i.e. it uses sk_pop_free() to clean up.
-#define BORINGSSL_MAKE_STACK_DELETER(type, deleter) \
-  namespace internal {                              \
-  template <>                                       \
-  struct DeleterImpl<STACK_OF(type)> {              \
-    static void Free(STACK_OF(type) *ptr) {         \
-      sk_##type##_pop_free(ptr, deleter);           \
-    }                                               \
-  };                                                \
   }
 
 // Holds ownership of heap-allocated BoringSSL structures. Sample usage:
