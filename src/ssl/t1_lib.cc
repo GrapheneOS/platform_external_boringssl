@@ -802,7 +802,7 @@ static int ext_ri_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
 #endif
   if (!ok) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_RENEGOTIATION_MISMATCH);
-    *out_alert = SSL_AD_ILLEGAL_PARAMETER;
+    *out_alert = SSL_AD_HANDSHAKE_FAILURE;
     return 0;
   }
   ssl->s3->send_connection_binding = 1;
@@ -1624,11 +1624,8 @@ static void ext_srtp_init(SSL_HANDSHAKE *hs) {
 static int ext_srtp_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
   STACK_OF(SRTP_PROTECTION_PROFILE) *profiles = SSL_get_srtp_profiles(ssl);
-  if (profiles == NULL) {
-    return 1;
-  }
-  const size_t num_profiles = sk_SRTP_PROTECTION_PROFILE_num(profiles);
-  if (num_profiles == 0) {
+  if (profiles == NULL ||
+      sk_SRTP_PROTECTION_PROFILE_num(profiles) == 0) {
     return 1;
   }
 
@@ -1639,9 +1636,8 @@ static int ext_srtp_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
     return 0;
   }
 
-  for (size_t i = 0; i < num_profiles; i++) {
-    if (!CBB_add_u16(&profile_ids,
-                     sk_SRTP_PROTECTION_PROFILE_value(profiles, i)->id)) {
+  for (const SRTP_PROTECTION_PROFILE *profile : profiles) {
+    if (!CBB_add_u16(&profile_ids, profile->id)) {
       return 0;
     }
   }
@@ -1687,10 +1683,7 @@ static int ext_srtp_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
 
   /* Check to see if the server gave us something we support (and presumably
    * offered). */
-  for (size_t i = 0; i < sk_SRTP_PROTECTION_PROFILE_num(profiles); i++) {
-    const SRTP_PROTECTION_PROFILE *profile =
-        sk_SRTP_PROTECTION_PROFILE_value(profiles, i);
-
+  for (const SRTP_PROTECTION_PROFILE *profile : profiles) {
     if (profile->id == profile_id) {
       ssl->srtp_profile = profile;
       return 1;
@@ -1723,10 +1716,7 @@ static int ext_srtp_parse_clienthello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
       SSL_get_srtp_profiles(ssl);
 
   /* Pick the server's most preferred profile. */
-  for (size_t i = 0; i < sk_SRTP_PROTECTION_PROFILE_num(server_profiles); i++) {
-    const SRTP_PROTECTION_PROFILE *server_profile =
-        sk_SRTP_PROTECTION_PROFILE_value(server_profiles, i);
-
+  for (const SRTP_PROTECTION_PROFILE *server_profile : server_profiles) {
     CBS profile_ids_tmp;
     CBS_init(&profile_ids_tmp, CBS_data(&profile_ids), CBS_len(&profile_ids));
 
@@ -3133,11 +3123,11 @@ static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_method(
 }
 
 enum ssl_ticket_aead_result_t ssl_process_ticket(
-    SSL *ssl, SSL_SESSION **out_session, int *out_renew_ticket,
+    SSL *ssl, UniquePtr<SSL_SESSION> *out_session, int *out_renew_ticket,
     const uint8_t *ticket, size_t ticket_len, const uint8_t *session_id,
     size_t session_id_len) {
   *out_renew_ticket = 0;
-  *out_session = NULL;
+  out_session->reset();
 
   if ((SSL_get_options(ssl) & SSL_OP_NO_TICKET) ||
       session_id_len > SSL_MAX_SSL_SESSION_ID_LENGTH) {
@@ -3160,11 +3150,11 @@ enum ssl_ticket_aead_result_t ssl_process_ticket(
   }
 
   /* Decode the session. */
-  SSL_SESSION *session =
-      SSL_SESSION_from_bytes(plaintext, plaintext_len, ssl->ctx);
+  UniquePtr<SSL_SESSION> session(
+      SSL_SESSION_from_bytes(plaintext, plaintext_len, ssl->ctx));
   OPENSSL_free(plaintext);
 
-  if (session == NULL) {
+  if (!session) {
     ERR_clear_error(); /* Don't leave an error on the queue. */
     return ssl_ticket_aead_ignore_ticket;
   }
@@ -3174,7 +3164,7 @@ enum ssl_ticket_aead_result_t ssl_process_ticket(
   OPENSSL_memcpy(session->session_id, session_id, session_id_len);
   session->session_id_length = session_id_len;
 
-  *out_session = session;
+  *out_session = std::move(session);
   return ssl_ticket_aead_success;
 }
 

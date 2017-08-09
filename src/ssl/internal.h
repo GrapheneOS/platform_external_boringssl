@@ -144,6 +144,9 @@
 
 #include <openssl/base.h>
 
+#include <stdlib.h>
+
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -179,13 +182,12 @@ struct SSL_HANDSHAKE;
  * Note: unlike |new|, this does not support non-public constructors. */
 template <typename T, typename... Args>
 T *New(Args &&... args) {
-  T *t = reinterpret_cast<T *>(OPENSSL_malloc(sizeof(T)));
+  void *t = OPENSSL_malloc(sizeof(T));
   if (t == nullptr) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     return nullptr;
   }
-  new (t) T(std::forward<Args>(args)...);
-  return t;
+  return new (t) T(std::forward<Args>(args)...);
 }
 
 /* Delete behaves like |delete| but uses |OPENSSL_free| to release memory.
@@ -199,13 +201,11 @@ void Delete(T *t) {
   }
 }
 
-/* Register all types with non-trivial destructors with |UniquePtr|. Types with
- * trivial destructors may be C structs which require a |BORINGSSL_MAKE_DELETER|
- * registration. */
+/* All types with kAllowUniquePtr set may be used with UniquePtr. Other types
+ * may be C structs which require a |BORINGSSL_MAKE_DELETER| registration. */
 namespace internal {
 template <typename T>
-struct DeleterImpl<T, typename std::enable_if<
-                          !std::is_trivially_destructible<T>::value>::type> {
+struct DeleterImpl<T, typename std::enable_if<T::kAllowUniquePtr>::type> {
   static void Free(T *t) { Delete(t); }
 };
 }
@@ -216,6 +216,22 @@ template <typename T, typename... Args>
 UniquePtr<T> MakeUnique(Args &&... args) {
   return UniquePtr<T>(New<T>(std::forward<Args>(args)...));
 }
+
+#if defined(BORINGSSL_ALLOW_CXX_RUNTIME)
+#define HAS_VIRTUAL_DESTRUCTOR
+#define PURE_VIRTUAL = 0
+#else
+/* HAS_VIRTUAL_DESTRUCTOR should be declared in any base clas ~s which defines a
+ * virtual destructor. This avoids a dependency on |_ZdlPv| and prevents the
+ * class from being used with |delete|. */
+#define HAS_VIRTUAL_DESTRUCTOR \
+  void operator delete(void *) { abort(); }
+
+/* PURE_VIRTUAL should be used instead of = 0 when defining pure-virtual
+ * functions. This avoids a dependency on |__cxa_pure_virtual| but loses
+ * compile-time checking. */
+#define PURE_VIRTUAL { abort(); }
+#endif
 
 
 /* Protocol versions.
@@ -452,6 +468,8 @@ class SSLAEADContext {
  public:
   SSLAEADContext(uint16_t version, const SSL_CIPHER *cipher);
   ~SSLAEADContext();
+  static constexpr bool kAllowUniquePtr = true;
+
   SSLAEADContext(const SSLAEADContext &&) = delete;
   SSLAEADContext &operator=(const SSLAEADContext &&) = delete;
 
@@ -480,10 +498,12 @@ class SSLAEADContext {
   /* MaxOverhead returns the maximum overhead of calling |Seal|. */
   size_t MaxOverhead() const;
 
-  /* MaxSuffixLen returns the maximum suffix length written by |SealScatter|.
-   * |extra_in_len| should equal the argument of the same name passed to
-   * |SealScatter|. */
-  size_t MaxSuffixLen(size_t extra_in_len) const;
+  /* SuffixLen calculates the suffix length written by |SealScatter| and writes
+   * it to |*out_suffix_len|. It returns true on success and false on error.
+   * |in_len| and |extra_in_len| should equal the argument of the same names
+   * passed to |SealScatter|. */
+  bool SuffixLen(size_t *out_suffix_len, size_t in_len,
+                 size_t extra_in_len) const;
 
   /* Open authenticates and decrypts |in_len| bytes from |in| in-place. On
    * success, it sets |*out| to the plaintext in |in| and returns true.
@@ -505,19 +525,17 @@ class SSLAEADContext {
    * success and zero on error.
    *
    * On successful return, exactly |ExplicitNonceLen| bytes are written to
-   * |out_prefix|, |in_len| bytes to |out|, and up to |MaxSuffixLen| bytes to
-   * |out_suffix|. |*out_suffix_len| is set to the actual number of bytes
-   * written to |out_suffix|.
+   * |out_prefix|, |in_len| bytes to |out|, and |SuffixLen| bytes to
+   * |out_suffix|.
    *
    * |extra_in| may point to an additional plaintext buffer. If present,
    * |extra_in_len| additional bytes are encrypted and authenticated, and the
-   * ciphertext is written to the beginning of |out_suffix|.  |MaxSuffixLen|
-   * may be used to size |out_suffix| accordingly.
+   * ciphertext is written to the beginning of |out_suffix|. |SuffixLen| should
+   * be used to size |out_suffix| accordingly.
    *
    * If |in| and |out| alias then |out| must be == |in|. Other arguments may not
    * alias anything. */
   bool SealScatter(uint8_t *out_prefix, uint8_t *out, uint8_t *out_suffix,
-                   size_t *out_suffix_len, size_t max_out_suffix_len,
                    uint8_t type, uint16_t wire_version, const uint8_t seqnum[8],
                    const uint8_t *in, size_t in_len, const uint8_t *extra_in,
                    size_t extra_in_len);
@@ -698,7 +716,7 @@ int ssl_has_private_key(const SSL *ssl);
 
 enum ssl_private_key_result_t ssl_private_key_sign(
     SSL_HANDSHAKE *hs, uint8_t *out, size_t *out_len, size_t max_out,
-    uint16_t signature_algorithm, const uint8_t *in, size_t in_len);
+    uint16_t sigalg, const uint8_t *in, size_t in_len);
 
 enum ssl_private_key_result_t ssl_private_key_decrypt(
     SSL_HANDSHAKE *hs, uint8_t *out, size_t *out_len, size_t max_out,
@@ -710,11 +728,10 @@ int ssl_private_key_supports_signature_algorithm(SSL_HANDSHAKE *hs,
                                                  uint16_t sigalg);
 
 /* ssl_public_key_verify verifies that the |signature| is valid for the public
- * key |pkey| and input |in|, using the |signature_algorithm| specified. */
-int ssl_public_key_verify(
-    SSL *ssl, const uint8_t *signature, size_t signature_len,
-    uint16_t signature_algorithm, EVP_PKEY *pkey,
-    const uint8_t *in, size_t in_len);
+ * key |pkey| and input |in|, using the signature algorithm |sigalg|. */
+int ssl_public_key_verify(SSL *ssl, const uint8_t *signature,
+                          size_t signature_len, uint16_t sigalg, EVP_PKEY *pkey,
+                          const uint8_t *in, size_t in_len);
 
 
 /* Custom extensions */
@@ -753,17 +770,19 @@ int custom_ext_add_serverhello(SSL_HANDSHAKE *hs, CBB *extensions);
 class SSLKeyShare {
  public:
   virtual ~SSLKeyShare() {}
+  static constexpr bool kAllowUniquePtr = true;
+  HAS_VIRTUAL_DESTRUCTOR
 
   /* Create returns a SSLKeyShare instance for use with group |group_id| or
    * nullptr on error. */
   static UniquePtr<SSLKeyShare> Create(uint16_t group_id);
 
   /* GroupID returns the group ID. */
-  virtual uint16_t GroupID() const = 0;
+  virtual uint16_t GroupID() const PURE_VIRTUAL;
 
   /* Offer generates a keypair and writes the public value to
    * |out_public_key|. It returns true on success and false on error. */
-  virtual bool Offer(CBB *out_public_key) = 0;
+  virtual bool Offer(CBB *out_public_key) PURE_VIRTUAL;
 
   /* Accept performs a key exchange against the |peer_key| generated by |offer|.
    * On success, it returns true, writes the public value to |out_public_key|,
@@ -790,7 +809,7 @@ class SSLKeyShare {
    * TODO(davidben): out_secret should be a smart pointer. */
   virtual bool Finish(uint8_t **out_secret, size_t *out_secret_len,
                       uint8_t *out_alert, const uint8_t *peer_key,
-                      size_t peer_key_len) = 0;
+                      size_t peer_key_len) PURE_VIRTUAL;
 };
 
 /* ssl_nid_to_group_id looks up the group corresponding to |nid|. On success, it
@@ -906,18 +925,21 @@ void ssl_write_buffer_clear(SSL *ssl);
 int ssl_has_certificate(const SSL *ssl);
 
 /* ssl_parse_cert_chain parses a certificate list from |cbs| in the format used
- * by a TLS Certificate message. On success, it returns a newly-allocated
- * |CRYPTO_BUFFER| list and advances |cbs|. Otherwise, it returns nullptr and
- * sets |*out_alert| to an alert to send to the peer.
+ * by a TLS Certificate message. On success, it advances |cbs| and returns
+ * true. Otherwise, it returns false and sets |*out_alert| to an alert to send
+ * to the peer.
  *
- * If the list is non-empty then |*out_pubkey| will be set to a freshly
- * allocated public-key from the leaf certificate.
+ * If the list is non-empty then |*out_chain| and |*out_pubkey| will be set to
+ * the certificate chain and the leaf certificate's public key
+ * respectively. Otherwise, both will be set to nullptr.
  *
  * If the list is non-empty and |out_leaf_sha256| is non-NULL, it writes the
  * SHA-256 hash of the leaf to |out_leaf_sha256|. */
-UniquePtr<STACK_OF(CRYPTO_BUFFER)> ssl_parse_cert_chain(
-    uint8_t *out_alert, UniquePtr<EVP_PKEY> *out_pubkey,
-    uint8_t *out_leaf_sha256, CBS *cbs, CRYPTO_BUFFER_POOL *pool);
+bool ssl_parse_cert_chain(uint8_t *out_alert,
+                          UniquePtr<STACK_OF(CRYPTO_BUFFER)> *out_chain,
+                          UniquePtr<EVP_PKEY> *out_pubkey,
+                          uint8_t *out_leaf_sha256, CBS *cbs,
+                          CRYPTO_BUFFER_POOL *pool);
 
 /* ssl_add_cert_chain adds |ssl|'s certificate chain to |cbb| in the format used
  * by a TLS Certificate message. If there is no certificate chain, it emits an
@@ -1050,6 +1072,7 @@ enum ssl_hs_wait_t {
 struct SSL_HANDSHAKE {
   explicit SSL_HANDSHAKE(SSL *ssl);
   ~SSL_HANDSHAKE();
+  static constexpr bool kAllowUniquePtr = true;
 
   /* ssl is a non-owning pointer to the parent |SSL| object. */
   SSL *ssl;
@@ -1769,9 +1792,18 @@ struct OPENSSL_timeval {
 };
 
 struct DTLS1_STATE {
-  /* send_cookie is true if we are resending the ClientHello
-   * with a cookie from a HelloVerifyRequest. */
-  unsigned int send_cookie;
+  /* send_cookie is true if we are resending the ClientHello with a cookie from
+   * a HelloVerifyRequest. */
+  bool send_cookie:1;
+
+  /* has_change_cipher_spec is true if we have received a ChangeCipherSpec from
+   * the peer in this epoch. */
+  bool has_change_cipher_spec:1;
+
+  /* outgoing_messages_complete is true if |outgoing_messages| has been
+   * completed by an attempt to flush it. Future calls to |add_message| and
+   * |add_change_cipher_spec| will start a new flight. */
+  bool outgoing_messages_complete:1;
 
   uint8_t cookie[DTLS1_COOKIE_LENGTH];
   size_t cookie_len;
@@ -2006,9 +2038,9 @@ static const size_t kMaxEarlyDataAccepted = 14336;
 
 CERT *ssl_cert_new(const SSL_X509_METHOD *x509_method);
 CERT *ssl_cert_dup(CERT *cert);
-void ssl_cert_clear_certs(CERT *c);
-void ssl_cert_free(CERT *c);
-int ssl_set_cert(CERT *cert, CRYPTO_BUFFER *buffer);
+void ssl_cert_clear_certs(CERT *cert);
+void ssl_cert_free(CERT *cert);
+int ssl_set_cert(CERT *cert, UniquePtr<CRYPTO_BUFFER> buffer);
 int ssl_is_key_type_supported(int key_type);
 /* ssl_compare_public_and_private_key returns one if |pubkey| is the public
  * counterpart to |privkey|. Otherwise it returns zero and pushes a helpful
@@ -2059,13 +2091,13 @@ enum ssl_session_result_t {
 };
 
 /* ssl_get_prev_session looks up the previous session based on |client_hello|.
- * On success, it sets |*out_session| to the session or NULL if none was found.
- * If the session could not be looked up synchronously, it returns
+ * On success, it sets |*out_session| to the session or nullptr if none was
+ * found. If the session could not be looked up synchronously, it returns
  * |ssl_session_retry| and should be called again. If a ticket could not be
  * decrypted immediately it returns |ssl_session_ticket_retry| and should also
  * be called again. Otherwise, it returns |ssl_session_error|.  */
 enum ssl_session_result_t ssl_get_prev_session(
-    SSL *ssl, SSL_SESSION **out_session, int *out_tickets_supported,
+    SSL *ssl, UniquePtr<SSL_SESSION> *out_session, int *out_tickets_supported,
     int *out_renew_ticket, const SSL_CLIENT_HELLO *client_hello);
 
 /* The following flags determine which parts of the session are duplicated. */
@@ -2175,7 +2207,6 @@ int dtls1_handshake_write(SSL *ssl);
 void dtls1_start_timer(SSL *ssl);
 void dtls1_stop_timer(SSL *ssl);
 int dtls1_is_timer_expired(SSL *ssl);
-void dtls1_double_timeout(SSL *ssl);
 unsigned int dtls1_min_mtu(void);
 
 int dtls1_new(SSL *ssl);
@@ -2243,7 +2274,7 @@ int ssl_parse_serverhello_tlsext(SSL_HANDSHAKE *hs, CBS *cbs);
  *       Retry later.
  *   |ssl_ticket_aead_error|: an error occured that is fatal to the connection. */
 enum ssl_ticket_aead_result_t ssl_process_ticket(
-    SSL *ssl, SSL_SESSION **out_session, int *out_renew_ticket,
+    SSL *ssl, UniquePtr<SSL_SESSION> *out_session, int *out_renew_ticket,
     const uint8_t *ticket, size_t ticket_len, const uint8_t *session_id,
     size_t session_id_len);
 
@@ -2371,12 +2402,8 @@ struct ssl_protocol_method_st {
   /* flush_flight flushes the pending flight to the transport. It returns one on
    * success and <= 0 on error. */
   int (*flush_flight)(SSL *ssl);
-  /* expect_flight is called when the handshake expects a flight of messages from
-   * the peer. */
-  void (*expect_flight)(SSL *ssl);
-  /* received_flight is called when the handshake has received a flight of
-   * messages from the peer. */
-  void (*received_flight)(SSL *ssl);
+  /* on_handshake_complete is called when the handshake is complete. */
+  void (*on_handshake_complete)(SSL *ssl);
   /* set_read_state sets |ssl|'s read cipher state to |aead_ctx|. It returns
    * one on success and zero if changing the read state is forbidden at this
    * point. */

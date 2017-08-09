@@ -474,6 +474,7 @@ cc_defaults {
     name: "boringssl_ssl_test_sources",
     srcs: [
         "src/crypto/test/gtest_main.cc",
+        "src/ssl/span_test.cc",
         "src/ssl/ssl_test.cc",
     ],
 }
