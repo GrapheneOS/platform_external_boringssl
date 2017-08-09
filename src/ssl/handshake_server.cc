@@ -233,7 +233,6 @@ int ssl3_accept(SSL_HANDSHAKE *hs) {
         if (ret <= 0) {
           goto end;
         }
-        ssl->method->received_flight(ssl);
         hs->state = SSL3_ST_SW_SRVR_HELLO_A;
         break;
 
@@ -362,7 +361,6 @@ int ssl3_accept(SSL_HANDSHAKE *hs) {
           goto end;
         }
 
-        ssl->method->received_flight(ssl);
         if (ssl->session != NULL) {
           hs->state = SSL_ST_OK;
         } else {
@@ -400,9 +398,6 @@ int ssl3_accept(SSL_HANDSHAKE *hs) {
         }
 
         hs->state = hs->next_state;
-        if (hs->state != SSL_ST_OK) {
-          ssl->method->expect_flight(ssl);
-        }
         break;
 
       case SSL_ST_TLS13: {
@@ -422,6 +417,7 @@ int ssl3_accept(SSL_HANDSHAKE *hs) {
       }
 
       case SSL_ST_OK:
+        ssl->method->on_handshake_complete(ssl);
         ssl->method->release_current_message(ssl, 1 /* free_buffer */);
 
         /* If we aren't retaining peer certificates then we can discard it
@@ -558,16 +554,16 @@ static int negotiate_version(SSL_HANDSHAKE *hs, uint8_t *out_alert,
   return 1;
 }
 
-static STACK_OF(SSL_CIPHER) *
-    ssl_parse_client_cipher_list(const SSL_CLIENT_HELLO *client_hello) {
+static UniquePtr<STACK_OF(SSL_CIPHER)> ssl_parse_client_cipher_list(
+    const SSL_CLIENT_HELLO *client_hello) {
   CBS cipher_suites;
   CBS_init(&cipher_suites, client_hello->cipher_suites,
            client_hello->cipher_suites_len);
 
-  STACK_OF(SSL_CIPHER) *sk = sk_SSL_CIPHER_new_null();
-  if (sk == NULL) {
+  UniquePtr<STACK_OF(SSL_CIPHER)> sk(sk_SSL_CIPHER_new_null());
+  if (!sk) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-    goto err;
+    return nullptr;
   }
 
   while (CBS_len(&cipher_suites) > 0) {
@@ -575,21 +571,17 @@ static STACK_OF(SSL_CIPHER) *
 
     if (!CBS_get_u16(&cipher_suites, &cipher_suite)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_IN_RECEIVED_CIPHER_LIST);
-      goto err;
+      return nullptr;
     }
 
     const SSL_CIPHER *c = SSL_get_cipher_by_value(cipher_suite);
-    if (c != NULL && !sk_SSL_CIPHER_push(sk, c)) {
+    if (c != NULL && !sk_SSL_CIPHER_push(sk.get(), c)) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-      goto err;
+      return nullptr;
     }
   }
 
   return sk;
-
-err:
-  sk_SSL_CIPHER_free(sk);
-  return NULL;
 }
 
 /* ssl_get_compatible_server_ciphers determines the key exchange and
@@ -640,18 +632,18 @@ static const SSL_CIPHER *ssl3_choose_cipher(
    * such value exists yet. */
   int group_min = -1;
 
-  STACK_OF(SSL_CIPHER) *client_pref =
+  UniquePtr<STACK_OF(SSL_CIPHER)> client_pref =
       ssl_parse_client_cipher_list(client_hello);
-  if (client_pref == NULL) {
-    return NULL;
+  if (!client_pref) {
+    return nullptr;
   }
 
   if (ssl->options & SSL_OP_CIPHER_SERVER_PREFERENCE) {
     prio = server_pref->ciphers;
     in_group_flags = server_pref->in_group_flags;
-    allow = client_pref;
+    allow = client_pref.get();
   } else {
-    prio = client_pref;
+    prio = client_pref.get();
     in_group_flags = NULL;
     allow = server_pref->ciphers;
   }
@@ -659,7 +651,6 @@ static const SSL_CIPHER *ssl3_choose_cipher(
   uint32_t mask_k, mask_a;
   ssl_get_compatible_server_ciphers(hs, &mask_k, &mask_a);
 
-  const SSL_CIPHER *ret = NULL;
   for (size_t i = 0; i < sk_SSL_CIPHER_num(prio); i++) {
     const SSL_CIPHER *c = sk_SSL_CIPHER_value(prio, i);
 
@@ -682,21 +673,18 @@ static const SSL_CIPHER *ssl3_choose_cipher(
         if (group_min != -1 && (size_t)group_min < cipher_index) {
           cipher_index = group_min;
         }
-        ret = sk_SSL_CIPHER_value(allow, cipher_index);
-        break;
+        return sk_SSL_CIPHER_value(allow, cipher_index);
       }
     }
 
     if (in_group_flags != NULL && in_group_flags[i] == 0 && group_min != -1) {
       /* We are about to leave a group, but we found a match in it, so that's
        * our answer. */
-      ret = sk_SSL_CIPHER_value(allow, group_min);
-      break;
+      return sk_SSL_CIPHER_value(allow, group_min);
     }
   }
 
-  sk_SSL_CIPHER_free(client_pref);
-  return ret;
+  return nullptr;
 }
 
 static int ssl3_process_client_hello(SSL_HANDSHAKE *hs) {
@@ -825,14 +813,10 @@ static int ssl3_select_parameters(SSL_HANDSHAKE *hs) {
   }
 
   /* Determine whether we are doing session resumption. */
+  UniquePtr<SSL_SESSION> session;
   int tickets_supported = 0, renew_ticket = 0;
-  /* TODO(davidben): Switch |ssl_get_prev_session| to take a |UniquePtr|
-   * output and simplify this. */
-  SSL_SESSION *session_raw = nullptr;
-  auto session_ret = ssl_get_prev_session(ssl, &session_raw, &tickets_supported,
-                                          &renew_ticket, &client_hello);
-  UniquePtr<SSL_SESSION> session(session_raw);
-  switch (session_ret) {
+  switch (ssl_get_prev_session(ssl, &session, &tickets_supported, &renew_ticket,
+                               &client_hello)) {
     case ssl_session_success:
       break;
     case ssl_session_error:
@@ -1228,20 +1212,18 @@ static int ssl3_get_client_certificate(SSL_HANDSHAKE *hs) {
   CBS certificate_msg;
   CBS_init(&certificate_msg, ssl->init_msg, ssl->init_num);
 
-  sk_CRYPTO_BUFFER_pop_free(hs->new_session->certs, CRYPTO_BUFFER_free);
-  hs->peer_pubkey.reset();
   uint8_t alert = SSL_AD_DECODE_ERROR;
-  hs->new_session->certs =
-      ssl_parse_cert_chain(&alert, &hs->peer_pubkey,
-                           ssl->retain_only_sha256_of_client_certs
-                               ? hs->new_session->peer_sha256
-                               : NULL,
-                           &certificate_msg, ssl->ctx->pool)
-          .release();
-  if (hs->new_session->certs == NULL) {
+  UniquePtr<STACK_OF(CRYPTO_BUFFER)> chain;
+  if (!ssl_parse_cert_chain(&alert, &chain, &hs->peer_pubkey,
+                            ssl->retain_only_sha256_of_client_certs
+                                ? hs->new_session->peer_sha256
+                                : NULL,
+                            &certificate_msg, ssl->ctx->pool)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
     return -1;
   }
+  sk_CRYPTO_BUFFER_pop_free(hs->new_session->certs, CRYPTO_BUFFER_free);
+  hs->new_session->certs = chain.release();
 
   if (CBS_len(&certificate_msg) != 0 ||
       !ssl->ctx->x509_method->session_cache_objects(hs->new_session.get())) {

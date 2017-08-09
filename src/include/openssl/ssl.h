@@ -149,6 +149,7 @@
 #include <openssl/hmac.h>
 #include <openssl/lhash.h>
 #include <openssl/pem.h>
+#include <openssl/span.h>
 #include <openssl/ssl3.h>
 #include <openssl/thread.h>
 #include <openssl/tls1.h>
@@ -1349,8 +1350,9 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
  *   be used.
  *
  * Unknown rules are silently ignored by legacy APIs, and rejected by APIs with
- * "strict" in the name, which should be preferred. Cipher lists can be long and
- * it's easy to commit typos.
+ * "strict" in the name, which should be preferred. Cipher lists can be long
+ * and it's easy to commit typos. Strict functions will also reject the use of
+ * spaces, semi-colons and commas as alternative separators.
  *
  * The special |@STRENGTH| directive will sort all enabled ciphers by strength.
  *
@@ -1368,7 +1370,7 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
  *   [ECDHE-ECDSA-CHACHA20-POLY1305|ECDHE-ECDSA-AES128-GCM-SHA256]
  *
  * Once an equal-preference group is used, future directives must be
- * opcode-less.
+ * opcode-less. Inside an equal-preference group, spaces are not allowed.
  *
  * TLS 1.3 ciphers do not participate in this mechanism and instead have a
  * built-in preference order. Functions to set cipher lists do not affect TLS
@@ -2517,7 +2519,8 @@ OPENSSL_EXPORT int SSL_set_tlsext_host_name(SSL *ssl, const char *name);
 
 /* SSL_get_servername, for a server, returns the hostname supplied by the
  * client or NULL if there was none. The |type| argument must be
- * |TLSEXT_NAMETYPE_host_name|. */
+ * |TLSEXT_NAMETYPE_host_name|. Note that the returned pointer points inside
+ * |ssl| and is only valid until the next operation on |ssl|. */
 OPENSSL_EXPORT const char *SSL_get_servername(const SSL *ssl, const int type);
 
 /* SSL_get_servername_type, for a server, returns |TLSEXT_NAMETYPE_host_name|
@@ -2816,20 +2819,17 @@ OPENSSL_EXPORT const SRTP_PROTECTION_PROFILE *SSL_get_selected_srtp_profile(
  * The callback returns the length of the PSK or 0 if no suitable identity was
  * found. */
 OPENSSL_EXPORT void SSL_CTX_set_psk_client_callback(
-    SSL_CTX *ctx,
-    unsigned (*psk_client_callback)(
-        SSL *ssl, const char *hint, char *identity,
-        unsigned max_identity_len, uint8_t *psk, unsigned max_psk_len));
+    SSL_CTX *ctx, unsigned (*cb)(SSL *ssl, const char *hint, char *identity,
+                                 unsigned max_identity_len, uint8_t *psk,
+                                 unsigned max_psk_len));
 
 /* SSL_set_psk_client_callback sets the callback to be called when PSK is
  * negotiated on the client. This callback must be set to enable PSK cipher
  * suites on the client. See also |SSL_CTX_set_psk_client_callback|. */
 OPENSSL_EXPORT void SSL_set_psk_client_callback(
-    SSL *ssl, unsigned (*psk_client_callback)(SSL *ssl, const char *hint,
-                                              char *identity,
-                                              unsigned max_identity_len,
-                                              uint8_t *psk,
-                                              unsigned max_psk_len));
+    SSL *ssl, unsigned (*cb)(SSL *ssl, const char *hint, char *identity,
+                             unsigned max_identity_len, uint8_t *psk,
+                             unsigned max_psk_len));
 
 /* SSL_CTX_set_psk_server_callback sets the callback to be called when PSK is
  * negotiated on the server. This callback must be set to enable PSK cipher
@@ -2839,19 +2839,15 @@ OPENSSL_EXPORT void SSL_set_psk_client_callback(
  * length at most |max_psk_len| to |psk| and return the number of bytes written
  * or zero if the PSK identity is unknown. */
 OPENSSL_EXPORT void SSL_CTX_set_psk_server_callback(
-    SSL_CTX *ctx,
-    unsigned (*psk_server_callback)(SSL *ssl, const char *identity,
-                                    uint8_t *psk,
-                                    unsigned max_psk_len));
+    SSL_CTX *ctx, unsigned (*cb)(SSL *ssl, const char *identity, uint8_t *psk,
+                                 unsigned max_psk_len));
 
 /* SSL_set_psk_server_callback sets the callback to be called when PSK is
  * negotiated on the server. This callback must be set to enable PSK cipher
  * suites on the server. See also |SSL_CTX_set_psk_server_callback|. */
 OPENSSL_EXPORT void SSL_set_psk_server_callback(
-    SSL *ssl,
-    unsigned (*psk_server_callback)(SSL *ssl, const char *identity,
-                                    uint8_t *psk,
-                                    unsigned max_psk_len));
+    SSL *ssl, unsigned (*cb)(SSL *ssl, const char *identity, uint8_t *psk,
+                             unsigned max_psk_len));
 
 /* SSL_CTX_use_psk_identity_hint configures server connections to advertise an
  * identity hint of |identity_hint|. It returns one on success and zero on
@@ -2898,14 +2894,14 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
  *
  * Early data as a client is more complex. If the offered session (see
  * |SSL_set_session|) is 0-RTT-capable, the handshake will return after sending
- * the ClientHello. The predicted peer certificate and ALPN protocol will be
+ * the ClientHello. The predicted peer certificates and ALPN protocol will be
  * available via the usual APIs. |SSL_write| will write early data, up to the
  * session's limit. Writes past this limit and |SSL_read| will complete the
  * handshake before continuing. Callers may also call |SSL_do_handshake| again
  * to complete the handshake sooner.
  *
  * If the server accepts early data, the handshake will succeed. |SSL_read| and
- * |SSL_write| will then act as in a 1-RTT handshake. The peer certificate and
+ * |SSL_write| will then act as in a 1-RTT handshake. The peer certificates and
  * ALPN protocol will be as predicted and need not be re-queried.
  *
  * If the server rejects early data, |SSL_do_handshake| (and thus |SSL_read| and
@@ -2915,10 +2911,12 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
  * have processed the early data due to attacker replays.
  *
  * To then continue the handshake on the original connection, use
- * |SSL_reset_early_data_reject|. This allows a faster retry than making a fresh
- * connection. |SSL_do_handshake| will the complete the full handshake as in a
- * fresh connection. Once reset, the peer certificate, ALPN protocol, and other
- * properties may change so the caller must query them again.
+ * |SSL_reset_early_data_reject|. The connection will then behave as one which
+ * had not yet completed the handshake. This allows a faster retry than making a
+ * fresh connection. |SSL_do_handshake| will complete the full handshake,
+ * possibly resulting in different peer certificates, ALPN protocol, and other
+ * properties. The caller must disregard any values from before the reset and
+ * query again.
  *
  * Finally, to implement the fallback described in draft-ietf-tls-tls13-18
  * appendix C.3, retry on a fresh connection without 0-RTT if the handshake
@@ -3569,7 +3567,7 @@ OPENSSL_EXPORT int SSL_CTX_sess_timeouts(const SSL_CTX *ctx);
 OPENSSL_EXPORT int SSL_CTX_sess_cache_full(const SSL_CTX *ctx);
 
 /* SSL_cutthrough_complete calls |SSL_in_false_start|. */
-OPENSSL_EXPORT int SSL_cutthrough_complete(const SSL *s);
+OPENSSL_EXPORT int SSL_cutthrough_complete(const SSL *ssl);
 
 /* SSL_num_renegotiations calls |SSL_total_renegotiations|. */
 OPENSSL_EXPORT int SSL_num_renegotiations(const SSL *ssl);
@@ -3593,10 +3591,10 @@ OPENSSL_EXPORT int SSL_CTX_get_read_ahead(const SSL_CTX *ctx);
 OPENSSL_EXPORT void SSL_CTX_set_read_ahead(SSL_CTX *ctx, int yes);
 
 /* SSL_get_read_ahead returns zero. */
-OPENSSL_EXPORT int SSL_get_read_ahead(const SSL *s);
+OPENSSL_EXPORT int SSL_get_read_ahead(const SSL *ssl);
 
 /* SSL_set_read_ahead does nothing. */
-OPENSSL_EXPORT void SSL_set_read_ahead(SSL *s, int yes);
+OPENSSL_EXPORT void SSL_set_read_ahead(SSL *ssl, int yes);
 
 /* SSL_renegotiate put an error on the error queue and returns zero. */
 OPENSSL_EXPORT int SSL_renegotiate(SSL *ssl);
@@ -3661,10 +3659,10 @@ OPENSSL_EXPORT int SSL_CTX_set_tlsext_use_srtp(SSL_CTX *ctx,
 OPENSSL_EXPORT int SSL_set_tlsext_use_srtp(SSL *ssl, const char *profiles);
 
 /* SSL_get_current_compression returns NULL. */
-OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_compression(SSL *s);
+OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_compression(SSL *ssl);
 
 /* SSL_get_current_expansion returns NULL. */
-OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *s);
+OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
 
 /* SSL_get_server_tmp_key returns zero. */
 OPENSSL_EXPORT int *SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key);
@@ -3677,11 +3675,11 @@ OPENSSL_EXPORT int SSL_set_tmp_dh(SSL *ssl, const DH *dh);
 
 /* SSL_CTX_set_tmp_dh_callback does nothing. */
 OPENSSL_EXPORT void SSL_CTX_set_tmp_dh_callback(
-    SSL_CTX *ctx, DH *(*callback)(SSL *ssl, int is_export, int keylength));
+    SSL_CTX *ctx, DH *(*cb)(SSL *ssl, int is_export, int keylength));
 
 /* SSL_set_tmp_dh_callback does nothing. */
 OPENSSL_EXPORT void SSL_set_tmp_dh_callback(SSL *ssl,
-                                            DH *(*dh)(SSL *ssl, int is_export,
+                                            DH *(*cb)(SSL *ssl, int is_export,
                                                       int keylength));
 
 
@@ -3781,8 +3779,7 @@ OPENSSL_EXPORT const char *SSL_get_cipher_list(const SSL *ssl, int n);
  * this function is confusing. This callback may not be registered concurrently
  * with |SSL_CTX_set_cert_cb| or |SSL_set_cert_cb|. */
 OPENSSL_EXPORT void SSL_CTX_set_client_cert_cb(
-    SSL_CTX *ctx,
-    int (*client_cert_cb)(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey));
+    SSL_CTX *ctx, int (*cb)(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey));
 
 #define SSL_NOTHING 1
 #define SSL_WRITING 2
@@ -4365,7 +4362,7 @@ struct ssl_ctx_st {
    *   in: points to the client's list of supported protocols in
    *       wire-format.
    *   inlen: the length of |in|. */
-  int (*alpn_select_cb)(SSL *s, const uint8_t **out, uint8_t *out_len,
+  int (*alpn_select_cb)(SSL *ssl, const uint8_t **out, uint8_t *out_len,
                         const uint8_t *in, unsigned in_len, void *arg);
   void *alpn_select_cb_arg;
 
@@ -4580,6 +4577,8 @@ struct ssl_ctx_st {
 #if defined(__cplusplus)
 } /* extern C */
 
+#if !defined(BORINGSSL_NO_CXX)
+
 extern "C++" {
 
 namespace bssl {
@@ -4588,9 +4587,69 @@ BORINGSSL_MAKE_DELETER(SSL, SSL_free)
 BORINGSSL_MAKE_DELETER(SSL_CTX, SSL_CTX_free)
 BORINGSSL_MAKE_DELETER(SSL_SESSION, SSL_SESSION_free)
 
+enum class OpenRecordResult {
+  kOK,
+  kDiscard,
+  kIncompleteRecord,
+  kAlertCloseNotify,
+  kAlertFatal,
+  kError,
+};
+
+/*  *** EXPERIMENTAL -- DO NOT USE ***
+ *
+ * OpenRecord decrypts the first complete SSL record from |in| in-place, sets
+ * |out| to the decrypted application data, and |out_record_len| to the length
+ * of the encrypted record. Returns:
+ * - kOK if an application-data record was successfully decrypted and verified.
+ * - kDiscard if a record was sucessfully processed, but should be discarded.
+ * - kIncompleteRecord if |in| did not contain a complete record.
+ * - kAlertCloseNotify if a record was successfully processed but is a
+ *   close_notify alert.
+ * - kAlertFatal if a record was successfully processed but is a fatal alert.
+ * - kError if an error occurred or the record is invalid. |*out_alert| will be
+ *   set to an alert to emit. */
+OPENSSL_EXPORT OpenRecordResult OpenRecord(SSL *ssl, Span<uint8_t> *out,
+                                           size_t *out_record_len,
+                                           uint8_t *out_alert,
+                                           Span<uint8_t> in);
+
+OPENSSL_EXPORT size_t SealRecordPrefixLen(const SSL *ssl, size_t plaintext_len);
+
+/* SealRecordSuffixLen returns the length of the suffix written by |SealRecord|.
+ *
+ * |plaintext_len| must be equal to the size of the plaintext passed to
+ * |SealRecord|.
+ *
+ * |plaintext_len| must not exceed |SSL3_RT_MAX_PLAINTEXT_LENGTH|. The returned
+ * suffix length will not exceed |SSL3_RT_MAX_ENCRYPTED_OVERHEAD|. */
+OPENSSL_EXPORT size_t SealRecordSuffixLen(const SSL *ssl, size_t plaintext_len);
+
+/*  *** EXPERIMENTAL -- DO NOT USE ***
+ *
+ * SealRecord encrypts the cleartext of |in| and scatters the resulting TLS
+ * application data record between |out_prefix|, |out|, and |out_suffix|. It
+ * returns true on success or false if an error occurred.
+ *
+ * The length of |out_prefix| must equal |SealRecordPrefixLen|. The length of
+ * |out| must equal the length of |in|, which must not exceed
+ * |SSL3_RT_MAX_PLAINTEXT_LENGTH|. The length of |out_suffix| must equal
+ * |SealRecordSuffixLen|.
+ *
+ * If enabled, |SealRecord| may perform TLS 1.0 CBC 1/n-1 record splitting.
+ * |SealRecordPrefixLen| accounts for the required overhead if that is the case.
+ *
+ * |out| may equal |in| to encrypt in-place but may not otherwise alias.
+ * |out_prefix| and |out_suffix| may not alias anything. */
+OPENSSL_EXPORT bool SealRecord(SSL *ssl, Span<uint8_t> out_prefix,
+                               Span<uint8_t> out, Span<uint8_t> out_suffix,
+                               Span<const uint8_t> in);
+
 }  // namespace bssl
 
 }  /* extern C++ */
+
+#endif  // !defined(BORINGSSL_NO_CXX)
 
 #endif
 
