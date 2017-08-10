@@ -238,7 +238,6 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
           goto end;
         }
         if (ssl->d1->send_cookie) {
-          ssl->method->received_flight(ssl);
           hs->state = SSL3_ST_CW_CLNT_HELLO_A;
         } else {
           hs->state = SSL3_ST_CR_SRVR_HELLO_A;
@@ -333,7 +332,6 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
         if (ret <= 0) {
           goto end;
         }
-        ssl->method->received_flight(ssl);
         hs->state = SSL3_ST_CW_CERT_A;
         break;
 
@@ -460,7 +458,6 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
         if (ret <= 0) {
           goto end;
         }
-        ssl->method->received_flight(ssl);
 
         if (ssl->session != NULL) {
           hs->state = SSL3_ST_CW_CHANGE;
@@ -475,9 +472,6 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
           goto end;
         }
         hs->state = hs->next_state;
-        if (hs->state != SSL3_ST_FINISH_CLIENT_HANDSHAKE) {
-          ssl->method->expect_flight(ssl);
-        }
         break;
 
       case SSL_ST_TLS13: {
@@ -497,6 +491,7 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
       }
 
       case SSL3_ST_FINISH_CLIENT_HANDSHAKE:
+        ssl->method->on_handshake_complete(ssl);
         ssl->method->release_current_message(ssl, 1 /* free_buffer */);
 
         SSL_SESSION_free(ssl->s3->established_session);
@@ -599,10 +594,8 @@ static int ssl_write_client_cipher_list(SSL_HANDSHAKE *hs, CBB *out) {
   }
 
   if (hs->min_version < TLS1_3_VERSION) {
-    STACK_OF(SSL_CIPHER) *ciphers = SSL_get_ciphers(ssl);
     int any_enabled = 0;
-    for (size_t i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
-      const SSL_CIPHER *cipher = sk_SSL_CIPHER_value(ciphers, i);
+    for (const SSL_CIPHER *cipher : SSL_get_ciphers(ssl)) {
       /* Skip disabled ciphers */
       if ((cipher->algorithm_mkey & mask_k) ||
           (cipher->algorithm_auth & mask_a)) {
@@ -783,7 +776,7 @@ static int dtls1_get_hello_verify_request(SSL_HANDSHAKE *hs) {
   }
 
   if (ssl->s3->tmp.message_type != DTLS1_MT_HELLO_VERIFY_REQUEST) {
-    ssl->d1->send_cookie = 0;
+    ssl->d1->send_cookie = false;
     ssl->s3->tmp.reuse_message = 1;
     return 1;
   }
@@ -801,7 +794,7 @@ static int dtls1_get_hello_verify_request(SSL_HANDSHAKE *hs) {
   OPENSSL_memcpy(ssl->d1->cookie, CBS_data(&cookie), CBS_len(&cookie));
   ssl->d1->cookie_len = CBS_len(&cookie);
 
-  ssl->d1->send_cookie = 1;
+  ssl->d1->send_cookie = true;
   return 1;
 }
 
@@ -1087,15 +1080,14 @@ static int ssl3_get_server_certificate(SSL_HANDSHAKE *hs) {
   CBS_init(&cbs, ssl->init_msg, ssl->init_num);
 
   uint8_t alert = SSL_AD_DECODE_ERROR;
-  sk_CRYPTO_BUFFER_pop_free(hs->new_session->certs, CRYPTO_BUFFER_free);
-  hs->peer_pubkey.reset();
-  hs->new_session->certs =
-      ssl_parse_cert_chain(&alert, &hs->peer_pubkey, NULL, &cbs, ssl->ctx->pool)
-          .release();
-  if (hs->new_session->certs == NULL) {
+  UniquePtr<STACK_OF(CRYPTO_BUFFER)> chain;
+  if (!ssl_parse_cert_chain(&alert, &chain, &hs->peer_pubkey, NULL, &cbs,
+                            ssl->ctx->pool)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
     return -1;
   }
+  sk_CRYPTO_BUFFER_pop_free(hs->new_session->certs, CRYPTO_BUFFER_free);
+  hs->new_session->certs = chain.release();
 
   if (sk_CRYPTO_BUFFER_num(hs->new_session->certs) == 0 ||
       CBS_len(&cbs) != 0 ||
