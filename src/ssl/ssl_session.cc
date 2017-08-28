@@ -227,24 +227,15 @@ UniquePtr<SSL_SESSION> SSL_SESSION_dup(SSL_SESSION *session, int dup_flags) {
 
   new_session->verify_result = session->verify_result;
 
-  new_session->ocsp_response_length = session->ocsp_response_length;
   if (session->ocsp_response != NULL) {
-    new_session->ocsp_response = (uint8_t *)BUF_memdup(
-        session->ocsp_response, session->ocsp_response_length);
-    if (new_session->ocsp_response == NULL) {
-      return nullptr;
-    }
+    new_session->ocsp_response = session->ocsp_response;
+    CRYPTO_BUFFER_up_ref(new_session->ocsp_response);
   }
 
-  new_session->tlsext_signed_cert_timestamp_list_length =
-      session->tlsext_signed_cert_timestamp_list_length;
-  if (session->tlsext_signed_cert_timestamp_list != NULL) {
-    new_session->tlsext_signed_cert_timestamp_list = (uint8_t *)BUF_memdup(
-        session->tlsext_signed_cert_timestamp_list,
-        session->tlsext_signed_cert_timestamp_list_length);
-    if (new_session->tlsext_signed_cert_timestamp_list == NULL) {
-      return nullptr;
-    }
+  if (session->signed_cert_timestamp_list != NULL) {
+    new_session->signed_cert_timestamp_list =
+        session->signed_cert_timestamp_list;
+    CRYPTO_BUFFER_up_ref(new_session->signed_cert_timestamp_list);
   }
 
   OPENSSL_memcpy(new_session->peer_sha256, session->peer_sha256,
@@ -437,6 +428,59 @@ int ssl_get_new_session(SSL_HANDSHAKE *hs, int is_server) {
   return 1;
 }
 
+int ssl_ctx_rotate_ticket_encryption_key(SSL_CTX *ctx) {
+  OPENSSL_timeval now;
+  ssl_ctx_get_current_time(ctx, &now);
+  {
+    /* Avoid acquiring a write lock in the common case (i.e. a non-default key
+     * is used or the default keys have not expired yet). */
+    MutexReadLock lock(&ctx->lock);
+    if (ctx->tlsext_ticket_key_current &&
+        (ctx->tlsext_ticket_key_current->next_rotation_tv_sec == 0 ||
+         ctx->tlsext_ticket_key_current->next_rotation_tv_sec > now.tv_sec) &&
+        (!ctx->tlsext_ticket_key_prev ||
+         ctx->tlsext_ticket_key_prev->next_rotation_tv_sec > now.tv_sec)) {
+      return 1;
+    }
+  }
+
+  MutexWriteLock lock(&ctx->lock);
+  if (!ctx->tlsext_ticket_key_current ||
+      (ctx->tlsext_ticket_key_current->next_rotation_tv_sec != 0 &&
+       ctx->tlsext_ticket_key_current->next_rotation_tv_sec <= now.tv_sec)) {
+    /* The current key has not been initialized or it is expired. */
+    auto new_key = bssl::MakeUnique<struct tlsext_ticket_key>();
+    if (!new_key) {
+      return 0;
+    }
+    OPENSSL_memset(new_key.get(), 0, sizeof(struct tlsext_ticket_key));
+    if (ctx->tlsext_ticket_key_current) {
+      /* The current key expired. Rotate it to prev and bump up its rotation
+       * timestamp. Note that even with the new rotation time it may still be
+       * expired and get droppped below. */
+      ctx->tlsext_ticket_key_current->next_rotation_tv_sec +=
+          SSL_DEFAULT_TICKET_KEY_ROTATION_INTERVAL;
+      OPENSSL_free(ctx->tlsext_ticket_key_prev);
+      ctx->tlsext_ticket_key_prev = ctx->tlsext_ticket_key_current;
+    }
+    ctx->tlsext_ticket_key_current = new_key.release();
+    RAND_bytes(ctx->tlsext_ticket_key_current->name, 16);
+    RAND_bytes(ctx->tlsext_ticket_key_current->hmac_key, 16);
+    RAND_bytes(ctx->tlsext_ticket_key_current->aes_key, 16);
+    ctx->tlsext_ticket_key_current->next_rotation_tv_sec =
+        now.tv_sec + SSL_DEFAULT_TICKET_KEY_ROTATION_INTERVAL;
+  }
+
+  /* Drop an expired prev key. */
+  if (ctx->tlsext_ticket_key_prev &&
+      ctx->tlsext_ticket_key_prev->next_rotation_tv_sec <= now.tv_sec) {
+    OPENSSL_free(ctx->tlsext_ticket_key_prev);
+    ctx->tlsext_ticket_key_prev = nullptr;
+  }
+
+  return 1;
+}
+
 static int ssl_encrypt_ticket_with_cipher_ctx(SSL *ssl, CBB *out,
                                               const uint8_t *session_buf,
                                               size_t session_len) {
@@ -464,14 +508,19 @@ static int ssl_encrypt_ticket_with_cipher_ctx(SSL *ssl, CBB *out,
       return 0;
     }
   } else {
+    /* Rotate ticket key if necessary. */
+    if (!ssl_ctx_rotate_ticket_encryption_key(tctx)) {
+      return 0;
+    }
+    MutexReadLock lock(&tctx->lock);
     if (!RAND_bytes(iv, 16) ||
         !EVP_EncryptInit_ex(ctx.get(), EVP_aes_128_cbc(), NULL,
-                            tctx->tlsext_tick_aes_key, iv) ||
-        !HMAC_Init_ex(hctx.get(), tctx->tlsext_tick_hmac_key, 16,
+                            tctx->tlsext_ticket_key_current->aes_key, iv) ||
+        !HMAC_Init_ex(hctx.get(), tctx->tlsext_ticket_key_current->hmac_key, 16,
                       tlsext_tick_md(), NULL)) {
       return 0;
     }
-    OPENSSL_memcpy(key_name, tctx->tlsext_tick_key_name, 16);
+    OPENSSL_memcpy(key_name, tctx->tlsext_ticket_key_current->name, 16);
   }
 
   uint8_t *ptr;
@@ -840,8 +889,8 @@ void SSL_SESSION_free(SSL_SESSION *session) {
   session->x509_method->session_clear(session);
   OPENSSL_free(session->tlsext_hostname);
   OPENSSL_free(session->tlsext_tick);
-  OPENSSL_free(session->tlsext_signed_cert_timestamp_list);
-  OPENSSL_free(session->ocsp_response);
+  CRYPTO_BUFFER_free(session->signed_cert_timestamp_list);
+  CRYPTO_BUFFER_free(session->ocsp_response);
   OPENSSL_free(session->psk_identity);
   OPENSSL_free(session->early_alpn);
   OPENSSL_cleanse(session, sizeof(*session));
