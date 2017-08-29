@@ -112,6 +112,9 @@ struct TestState {
   bool alpn_select_done = false;
   bool is_resume = false;
   bool early_callback_ready = false;
+  // cert_verified is true if certificate verification has been driven to
+  // completion. This tests that the callback is not called again after this.
+  bool cert_verified = false;
 };
 
 static void TestStateExFree(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
@@ -684,27 +687,41 @@ static int CertCallback(SSL *ssl, void *arg) {
   return 1;
 }
 
-static int VerifySucceed(X509_STORE_CTX *store_ctx, void *arg) {
-  SSL* ssl = (SSL*)X509_STORE_CTX_get_ex_data(store_ctx,
-      SSL_get_ex_data_X509_STORE_CTX_idx());
+static bool CheckVerifyCallback(SSL *ssl) {
   const TestConfig *config = GetTestConfig(ssl);
-
   if (!config->expected_ocsp_response.empty()) {
     const uint8_t *data;
     size_t len;
     SSL_get0_ocsp_response(ssl, &data, &len);
     if (len == 0) {
       fprintf(stderr, "OCSP response not available in verify callback\n");
-      return 0;
+      return false;
     }
   }
 
-  return 1;
+  if (GetTestState(ssl)->cert_verified) {
+    fprintf(stderr, "Certificate verified twice.\n");
+    return false;
+  }
+
+  return true;
 }
 
-static int VerifyFail(X509_STORE_CTX *store_ctx, void *arg) {
-  store_ctx->error = X509_V_ERR_APPLICATION_VERIFICATION;
-  return 0;
+static int CertVerifyCallback(X509_STORE_CTX *store_ctx, void *arg) {
+  SSL* ssl = (SSL*)X509_STORE_CTX_get_ex_data(store_ctx,
+      SSL_get_ex_data_X509_STORE_CTX_idx());
+  const TestConfig *config = GetTestConfig(ssl);
+  if (!CheckVerifyCallback(ssl)) {
+    return 0;
+  }
+
+  GetTestState(ssl)->cert_verified = true;
+  if (config->verify_fail) {
+    store_ctx->error = X509_V_ERR_APPLICATION_VERIFICATION;
+    return 0;
+  }
+
+  return 1;
 }
 
 static int NextProtosAdvertisedCallback(SSL *ssl, const uint8_t **out,
@@ -1139,11 +1156,7 @@ static bssl::UniquePtr<SSL_CTX> SetupCtx(SSL_CTX *old_ctx,
     return nullptr;
   }
 
-  if (config->verify_fail) {
-    SSL_CTX_set_cert_verify_callback(ssl_ctx.get(), VerifyFail, NULL);
-  } else {
-    SSL_CTX_set_cert_verify_callback(ssl_ctx.get(), VerifySucceed, NULL);
-  }
+  SSL_CTX_set_cert_verify_callback(ssl_ctx.get(), CertVerifyCallback, NULL);
 
   if (!config->signed_cert_timestamps.empty() &&
       !SSL_CTX_set_signed_cert_timestamp_list(
@@ -1374,11 +1387,115 @@ static uint16_t GetProtocolVersion(const SSL *ssl) {
   return 0x0201 + ~version;
 }
 
+// CheckAuthProperties checks, after the initial handshake is completed or
+// after a renegotiation, that authentication-related properties match |config|.
+static bool CheckAuthProperties(SSL *ssl, bool is_resume,
+                                const TestConfig *config) {
+  if (!config->expected_ocsp_response.empty()) {
+    const uint8_t *data;
+    size_t len;
+    SSL_get0_ocsp_response(ssl, &data, &len);
+    if (config->expected_ocsp_response.size() != len ||
+        OPENSSL_memcmp(config->expected_ocsp_response.data(), data, len) != 0) {
+      fprintf(stderr, "OCSP response mismatch\n");
+      return false;
+    }
+  }
+
+  if (!config->expected_signed_cert_timestamps.empty()) {
+    const uint8_t *data;
+    size_t len;
+    SSL_get0_signed_cert_timestamp_list(ssl, &data, &len);
+    if (config->expected_signed_cert_timestamps.size() != len ||
+        OPENSSL_memcmp(config->expected_signed_cert_timestamps.data(), data,
+                       len) != 0) {
+      fprintf(stderr, "SCT list mismatch\n");
+      return false;
+    }
+  }
+
+  if (config->expect_verify_result) {
+    int expected_verify_result = config->verify_fail ?
+      X509_V_ERR_APPLICATION_VERIFICATION :
+      X509_V_OK;
+
+    if (SSL_get_verify_result(ssl) != expected_verify_result) {
+      fprintf(stderr, "Wrong certificate verification result\n");
+      return false;
+    }
+  }
+
+  if (!config->expect_peer_cert_file.empty()) {
+    bssl::UniquePtr<X509> expect_leaf;
+    bssl::UniquePtr<STACK_OF(X509)> expect_chain;
+    if (!LoadCertificate(&expect_leaf, &expect_chain,
+                         config->expect_peer_cert_file)) {
+      return false;
+    }
+
+    // For historical reasons, clients report a chain with a leaf and servers
+    // without.
+    if (!config->is_server) {
+      if (!sk_X509_insert(expect_chain.get(), expect_leaf.get(), 0)) {
+        return false;
+      }
+      X509_up_ref(expect_leaf.get());  // sk_X509_push takes ownership.
+    }
+
+    bssl::UniquePtr<X509> leaf(SSL_get_peer_certificate(ssl));
+    STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
+    if (X509_cmp(leaf.get(), expect_leaf.get()) != 0) {
+      fprintf(stderr, "Received a different leaf certificate than expected.\n");
+      return false;
+    }
+
+    if (sk_X509_num(chain) != sk_X509_num(expect_chain.get())) {
+      fprintf(stderr, "Received a chain of length %zu instead of %zu.\n",
+              sk_X509_num(chain), sk_X509_num(expect_chain.get()));
+      return false;
+    }
+
+    for (size_t i = 0; i < sk_X509_num(chain); i++) {
+      if (X509_cmp(sk_X509_value(chain, i),
+                   sk_X509_value(expect_chain.get(), i)) != 0) {
+        fprintf(stderr, "Chain certificate %zu did not match.\n",
+                i + 1);
+        return false;
+      }
+    }
+  }
+
+  bool expected_sha256_client_cert = config->expect_sha256_client_cert_initial;
+  if (is_resume) {
+    expected_sha256_client_cert = config->expect_sha256_client_cert_resume;
+  }
+
+  if (SSL_get_session(ssl)->peer_sha256_valid != expected_sha256_client_cert) {
+    fprintf(stderr,
+            "Unexpected SHA-256 client cert state: expected:%d is_resume:%d.\n",
+            expected_sha256_client_cert, is_resume);
+    return false;
+  }
+
+  if (expected_sha256_client_cert &&
+      SSL_get_session(ssl)->certs != nullptr) {
+    fprintf(stderr, "Have both client cert and SHA-256 hash: is_resume:%d.\n",
+            is_resume);
+    return false;
+  }
+
+  return true;
+}
+
 // CheckHandshakeProperties checks, immediately after |ssl| completes its
 // initial handshake (or False Starts), whether all the properties are
 // consistent with the test configuration and invariants.
 static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
                                      const TestConfig *config) {
+  if (!CheckAuthProperties(ssl, is_resume, config)) {
+    return false;
+  }
+
   if (SSL_get_current_cipher(ssl) == nullptr) {
     fprintf(stderr, "null cipher after handshake\n");
     return false;
@@ -1504,40 +1621,6 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     return false;
   }
 
-  if (!config->expected_ocsp_response.empty()) {
-    const uint8_t *data;
-    size_t len;
-    SSL_get0_ocsp_response(ssl, &data, &len);
-    if (config->expected_ocsp_response.size() != len ||
-        OPENSSL_memcmp(config->expected_ocsp_response.data(), data, len) != 0) {
-      fprintf(stderr, "OCSP response mismatch\n");
-      return false;
-    }
-  }
-
-  if (!config->expected_signed_cert_timestamps.empty()) {
-    const uint8_t *data;
-    size_t len;
-    SSL_get0_signed_cert_timestamp_list(ssl, &data, &len);
-    if (config->expected_signed_cert_timestamps.size() != len ||
-        OPENSSL_memcmp(config->expected_signed_cert_timestamps.data(), data,
-                       len) != 0) {
-      fprintf(stderr, "SCT list mismatch\n");
-      return false;
-    }
-  }
-
-  if (config->expect_verify_result) {
-    int expected_verify_result = config->verify_fail ?
-      X509_V_ERR_APPLICATION_VERIFICATION :
-      X509_V_OK;
-
-    if (SSL_get_verify_result(ssl) != expected_verify_result) {
-      fprintf(stderr, "Wrong certificate verification result\n");
-      return false;
-    }
-  }
-
   if (config->expect_peer_signature_algorithm != 0 &&
       config->expect_peer_signature_algorithm !=
           SSL_get_peer_signature_algorithm(ssl)) {
@@ -1594,65 +1677,6 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
       fprintf(stderr, "Received no peer certificate but expected one.\n");
       return false;
     }
-  }
-
-  if (!config->expect_peer_cert_file.empty()) {
-    bssl::UniquePtr<X509> expect_leaf;
-    bssl::UniquePtr<STACK_OF(X509)> expect_chain;
-    if (!LoadCertificate(&expect_leaf, &expect_chain,
-                         config->expect_peer_cert_file)) {
-      return false;
-    }
-
-    // For historical reasons, clients report a chain with a leaf and servers
-    // without.
-    if (!config->is_server) {
-      if (!sk_X509_insert(expect_chain.get(), expect_leaf.get(), 0)) {
-        return false;
-      }
-      X509_up_ref(expect_leaf.get());  // sk_X509_push takes ownership.
-    }
-
-    bssl::UniquePtr<X509> leaf(SSL_get_peer_certificate(ssl));
-    STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
-    if (X509_cmp(leaf.get(), expect_leaf.get()) != 0) {
-      fprintf(stderr, "Received a different leaf certificate than expected.\n");
-      return false;
-    }
-
-    if (sk_X509_num(chain) != sk_X509_num(expect_chain.get())) {
-      fprintf(stderr, "Received a chain of length %zu instead of %zu.\n",
-              sk_X509_num(chain), sk_X509_num(expect_chain.get()));
-      return false;
-    }
-
-    for (size_t i = 0; i < sk_X509_num(chain); i++) {
-      if (X509_cmp(sk_X509_value(chain, i),
-                   sk_X509_value(expect_chain.get(), i)) != 0) {
-        fprintf(stderr, "Chain certificate %zu did not match.\n",
-                i + 1);
-        return false;
-      }
-    }
-  }
-
-  bool expected_sha256_client_cert = config->expect_sha256_client_cert_initial;
-  if (is_resume) {
-    expected_sha256_client_cert = config->expect_sha256_client_cert_resume;
-  }
-
-  if (SSL_get_session(ssl)->peer_sha256_valid != expected_sha256_client_cert) {
-    fprintf(stderr,
-            "Unexpected SHA-256 client cert state: expected:%d is_resume:%d.\n",
-            expected_sha256_client_cert, is_resume);
-    return false;
-  }
-
-  if (expected_sha256_client_cert &&
-      SSL_get_session(ssl)->certs != nullptr) {
-    fprintf(stderr, "Have both client cert and SHA-256 hash: is_resume:%d.\n",
-            is_resume);
-    return false;
   }
 
   if (is_resume && config->expect_ticket_age_skew != 0 &&
@@ -2242,11 +2266,19 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session, SSL *ssl,
     return false;
   }
 
-  if (SSL_total_renegotiations(ssl) > 0 &&
-      !SSL_get_session(ssl)->not_resumable) {
-    fprintf(stderr,
-            "Renegotiations should never produce resumable sessions.\n");
-    return false;
+  if (SSL_total_renegotiations(ssl) > 0) {
+    if (!SSL_get_session(ssl)->not_resumable) {
+      fprintf(stderr,
+              "Renegotiations should never produce resumable sessions.\n");
+      return false;
+    }
+
+    // Re-check authentication properties after a renegotiation. The reported
+    // values should remain unchanged even if the server sent different SCT
+    // lists.
+    if (!CheckAuthProperties(ssl, is_resume, config)) {
+      return false;
+    }
   }
 
   if (SSL_total_renegotiations(ssl) != config->expect_total_renegotiations) {

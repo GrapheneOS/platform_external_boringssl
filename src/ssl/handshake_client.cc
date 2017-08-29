@@ -1113,33 +1113,6 @@ static int ssl3_get_server_certificate(SSL_HANDSHAKE *hs) {
     return -1;
   }
 
-  /* Disallow the server certificate from changing during a renegotiation. See
-   * https://mitls.org/pages/attacks/3SHAKE. We never resume on renegotiation,
-   * so this check is sufficient. */
-  if (ssl->s3->established_session != NULL) {
-    if (sk_CRYPTO_BUFFER_num(ssl->s3->established_session->certs) !=
-        sk_CRYPTO_BUFFER_num(hs->new_session->certs)) {
-      OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_CERT_CHANGED);
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
-      return -1;
-    }
-
-    for (size_t i = 0; i < sk_CRYPTO_BUFFER_num(hs->new_session->certs); i++) {
-      const CRYPTO_BUFFER *old_cert =
-          sk_CRYPTO_BUFFER_value(ssl->s3->established_session->certs, i);
-      const CRYPTO_BUFFER *new_cert =
-          sk_CRYPTO_BUFFER_value(hs->new_session->certs, i);
-      if (CRYPTO_BUFFER_len(old_cert) != CRYPTO_BUFFER_len(new_cert) ||
-          OPENSSL_memcmp(CRYPTO_BUFFER_data(old_cert),
-                         CRYPTO_BUFFER_data(new_cert),
-                         CRYPTO_BUFFER_len(old_cert)) != 0) {
-        OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_CERT_CHANGED);
-        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
-        return -1;
-      }
-    }
-  }
-
   return 1;
 }
 
@@ -1184,8 +1157,72 @@ static int ssl3_get_cert_status(SSL_HANDSHAKE *hs) {
   return 1;
 }
 
+static int copy_bytes(uint8_t **out, size_t *out_len, const uint8_t *in, size_t in_len) {
+  OPENSSL_free(*out);
+  *out = nullptr;
+  *out_len = 0;
+
+  if (in_len > 0) {
+    *out = (uint8_t *)BUF_memdup(in, in_len);
+    if (*out == nullptr) {
+      return 0;
+    }
+    *out_len = in_len;
+  }
+
+  return 1;
+}
+
 static int ssl3_verify_server_cert(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
+  const SSL_SESSION *prev_session = ssl->s3->established_session;
+  if (prev_session != NULL) {
+    /* If renegotiating, the server must not change the server certificate. See
+     * https://mitls.org/pages/attacks/3SHAKE. We never resume on renegotiation,
+     * so this check is sufficient to ensure the reported peer certificate never
+     * changes on renegotiation. */
+    assert(!ssl->server);
+    if (sk_CRYPTO_BUFFER_num(prev_session->certs) !=
+        sk_CRYPTO_BUFFER_num(hs->new_session->certs)) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_CERT_CHANGED);
+      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+      return -1;
+    }
+
+    for (size_t i = 0; i < sk_CRYPTO_BUFFER_num(hs->new_session->certs); i++) {
+      const CRYPTO_BUFFER *old_cert =
+          sk_CRYPTO_BUFFER_value(prev_session->certs, i);
+      const CRYPTO_BUFFER *new_cert =
+          sk_CRYPTO_BUFFER_value(hs->new_session->certs, i);
+      if (CRYPTO_BUFFER_len(old_cert) != CRYPTO_BUFFER_len(new_cert) ||
+          OPENSSL_memcmp(CRYPTO_BUFFER_data(old_cert),
+                         CRYPTO_BUFFER_data(new_cert),
+                         CRYPTO_BUFFER_len(old_cert)) != 0) {
+        OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_CERT_CHANGED);
+        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+        return -1;
+      }
+    }
+
+    /* The certificate is identical, so we may skip re-verifying the
+     * certificate. Since we only authenticated the previous one, copy other
+     * authentication from the established session and ignore what was newly
+     * received. */
+    if (!copy_bytes(&hs->new_session->ocsp_response,
+                    &hs->new_session->ocsp_response_length,
+                    prev_session->ocsp_response,
+                    prev_session->ocsp_response_length) ||
+        !copy_bytes(&hs->new_session->tlsext_signed_cert_timestamp_list,
+                    &hs->new_session->tlsext_signed_cert_timestamp_list_length,
+                    prev_session->tlsext_signed_cert_timestamp_list,
+                    prev_session->tlsext_signed_cert_timestamp_list_length)) {
+      return -1;
+    }
+
+    hs->new_session->verify_result = prev_session->verify_result;
+    return 1;
+  }
+
   if (!ssl->ctx->x509_method->session_verify_cert_chain(hs->new_session, ssl)) {
     return -1;
   }
