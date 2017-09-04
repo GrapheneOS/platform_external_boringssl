@@ -508,7 +508,10 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
             ret = -1;
             goto end;
           }
-          ssl->s3->established_session->not_resumable = 0;
+          /* Renegotiations do not participate in session resumption. */
+          if (!ssl->s3->initial_handshake_complete) {
+            ssl->s3->established_session->not_resumable = 0;
+          }
 
           hs->new_session.reset();
         }
@@ -517,12 +520,8 @@ int ssl3_connect(SSL_HANDSHAKE *hs) {
         break;
 
       case SSL_ST_OK: {
-        const int is_initial_handshake = !ssl->s3->initial_handshake_complete;
         ssl->s3->initial_handshake_complete = 1;
-        if (is_initial_handshake) {
-          /* Renegotiations do not participate in session resumption. */
-          ssl_update_cache(hs, SSL_SESS_CACHE_CLIENT);
-        }
+        ssl_update_cache(hs, SSL_SESS_CACHE_CLIENT);
 
         ret = 1;
         ssl_do_info_callback(ssl, SSL_CB_HANDSHAKE_DONE, 1);
@@ -1101,33 +1100,6 @@ static int ssl3_get_server_certificate(SSL_HANDSHAKE *hs) {
     return -1;
   }
 
-  /* Disallow the server certificate from changing during a renegotiation. See
-   * https://mitls.org/pages/attacks/3SHAKE. We never resume on renegotiation,
-   * so this check is sufficient. */
-  if (ssl->s3->established_session != NULL) {
-    if (sk_CRYPTO_BUFFER_num(ssl->s3->established_session->certs) !=
-        sk_CRYPTO_BUFFER_num(hs->new_session->certs)) {
-      OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_CERT_CHANGED);
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
-      return -1;
-    }
-
-    for (size_t i = 0; i < sk_CRYPTO_BUFFER_num(hs->new_session->certs); i++) {
-      const CRYPTO_BUFFER *old_cert =
-          sk_CRYPTO_BUFFER_value(ssl->s3->established_session->certs, i);
-      const CRYPTO_BUFFER *new_cert =
-          sk_CRYPTO_BUFFER_value(hs->new_session->certs, i);
-      if (CRYPTO_BUFFER_len(old_cert) != CRYPTO_BUFFER_len(new_cert) ||
-          OPENSSL_memcmp(CRYPTO_BUFFER_data(old_cert),
-                         CRYPTO_BUFFER_data(new_cert),
-                         CRYPTO_BUFFER_len(old_cert)) != 0) {
-        OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_CERT_CHANGED);
-        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
-        return -1;
-      }
-    }
-  }
-
   ssl->method->next_message(ssl);
   return 1;
 }
@@ -1162,9 +1134,10 @@ static int ssl3_get_cert_status(SSL_HANDSHAKE *hs) {
     return -1;
   }
 
-  if (!CBS_stow(&ocsp_response, &hs->new_session->ocsp_response,
-                &hs->new_session->ocsp_response_length)) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
+  CRYPTO_BUFFER_free(hs->new_session->ocsp_response);
+  hs->new_session->ocsp_response =
+      CRYPTO_BUFFER_new_from_CBS(&ocsp_response, ssl->ctx->pool);
+  if (hs->new_session->ocsp_response == nullptr) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
     return -1;
   }
