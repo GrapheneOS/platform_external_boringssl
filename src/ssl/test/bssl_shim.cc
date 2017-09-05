@@ -115,6 +115,8 @@ struct TestState {
   bool custom_verify_ready = false;
   std::string msg_callback_text;
   bool msg_callback_ok = true;
+  // cert_verified is true if certificate verification has been driven to
+  // completion. This tests that the callback is not called again after this.
   bool cert_verified = false;
 };
 
@@ -716,12 +718,12 @@ static int CertVerifyCallback(X509_STORE_CTX *store_ctx, void *arg) {
     return 0;
   }
 
+  GetTestState(ssl)->cert_verified = true;
   if (config->verify_fail) {
     store_ctx->error = X509_V_ERR_APPLICATION_VERIFICATION;
     return 0;
   }
 
-  GetTestState(ssl)->cert_verified = true;
   return 1;
 }
 
@@ -735,11 +737,11 @@ static ssl_verify_result_t CustomVerifyCallback(SSL *ssl, uint8_t *out_alert) {
     return ssl_verify_retry;
   }
 
+  GetTestState(ssl)->cert_verified = true;
   if (config->verify_fail) {
     return ssl_verify_invalid;
   }
 
-  GetTestState(ssl)->cert_verified = true;
   return ssl_verify_ok;
 }
 
@@ -885,6 +887,12 @@ static void InfoCallback(const SSL *ssl, int type, int val) {
       // test fails.
       abort();
     }
+    // This callback is called when the handshake completes. |SSL_get_session|
+    // must continue to work and |SSL_in_init| must return false.
+    if (SSL_in_init(ssl) || SSL_get_session(ssl) == nullptr) {
+      fprintf(stderr, "Invalid state for SSL_CB_HANDSHAKE_DONE.\n");
+      abort();
+    }
     GetTestState(ssl)->handshake_done = true;
 
     // Callbacks may be called again on a new handshake.
@@ -894,6 +902,14 @@ static void InfoCallback(const SSL *ssl, int type, int val) {
 }
 
 static int NewSessionCallback(SSL *ssl, SSL_SESSION *session) {
+  // This callback is called as the handshake completes. |SSL_get_session|
+  // must continue to work and, historically, |SSL_in_init| returned false at
+  // this point.
+  if (SSL_in_init(ssl) || SSL_get_session(ssl) == nullptr) {
+    fprintf(stderr, "Invalid state for NewSessionCallback.\n");
+    abort();
+  }
+
   GetTestState(ssl)->got_new_session = true;
   GetTestState(ssl)->new_session.reset(session);
   return 1;
@@ -1038,8 +1054,8 @@ static void MessageCallback(int is_write, int version, int content_type,
       uint8_t type;
       uint32_t msg_len;
       if (!CBS_get_u8(&cbs, &type) ||
-          /* TODO(davidben): Reporting on entire messages would be more
-           * consistent than fragments. */
+          // TODO(davidben): Reporting on entire messages would be more
+          // consistent than fragments.
           (config->is_dtls &&
            !CBS_skip(&cbs, 3 /* total */ + 2 /* seq */ + 3 /* frag_off */)) ||
           !CBS_get_u24(&cbs, &msg_len) ||
@@ -2419,7 +2435,7 @@ int main(int argc, char **argv) {
   StderrDelimiter delimiter;
 
 #if defined(OPENSSL_WINDOWS)
-  /* Initialize Winsock. */
+  // Initialize Winsock.
   WORD wsa_version = MAKEWORD(2, 2);
   WSADATA wsa_data;
   int wsa_err = WSAStartup(wsa_version, &wsa_data);
