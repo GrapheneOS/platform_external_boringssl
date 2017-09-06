@@ -40,7 +40,7 @@
 #include "../crypto/test/test_util.h"
 
 #if defined(OPENSSL_WINDOWS)
-/* Windows defines struct timeval in winsock2.h. */
+// Windows defines struct timeval in winsock2.h.
 OPENSSL_MSVC_PRAGMA(warning(push, 3))
 #include <winsock2.h>
 OPENSSL_MSVC_PRAGMA(warning(pop))
@@ -476,7 +476,7 @@ TEST(SSLTest, CipherRules) {
 
     ASSERT_TRUE(SSL_CTX_set_strict_cipher_list(ctx.get(), rule));
     for (const SSL_CIPHER *cipher : SSL_CTX_get_ciphers(ctx.get())) {
-      EXPECT_FALSE(SSL_CIPHER_is_NULL(cipher));
+      EXPECT_NE(NID_undef, SSL_CIPHER_get_cipher_nid(cipher));
     }
   }
 }
@@ -1104,149 +1104,6 @@ static bool TestPaddingExtension(uint16_t max_version,
   return true;
 }
 
-// Test that |SSL_get_client_CA_list| echoes back the configured parameter even
-// before configuring as a server.
-TEST(SSLTest, ClientCAList) {
-  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
-  ASSERT_TRUE(ctx);
-  bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
-  ASSERT_TRUE(ssl);
-
-  bssl::UniquePtr<X509_NAME> name(X509_NAME_new());
-  ASSERT_TRUE(name);
-
-  bssl::UniquePtr<X509_NAME> name_dup(X509_NAME_dup(name.get()));
-  ASSERT_TRUE(name_dup);
-
-  bssl::UniquePtr<STACK_OF(X509_NAME)> stack(sk_X509_NAME_new_null());
-  ASSERT_TRUE(stack);
-
-  ASSERT_TRUE(sk_X509_NAME_push(stack.get(), name_dup.get()));
-  name_dup.release();
-
-  // |SSL_set_client_CA_list| takes ownership.
-  SSL_set_client_CA_list(ssl.get(), stack.release());
-
-  STACK_OF(X509_NAME) *result = SSL_get_client_CA_list(ssl.get());
-  ASSERT_TRUE(result);
-  ASSERT_EQ(1u, sk_X509_NAME_num(result));
-  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(result, 0), name.get()));
-}
-
-static void AppendSession(SSL_SESSION *session, void *arg) {
-  std::vector<SSL_SESSION*> *out =
-      reinterpret_cast<std::vector<SSL_SESSION*>*>(arg);
-  out->push_back(session);
-}
-
-// CacheEquals returns true if |ctx|'s session cache consists of |expected|, in
-// order.
-static bool CacheEquals(SSL_CTX *ctx,
-                        const std::vector<SSL_SESSION*> &expected) {
-  // Check the linked list.
-  SSL_SESSION *ptr = ctx->session_cache_head;
-  for (SSL_SESSION *session : expected) {
-    if (ptr != session) {
-      return false;
-    }
-    // TODO(davidben): This is an absurd way to denote the end of the list.
-    if (ptr->next ==
-        reinterpret_cast<SSL_SESSION *>(&ctx->session_cache_tail)) {
-      ptr = nullptr;
-    } else {
-      ptr = ptr->next;
-    }
-  }
-  if (ptr != nullptr) {
-    return false;
-  }
-
-  // Check the hash table.
-  std::vector<SSL_SESSION*> actual, expected_copy;
-  lh_SSL_SESSION_doall_arg(SSL_CTX_sessions(ctx), AppendSession, &actual);
-  expected_copy = expected;
-
-  std::sort(actual.begin(), actual.end());
-  std::sort(expected_copy.begin(), expected_copy.end());
-
-  return actual == expected_copy;
-}
-
-static bssl::UniquePtr<SSL_SESSION> CreateTestSession(uint32_t number) {
-  bssl::UniquePtr<SSL_CTX> ssl_ctx(SSL_CTX_new(TLS_method()));
-  if (!ssl_ctx) {
-    return nullptr;
-  }
-  bssl::UniquePtr<SSL_SESSION> ret(SSL_SESSION_new(ssl_ctx.get()));
-  if (!ret) {
-    return nullptr;
-  }
-
-  ret->session_id_length = SSL3_SSL_SESSION_ID_LENGTH;
-  OPENSSL_memset(ret->session_id, 0, ret->session_id_length);
-  OPENSSL_memcpy(ret->session_id, &number, sizeof(number));
-  return ret;
-}
-
-// Test that the internal session cache behaves as expected.
-TEST(SSLTest, InternalSessionCache) {
-  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
-  ASSERT_TRUE(ctx);
-
-  // Prepare 10 test sessions.
-  std::vector<bssl::UniquePtr<SSL_SESSION>> sessions;
-  for (int i = 0; i < 10; i++) {
-    bssl::UniquePtr<SSL_SESSION> session = CreateTestSession(i);
-    ASSERT_TRUE(session);
-    sessions.push_back(std::move(session));
-  }
-
-  SSL_CTX_sess_set_cache_size(ctx.get(), 5);
-
-  // Insert all the test sessions.
-  for (const auto &session : sessions) {
-    ASSERT_TRUE(SSL_CTX_add_session(ctx.get(), session.get()));
-  }
-
-  // Only the last five should be in the list.
-  ASSERT_TRUE(CacheEquals(
-      ctx.get(), {sessions[9].get(), sessions[8].get(), sessions[7].get(),
-                  sessions[6].get(), sessions[5].get()}));
-
-  // Inserting an element already in the cache should fail and leave the cache
-  // unchanged.
-  ASSERT_FALSE(SSL_CTX_add_session(ctx.get(), sessions[7].get()));
-  ASSERT_TRUE(CacheEquals(
-      ctx.get(), {sessions[9].get(), sessions[8].get(), sessions[7].get(),
-                  sessions[6].get(), sessions[5].get()}));
-
-  // Although collisions should be impossible (256-bit session IDs), the cache
-  // must handle them gracefully.
-  bssl::UniquePtr<SSL_SESSION> collision(CreateTestSession(7));
-  ASSERT_TRUE(collision);
-  ASSERT_TRUE(SSL_CTX_add_session(ctx.get(), collision.get()));
-  ASSERT_TRUE(CacheEquals(
-      ctx.get(), {collision.get(), sessions[9].get(), sessions[8].get(),
-                  sessions[6].get(), sessions[5].get()}));
-
-  // Removing sessions behaves correctly.
-  ASSERT_TRUE(SSL_CTX_remove_session(ctx.get(), sessions[6].get()));
-  ASSERT_TRUE(CacheEquals(ctx.get(), {collision.get(), sessions[9].get(),
-                                      sessions[8].get(), sessions[5].get()}));
-
-  // Removing sessions requires an exact match.
-  ASSERT_FALSE(SSL_CTX_remove_session(ctx.get(), sessions[0].get()));
-  ASSERT_FALSE(SSL_CTX_remove_session(ctx.get(), sessions[7].get()));
-
-  // The cache remains unchanged.
-  ASSERT_TRUE(CacheEquals(ctx.get(), {collision.get(), sessions[9].get(),
-                                      sessions[8].get(), sessions[5].get()}));
-}
-
-static uint16_t EpochFromSequence(uint64_t seq) {
-  return static_cast<uint16_t>(seq >> 48);
-}
-
 static bssl::UniquePtr<X509> GetTestCertificate() {
   static const char kCertPEM[] =
       "-----BEGIN CERTIFICATE-----\n"
@@ -1437,6 +1294,180 @@ static bssl::UniquePtr<EVP_PKEY> GetChainTestKey() {
       PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr));
 }
 
+// Test that |SSL_get_client_CA_list| echoes back the configured parameter even
+// before configuring as a server.
+TEST(SSLTest, ClientCAList) {
+  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(ctx);
+  bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
+  ASSERT_TRUE(ssl);
+
+  bssl::UniquePtr<X509_NAME> name(X509_NAME_new());
+  ASSERT_TRUE(name);
+
+  bssl::UniquePtr<X509_NAME> name_dup(X509_NAME_dup(name.get()));
+  ASSERT_TRUE(name_dup);
+
+  bssl::UniquePtr<STACK_OF(X509_NAME)> stack(sk_X509_NAME_new_null());
+  ASSERT_TRUE(stack);
+
+  ASSERT_TRUE(sk_X509_NAME_push(stack.get(), name_dup.get()));
+  name_dup.release();
+
+  // |SSL_set_client_CA_list| takes ownership.
+  SSL_set_client_CA_list(ssl.get(), stack.release());
+
+  STACK_OF(X509_NAME) *result = SSL_get_client_CA_list(ssl.get());
+  ASSERT_TRUE(result);
+  ASSERT_EQ(1u, sk_X509_NAME_num(result));
+  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(result, 0), name.get()));
+}
+
+TEST(SSLTest, AddClientCA) {
+  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(ctx);
+  bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
+  ASSERT_TRUE(ssl);
+
+  bssl::UniquePtr<X509> cert1 = GetTestCertificate();
+  bssl::UniquePtr<X509> cert2 = GetChainTestCertificate();
+  ASSERT_TRUE(cert1 && cert2);
+  X509_NAME *name1 = X509_get_subject_name(cert1.get());
+  X509_NAME *name2 = X509_get_subject_name(cert2.get());
+
+  EXPECT_EQ(0u, sk_X509_NAME_num(SSL_get_client_CA_list(ssl.get())));
+
+  ASSERT_TRUE(SSL_add_client_CA(ssl.get(), cert1.get()));
+  ASSERT_TRUE(SSL_add_client_CA(ssl.get(), cert2.get()));
+
+  STACK_OF(X509_NAME) *list = SSL_get_client_CA_list(ssl.get());
+  ASSERT_EQ(2u, sk_X509_NAME_num(list));
+  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(list, 0), name1));
+  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(list, 1), name2));
+
+  ASSERT_TRUE(SSL_add_client_CA(ssl.get(), cert1.get()));
+
+  list = SSL_get_client_CA_list(ssl.get());
+  ASSERT_EQ(3u, sk_X509_NAME_num(list));
+  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(list, 0), name1));
+  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(list, 1), name2));
+  EXPECT_EQ(0, X509_NAME_cmp(sk_X509_NAME_value(list, 2), name1));
+}
+
+static void AppendSession(SSL_SESSION *session, void *arg) {
+  std::vector<SSL_SESSION*> *out =
+      reinterpret_cast<std::vector<SSL_SESSION*>*>(arg);
+  out->push_back(session);
+}
+
+// CacheEquals returns true if |ctx|'s session cache consists of |expected|, in
+// order.
+static bool CacheEquals(SSL_CTX *ctx,
+                        const std::vector<SSL_SESSION*> &expected) {
+  // Check the linked list.
+  SSL_SESSION *ptr = ctx->session_cache_head;
+  for (SSL_SESSION *session : expected) {
+    if (ptr != session) {
+      return false;
+    }
+    // TODO(davidben): This is an absurd way to denote the end of the list.
+    if (ptr->next ==
+        reinterpret_cast<SSL_SESSION *>(&ctx->session_cache_tail)) {
+      ptr = nullptr;
+    } else {
+      ptr = ptr->next;
+    }
+  }
+  if (ptr != nullptr) {
+    return false;
+  }
+
+  // Check the hash table.
+  std::vector<SSL_SESSION*> actual, expected_copy;
+  lh_SSL_SESSION_doall_arg(SSL_CTX_sessions(ctx), AppendSession, &actual);
+  expected_copy = expected;
+
+  std::sort(actual.begin(), actual.end());
+  std::sort(expected_copy.begin(), expected_copy.end());
+
+  return actual == expected_copy;
+}
+
+static bssl::UniquePtr<SSL_SESSION> CreateTestSession(uint32_t number) {
+  bssl::UniquePtr<SSL_CTX> ssl_ctx(SSL_CTX_new(TLS_method()));
+  if (!ssl_ctx) {
+    return nullptr;
+  }
+  bssl::UniquePtr<SSL_SESSION> ret(SSL_SESSION_new(ssl_ctx.get()));
+  if (!ret) {
+    return nullptr;
+  }
+
+  ret->session_id_length = SSL3_SSL_SESSION_ID_LENGTH;
+  OPENSSL_memset(ret->session_id, 0, ret->session_id_length);
+  OPENSSL_memcpy(ret->session_id, &number, sizeof(number));
+  return ret;
+}
+
+// Test that the internal session cache behaves as expected.
+TEST(SSLTest, InternalSessionCache) {
+  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(ctx);
+
+  // Prepare 10 test sessions.
+  std::vector<bssl::UniquePtr<SSL_SESSION>> sessions;
+  for (int i = 0; i < 10; i++) {
+    bssl::UniquePtr<SSL_SESSION> session = CreateTestSession(i);
+    ASSERT_TRUE(session);
+    sessions.push_back(std::move(session));
+  }
+
+  SSL_CTX_sess_set_cache_size(ctx.get(), 5);
+
+  // Insert all the test sessions.
+  for (const auto &session : sessions) {
+    ASSERT_TRUE(SSL_CTX_add_session(ctx.get(), session.get()));
+  }
+
+  // Only the last five should be in the list.
+  ASSERT_TRUE(CacheEquals(
+      ctx.get(), {sessions[9].get(), sessions[8].get(), sessions[7].get(),
+                  sessions[6].get(), sessions[5].get()}));
+
+  // Inserting an element already in the cache should fail and leave the cache
+  // unchanged.
+  ASSERT_FALSE(SSL_CTX_add_session(ctx.get(), sessions[7].get()));
+  ASSERT_TRUE(CacheEquals(
+      ctx.get(), {sessions[9].get(), sessions[8].get(), sessions[7].get(),
+                  sessions[6].get(), sessions[5].get()}));
+
+  // Although collisions should be impossible (256-bit session IDs), the cache
+  // must handle them gracefully.
+  bssl::UniquePtr<SSL_SESSION> collision(CreateTestSession(7));
+  ASSERT_TRUE(collision);
+  ASSERT_TRUE(SSL_CTX_add_session(ctx.get(), collision.get()));
+  ASSERT_TRUE(CacheEquals(
+      ctx.get(), {collision.get(), sessions[9].get(), sessions[8].get(),
+                  sessions[6].get(), sessions[5].get()}));
+
+  // Removing sessions behaves correctly.
+  ASSERT_TRUE(SSL_CTX_remove_session(ctx.get(), sessions[6].get()));
+  ASSERT_TRUE(CacheEquals(ctx.get(), {collision.get(), sessions[9].get(),
+                                      sessions[8].get(), sessions[5].get()}));
+
+  // Removing sessions requires an exact match.
+  ASSERT_FALSE(SSL_CTX_remove_session(ctx.get(), sessions[0].get()));
+  ASSERT_FALSE(SSL_CTX_remove_session(ctx.get(), sessions[7].get()));
+
+  // The cache remains unchanged.
+  ASSERT_TRUE(CacheEquals(ctx.get(), {collision.get(), sessions[9].get(),
+                                      sessions[8].get(), sessions[5].get()}));
+}
+
+static uint16_t EpochFromSequence(uint64_t seq) {
+  return static_cast<uint16_t>(seq >> 48);
+}
+
 static const uint8_t kTestName[] = {
     0x30, 0x45, 0x31, 0x0b, 0x30, 0x09, 0x06, 0x03, 0x55, 0x04, 0x06, 0x13,
     0x02, 0x41, 0x55, 0x31, 0x13, 0x30, 0x11, 0x06, 0x03, 0x55, 0x04, 0x08,
@@ -1507,9 +1538,9 @@ static bool ConnectClientAndServer(bssl::UniquePtr<SSL> *out_client,
   return true;
 }
 
-/* SSLVersionTest executes its test cases under all available protocol versions.
- * Test cases call |Connect| to create a connection using context objects with
- * the protocol version fixed to the current version under test. */
+// SSLVersionTest executes its test cases under all available protocol versions.
+// Test cases call |Connect| to create a connection using context objects with
+// the protocol version fixed to the current version under test.
 class SSLVersionTest : public ::testing::TestWithParam<VersionParam> {
  protected:
   SSLVersionTest() : cert_(GetTestCertificate()), key_(GetTestKey()) {}
@@ -2161,7 +2192,7 @@ static bssl::UniquePtr<SSL_SESSION> ExpectSessionRenewed(SSL_CTX *client_ctx,
 static void ExpectTicketKeyChanged(SSL_CTX *ctx, uint8_t *inout_key,
                                    bool changed) {
   uint8_t new_key[kTicketKeyLen];
-  /* May return 0, 1 or 48. */
+  // May return 0, 1 or 48.
   ASSERT_EQ(SSL_CTX_get_tlsext_ticket_keys(ctx, new_key, kTicketKeyLen), 1);
   if (changed) {
     ASSERT_NE(Bytes(inout_key, kTicketKeyLen), Bytes(new_key));
@@ -2462,8 +2493,8 @@ TEST_P(SSLVersionTest, DefaultTicketKeyRotation) {
   g_current_time.tv_sec = kStartTime;
   uint8_t ticket_key[kTicketKeyLen];
 
-  /* We use session reuse as a proxy for ticket decryption success, hence
-   * disable session timeouts. */
+  // We use session reuse as a proxy for ticket decryption success, hence
+  // disable session timeouts.
   SSL_CTX_set_timeout(server_ctx_.get(), std::numeric_limits<uint32_t>::max());
   SSL_CTX_set_session_psk_dhe_timeout(server_ctx_.get(),
                                       std::numeric_limits<uint32_t>::max());
@@ -2474,11 +2505,11 @@ TEST_P(SSLVersionTest, DefaultTicketKeyRotation) {
   SSL_CTX_set_session_cache_mode(client_ctx_.get(), SSL_SESS_CACHE_BOTH);
   SSL_CTX_set_session_cache_mode(server_ctx_.get(), SSL_SESS_CACHE_OFF);
 
-  /* Initialize ticket_key with the current key. */
+  // Initialize ticket_key with the current key.
   TRACED_CALL(ExpectTicketKeyChanged(server_ctx_.get(), ticket_key,
                                      true /* changed */));
 
-  /* Verify ticket resumption actually works. */
+  // Verify ticket resumption actually works.
   bssl::UniquePtr<SSL> client, server;
   bssl::UniquePtr<SSL_SESSION> session =
       CreateClientSession(client_ctx_.get(), server_ctx_.get());
@@ -2486,21 +2517,21 @@ TEST_P(SSLVersionTest, DefaultTicketKeyRotation) {
   TRACED_CALL(ExpectSessionReused(client_ctx_.get(), server_ctx_.get(),
                                   session.get(), true /* reused */));
 
-  /* Advance time to just before key rotation. */
+  // Advance time to just before key rotation.
   g_current_time.tv_sec += SSL_DEFAULT_TICKET_KEY_ROTATION_INTERVAL - 1;
   TRACED_CALL(ExpectSessionReused(client_ctx_.get(), server_ctx_.get(),
                                   session.get(), true /* reused */));
   TRACED_CALL(ExpectTicketKeyChanged(server_ctx_.get(), ticket_key,
                                      false /* NOT changed */));
 
-  /* Force key rotation. */
+  // Force key rotation.
   g_current_time.tv_sec += 1;
   bssl::UniquePtr<SSL_SESSION> new_session =
       CreateClientSession(client_ctx_.get(), server_ctx_.get());
   TRACED_CALL(ExpectTicketKeyChanged(server_ctx_.get(), ticket_key,
                                      true /* changed */));
 
-  /* Resumption with both old and new ticket should work. */
+  // Resumption with both old and new ticket should work.
   TRACED_CALL(ExpectSessionReused(client_ctx_.get(), server_ctx_.get(),
                                   session.get(), true /* reused */));
   TRACED_CALL(ExpectSessionReused(client_ctx_.get(), server_ctx_.get(),
@@ -2508,14 +2539,14 @@ TEST_P(SSLVersionTest, DefaultTicketKeyRotation) {
   TRACED_CALL(ExpectTicketKeyChanged(server_ctx_.get(), ticket_key,
                                      false /* NOT changed */));
 
-  /* Force key rotation again. Resumption with the old ticket now fails. */
+  // Force key rotation again. Resumption with the old ticket now fails.
   g_current_time.tv_sec += SSL_DEFAULT_TICKET_KEY_ROTATION_INTERVAL;
   TRACED_CALL(ExpectSessionReused(client_ctx_.get(), server_ctx_.get(),
                                   session.get(), false /* NOT reused */));
   TRACED_CALL(ExpectTicketKeyChanged(server_ctx_.get(), ticket_key,
                                      true /* changed */));
 
-  /* But resumption with the newer session still works. */
+  // But resumption with the newer session still works.
   TRACED_CALL(ExpectSessionReused(client_ctx_.get(), server_ctx_.get(),
                                   new_session.get(), true /* reused */));
 }
@@ -3695,6 +3726,35 @@ TEST(SSLTest, SealRecordInvalidSpanSize) {
       client.get(), bssl::MakeSpan(prefix), bssl::MakeSpan(record),
       bssl::MakeSpan(suffix.data(), suffix.size() + 1), record));
   expect_err();
+}
+
+// The client should gracefully handle no suitable ciphers being enabled.
+TEST(SSLTest, NoCiphersAvailable) {
+  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(ctx);
+
+  // Configure |client_ctx| with a cipher list that does not intersect with its
+  // version configuration.
+  ASSERT_TRUE(SSL_CTX_set_strict_cipher_list(
+      ctx.get(), "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"));
+  ASSERT_TRUE(SSL_CTX_set_max_proto_version(ctx.get(), TLS1_1_VERSION));
+
+  bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
+  ASSERT_TRUE(ssl);
+  SSL_set_connect_state(ssl.get());
+
+  UniquePtr<BIO> rbio(BIO_new(BIO_s_mem())), wbio(BIO_new(BIO_s_mem()));
+  ASSERT_TRUE(rbio);
+  ASSERT_TRUE(wbio);
+  SSL_set0_rbio(ssl.get(), rbio.release());
+  SSL_set0_wbio(ssl.get(), wbio.release());
+
+  int ret = SSL_do_handshake(ssl.get());
+  EXPECT_EQ(-1, ret);
+  EXPECT_EQ(SSL_ERROR_SSL, SSL_get_error(ssl.get(), ret));
+  uint32_t err = ERR_get_error();
+  EXPECT_EQ(ERR_LIB_SSL, ERR_GET_LIB(err));
+  EXPECT_EQ(SSL_R_NO_CIPHERS_AVAILABLE, ERR_GET_REASON(err));
 }
 
 // TODO(davidben): Convert this file to GTest properly.
