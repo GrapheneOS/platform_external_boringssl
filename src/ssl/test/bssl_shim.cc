@@ -63,7 +63,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include "../../crypto/internal.h"
 #include "../internal.h"
 #include "async_bio.h"
-#include "fuzzer.h"
+#include "fuzzer_tags.h"
 #include "packeted_bio.h"
 #include "test_config.h"
 
@@ -2404,6 +2404,11 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session, SSL *ssl,
     if (!SSL_get_session(ssl)->not_resumable) {
       fprintf(stderr,
               "Renegotiations should never produce resumable sessions.\n");
+      return false;
+    }
+
+    if (SSL_session_reused(ssl)) {
+      fprintf(stderr, "Renegotiations should never resume sessions.\n");
       return false;
     }
 
