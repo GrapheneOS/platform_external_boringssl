@@ -2123,6 +2123,19 @@ read alert 1 0
 			},
 		},
 		{
+			testType: serverTest,
+			protocol: dtls,
+			name:     "SendEmptyFragments-Padded-DTLS",
+			config: Config{
+				Bugs: ProtocolBugs{
+					// Test empty fragments for a message with a
+					// nice power-of-two length.
+					PadClientHello:     64,
+					SendEmptyFragments: true,
+				},
+			},
+		},
+		{
 			name: "BadFinished-Client",
 			config: Config{
 				MaxVersion: VersionTLS12,
@@ -7115,6 +7128,9 @@ func addRenegotiationTests() {
 			},
 		},
 		renegotiate: 1,
+		// Test renegotiation after both an initial and resumption
+		// handshake.
+		resumeSession: true,
 		flags: []string{
 			"-renegotiate-freely",
 			"-expect-total-renegotiations", "1",
