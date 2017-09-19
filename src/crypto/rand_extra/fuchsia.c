@@ -19,20 +19,29 @@
 #include <limits.h>
 #include <stdlib.h>
 
+// TODO(davidben): Remove this once https://crbug.com/765754 is resolved.
+#if defined(CHROMIUM_ROLLING_MAGENTA_TO_ZIRCON)
+#include <zircon/syscalls.h>
+#else
 #include <magenta/syscalls.h>
+#define ZX_CPRNG_DRAW_MAX_LEN MX_CPRNG_DRAW_MAX_LEN
+#define ZX_OK MX_OK
+#define zx_status_t mx_status_t
+#define zx_cprng_draw mx_cprng_draw
+#endif
 
 #include "../fipsmodule/rand/internal.h"
 
 void CRYPTO_sysrand(uint8_t *out, size_t requested) {
   while (requested > 0) {
-    size_t output_bytes_this_pass = MX_CPRNG_DRAW_MAX_LEN;
+    size_t output_bytes_this_pass = ZX_CPRNG_DRAW_MAX_LEN;
     if (requested < output_bytes_this_pass) {
       output_bytes_this_pass = requested;
     }
     size_t bytes_drawn;
-    mx_status_t status =
-        mx_cprng_draw(out, output_bytes_this_pass, &bytes_drawn);
-    if (status != MX_OK) {
+    zx_status_t status =
+        zx_cprng_draw(out, output_bytes_this_pass, &bytes_drawn);
+    if (status != ZX_OK) {
       abort();
     }
     requested -= bytes_drawn;
