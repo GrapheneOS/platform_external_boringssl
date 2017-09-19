@@ -146,7 +146,6 @@
 
 #include <openssl/bio.h>
 #include <openssl/buf.h>
-#include <openssl/hmac.h>
 #include <openssl/lhash.h>
 #include <openssl/pem.h>
 #include <openssl/span.h>
@@ -590,6 +589,8 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 
 #define TLS1_3_DRAFT_VERSION 0x7f12
 #define TLS1_3_EXPERIMENT_VERSION 0x7e01
+#define TLS1_3_EXPERIMENT2_VERSION 0x7e02
+#define TLS1_3_EXPERIMENT3_VERSION 0x7e03
 #define TLS1_3_RECORD_TYPE_EXPERIMENT_VERSION 0x7a12
 
 // SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
@@ -3177,6 +3178,8 @@ enum tls13_variant_t {
   tls13_experiment = 1,
   tls13_record_type_experiment = 2,
   tls13_no_session_id_experiment = 3,
+  tls13_experiment2 = 4,
+  tls13_experiment3 = 5,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
@@ -3976,22 +3979,6 @@ typedef struct ssl_protocol_method_st SSL_PROTOCOL_METHOD;
 typedef struct ssl_x509_method_st SSL_X509_METHOD;
 
 DECLARE_STACK_OF(SSL_CUSTOM_EXTENSION)
-
-struct ssl_cipher_st {
-  // name is the OpenSSL name for the cipher.
-  const char *name;
-  // standard_name is the IETF name for the cipher.
-  const char *standard_name;
-  // id is the cipher suite value bitwise OR-d with 0x03000000.
-  uint32_t id;
-
-  // algorithm_* are internal fields. See ssl/internal.h for their values.
-  uint32_t algorithm_mkey;
-  uint32_t algorithm_auth;
-  uint32_t algorithm_enc;
-  uint32_t algorithm_mac;
-  uint32_t algorithm_prf;
-};
 
 #define SSL_MAX_SSL_SESSION_ID_LENGTH 32
 #define SSL_MAX_SID_CTX_LENGTH 32
