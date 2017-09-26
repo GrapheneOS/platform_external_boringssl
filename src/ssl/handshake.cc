@@ -144,12 +144,6 @@ SSL_HANDSHAKE::SSL_HANDSHAKE(SSL *ssl_arg)
 }
 
 SSL_HANDSHAKE::~SSL_HANDSHAKE() {
-  OPENSSL_cleanse(secret, sizeof(secret));
-  OPENSSL_cleanse(early_traffic_secret, sizeof(early_traffic_secret));
-  OPENSSL_cleanse(client_handshake_secret, sizeof(client_handshake_secret));
-  OPENSSL_cleanse(server_handshake_secret, sizeof(server_handshake_secret));
-  OPENSSL_cleanse(client_traffic_secret_0, sizeof(client_traffic_secret_0));
-  OPENSSL_cleanse(server_traffic_secret_0, sizeof(server_traffic_secret_0));
   OPENSSL_free(cookie);
   OPENSSL_free(key_share_bytes);
   OPENSSL_free(ecdh_public_key);
@@ -159,11 +153,7 @@ SSL_HANDSHAKE::~SSL_HANDSHAKE() {
   OPENSSL_free(server_params);
   ssl->ctx->x509_method->hs_flush_cached_ca_names(this);
   OPENSSL_free(certificate_types);
-
-  if (key_block != NULL) {
-    OPENSSL_cleanse(key_block, key_block_len);
-    OPENSSL_free(key_block);
-  }
+  OPENSSL_free(key_block);
 }
 
 SSL_HANDSHAKE *ssl_handshake_new(SSL *ssl) {
