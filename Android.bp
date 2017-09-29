@@ -173,10 +173,6 @@ cc_binary {
         "libssl",
     ],
     target: {
-        host: {
-            // Needed for clock_gettime.
-            host_ldlibs: ["-lrt"],
-        },
         darwin: {
             enabled: false,
         },
