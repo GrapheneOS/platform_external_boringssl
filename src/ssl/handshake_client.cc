@@ -338,21 +338,19 @@ int ssl_write_client_hello(SSL_HANDSHAKE *hs) {
     return 0;
   }
 
-  uint8_t *msg = NULL;
-  size_t len;
-  if (!ssl->method->finish_message(ssl, cbb.get(), &msg, &len)) {
+  Array<uint8_t> msg;
+  if (!ssl->method->finish_message(ssl, cbb.get(), &msg)) {
     return 0;
   }
 
   // Now that the length prefixes have been computed, fill in the placeholder
   // PSK binder.
   if (hs->needs_psk_binder &&
-      !tls13_write_psk_binder(hs, msg, len)) {
-    OPENSSL_free(msg);
+      !tls13_write_psk_binder(hs, msg.data(), msg.size())) {
     return 0;
   }
 
-  return ssl->method->add_message(ssl, msg, len);
+  return ssl->method->add_message(ssl, std::move(msg));
 }
 
 static int parse_server_version(SSL_HANDSHAKE *hs, uint16_t *out,
@@ -602,13 +600,18 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
     return ssl_hs_ok;
   }
 
+  // Clear some TLS 1.3 state that no longer needs to be retained.
+  hs->key_share.reset();
+  hs->key_share_bytes.Reset();
+
+  // A TLS 1.2 server would not know to skip the early data we offered. Report
+  // an error code sooner. The caller may use this error code to implement the
+  // fallback described in draft-ietf-tls-tls13-18 appendix C.3.
   if (hs->early_data_offered) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_VERSION_ON_EARLY_DATA);
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_PROTOCOL_VERSION);
     return ssl_hs_error;
   }
-
-  ssl_clear_tls13_state(hs);
 
   if (!ssl_check_message_type(ssl, msg, SSL3_MT_SERVER_HELLO)) {
     return ssl_hs_error;
@@ -977,7 +980,7 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
     // Initialize ECDH and save the peer public key for later.
     hs->key_share = SSLKeyShare::Create(group_id);
     if (!hs->key_share ||
-        !CBS_stow(&point, &hs->peer_key, &hs->peer_key_len)) {
+        !hs->peer_key.CopyFrom(point)) {
       return ssl_hs_error;
     }
   } else if (!(alg_k & SSL_kPSK)) {
@@ -1106,8 +1109,7 @@ static enum ssl_hs_wait_t do_read_certificate_request(SSL_HANDSHAKE *hs) {
     return ssl_hs_error;
   }
 
-  if (!CBS_stow(&certificate_types, &hs->certificate_types,
-                &hs->num_certificate_types)) {
+  if (!hs->certificate_types.CopyFrom(certificate_types)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
     return ssl_hs_error;
   }
@@ -1229,8 +1231,7 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
     return ssl_hs_error;
   }
 
-  uint8_t *pms = NULL;
-  size_t pms_len = 0;
+  Array<uint8_t> pms;
   uint32_t alg_k = hs->new_cipher->algorithm_mkey;
   uint32_t alg_a = hs->new_cipher->algorithm_auth;
 
@@ -1240,7 +1241,7 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
   if (alg_a & SSL_aPSK) {
     if (ssl->psk_client_callback == NULL) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_PSK_NO_CLIENT_CB);
-      goto err;
+      return ssl_hs_error;
     }
 
     char identity[PSK_MAX_IDENTITY_LEN + 1];
@@ -1251,7 +1252,7 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
     if (psk_len == 0) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_PSK_IDENTITY_NOT_FOUND);
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_HANDSHAKE_FAILURE);
-      goto err;
+      return ssl_hs_error;
     }
     assert(psk_len <= PSK_MAX_PSK_LEN);
 
@@ -1259,7 +1260,7 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
     hs->new_session->psk_identity = BUF_strdup(identity);
     if (hs->new_session->psk_identity == NULL) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-      goto err;
+      return ssl_hs_error;
     }
 
     // Write out psk_identity.
@@ -1268,29 +1269,26 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
         !CBB_add_bytes(&child, (const uint8_t *)identity,
                        OPENSSL_strnlen(identity, sizeof(identity))) ||
         !CBB_flush(&body)) {
-      goto err;
+      return ssl_hs_error;
     }
   }
 
-  // Depending on the key exchange method, compute |pms| and |pms_len|.
+  // Depending on the key exchange method, compute |pms|.
   if (alg_k & SSL_kRSA) {
-    pms_len = SSL_MAX_MASTER_KEY_LENGTH;
-    pms = (uint8_t *)OPENSSL_malloc(pms_len);
-    if (pms == NULL) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-      goto err;
+    if (!pms.Init(SSL_MAX_MASTER_KEY_LENGTH)) {
+      return ssl_hs_error;
     }
 
     RSA *rsa = EVP_PKEY_get0_RSA(hs->peer_pubkey.get());
     if (rsa == NULL) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
-      goto err;
+      return ssl_hs_error;
     }
 
     pms[0] = hs->client_version >> 8;
     pms[1] = hs->client_version & 0xff;
     if (!RAND_bytes(&pms[2], SSL_MAX_MASTER_KEY_LENGTH - 2)) {
-      goto err;
+      return ssl_hs_error;
     }
 
     CBB child, *enc_pms = &body;
@@ -1298,56 +1296,50 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
     // In TLS, there is a length prefix.
     if (ssl->version > SSL3_VERSION) {
       if (!CBB_add_u16_length_prefixed(&body, &child)) {
-        goto err;
+        return ssl_hs_error;
       }
       enc_pms = &child;
     }
 
     uint8_t *ptr;
     if (!CBB_reserve(enc_pms, &ptr, RSA_size(rsa)) ||
-        !RSA_encrypt(rsa, &enc_pms_len, ptr, RSA_size(rsa), pms, pms_len,
-                     RSA_PKCS1_PADDING) ||
+        !RSA_encrypt(rsa, &enc_pms_len, ptr, RSA_size(rsa), pms.data(),
+                     pms.size(), RSA_PKCS1_PADDING) ||
         !CBB_did_write(enc_pms, enc_pms_len) ||
         !CBB_flush(&body)) {
-      goto err;
+      return ssl_hs_error;
     }
   } else if (alg_k & SSL_kECDHE) {
     // Generate a keypair and serialize the public half.
     CBB child;
     if (!CBB_add_u8_length_prefixed(&body, &child)) {
-      goto err;
+      return ssl_hs_error;
     }
 
     // Compute the premaster.
     uint8_t alert = SSL_AD_DECODE_ERROR;
-    if (!hs->key_share->Accept(&child, &pms, &pms_len, &alert, hs->peer_key,
-                              hs->peer_key_len)) {
+    if (!hs->key_share->Accept(&child, &pms, &alert, hs->peer_key)) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
-      goto err;
+      return ssl_hs_error;
     }
     if (!CBB_flush(&body)) {
-      goto err;
+      return ssl_hs_error;
     }
 
     // The key exchange state may now be discarded.
     hs->key_share.reset();
-    OPENSSL_free(hs->peer_key);
-    hs->peer_key = NULL;
-    hs->peer_key_len = 0;
+    hs->peer_key.Reset();
   } else if (alg_k & SSL_kPSK) {
     // For plain PSK, other_secret is a block of 0s with the same length as
     // the pre-shared key.
-    pms_len = psk_len;
-    pms = (uint8_t *)OPENSSL_malloc(pms_len);
-    if (pms == NULL) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-      goto err;
+    if (!pms.Init(psk_len)) {
+      return ssl_hs_error;
     }
-    OPENSSL_memset(pms, 0, pms_len);
+    OPENSSL_memset(pms.data(), 0, pms.size());
   } else {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_HANDSHAKE_FAILURE);
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
-    goto err;
+    return ssl_hs_error;
   }
 
   // For a PSK cipher suite, other_secret is combined with the pre-shared
@@ -1358,40 +1350,33 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
     uint8_t *new_pms;
     size_t new_pms_len;
 
-    if (!CBB_init(pms_cbb.get(), 2 + psk_len + 2 + pms_len) ||
+    if (!CBB_init(pms_cbb.get(), 2 + psk_len + 2 + pms.size()) ||
         !CBB_add_u16_length_prefixed(pms_cbb.get(), &child) ||
-        !CBB_add_bytes(&child, pms, pms_len) ||
+        !CBB_add_bytes(&child, pms.data(), pms.size()) ||
         !CBB_add_u16_length_prefixed(pms_cbb.get(), &child) ||
         !CBB_add_bytes(&child, psk, psk_len) ||
         !CBB_finish(pms_cbb.get(), &new_pms, &new_pms_len)) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-      goto err;
+      return ssl_hs_error;
     }
-    OPENSSL_free(pms);
-    pms = new_pms;
-    pms_len = new_pms_len;
+    pms.Reset(new_pms, new_pms_len);
   }
 
   // The message must be added to the finished hash before calculating the
   // master secret.
   if (!ssl_add_message_cbb(ssl, cbb.get())) {
-    goto err;
+    return ssl_hs_error;
   }
 
   hs->new_session->master_key_length = tls1_generate_master_secret(
-      hs, hs->new_session->master_key, pms, pms_len);
+      hs, hs->new_session->master_key, pms.data(), pms.size());
   if (hs->new_session->master_key_length == 0) {
-    goto err;
+    return ssl_hs_error;
   }
   hs->new_session->extended_master_secret = hs->extended_master_secret;
-  OPENSSL_free(pms);
 
   hs->state = state_send_client_certificate_verify;
   return ssl_hs_ok;
-
-err:
-  OPENSSL_free(pms);
-  return ssl_hs_error;
 }
 
 static enum ssl_hs_wait_t do_send_client_certificate_verify(SSL_HANDSHAKE *hs) {
