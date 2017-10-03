@@ -114,7 +114,7 @@ class Android(object):
         blueprint.write('        },\n')
 
         if arch == 'x86' or arch == 'x86_64':
-          blueprint.write('        linux_%s: {\n' % arch)
+          blueprint.write('        linux_glibc_%s: {\n' % arch)
           blueprint.write('            srcs: [\n')
           for f in sorted(asm_files):
             blueprint.write('                "%s",\n' % f)
