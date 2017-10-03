@@ -187,6 +187,17 @@ static CRYPTO_EX_DATA_CLASS g_ex_data_class_ssl =
 static CRYPTO_EX_DATA_CLASS g_ex_data_class_ssl_ctx =
     CRYPTO_EX_DATA_CLASS_INIT_WITH_APP_DATA;
 
+bool CBBFinishArray(CBB *cbb, Array<uint8_t> *out) {
+  uint8_t *ptr;
+  size_t len;
+  if (!CBB_finish(cbb, &ptr, &len)) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return false;
+  }
+  out->Reset(ptr, len);
+  return true;
+}
+
 void ssl_reset_error_state(SSL *ssl) {
   // Functions which use |SSL_get_error| must reset I/O and error state on
   // entry.
@@ -414,6 +425,11 @@ void ssl_ctx_get_current_time(const SSL_CTX *ctx,
 using namespace bssl;
 
 int SSL_library_init(void) {
+  CRYPTO_library_init();
+  return 1;
+}
+
+int OPENSSL_init_ssl(uint64_t opts, const OPENSSL_INIT_SETTINGS *settings) {
   CRYPTO_library_init();
   return 1;
 }
@@ -1555,9 +1571,8 @@ int SSL_get_secure_renegotiation_support(const SSL *ssl) {
          ssl->s3->send_connection_binding;
 }
 
-LHASH_OF(SSL_SESSION) *SSL_CTX_sessions(SSL_CTX *ctx) { return ctx->sessions; }
-
 size_t SSL_CTX_sess_number(const SSL_CTX *ctx) {
+  MutexReadLock lock(const_cast<CRYPTO_MUTEX *>(&ctx->lock));
   return lh_SSL_SESSION_num_items(ctx->sessions);
 }
 
@@ -2022,8 +2037,8 @@ size_t SSL_get0_certificate_types(SSL *ssl, const uint8_t **out_types) {
     *out_types = NULL;
     return 0;
   }
-  *out_types = ssl->s3->hs->certificate_types;
-  return ssl->s3->hs->num_certificate_types;
+  *out_types = ssl->s3->hs->certificate_types.data();
+  return ssl->s3->hs->certificate_types.size();
 }
 
 EVP_PKEY *SSL_get_privatekey(const SSL *ssl) {

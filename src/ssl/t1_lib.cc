@@ -113,6 +113,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <utility>
+
 #include <openssl/bytestring.h>
 #include <openssl/digest.h>
 #include <openssl/err.h>
@@ -147,19 +149,16 @@ static int compare_uint16_t(const void *p1, const void *p2) {
 // This function does an initial scan over the extensions block to filter those
 // out.
 static int tls1_check_duplicate_extensions(const CBS *cbs) {
-  CBS extensions = *cbs;
-  size_t num_extensions = 0, i = 0;
-  uint16_t *extension_types = NULL;
-  int ret = 0;
-
   // First pass: count the extensions.
+  size_t num_extensions = 0;
+  CBS extensions = *cbs;
   while (CBS_len(&extensions) > 0) {
     uint16_t type;
     CBS extension;
 
     if (!CBS_get_u16(&extensions, &type) ||
         !CBS_get_u16_length_prefixed(&extensions, &extension)) {
-      goto done;
+      return 0;
     }
 
     num_extensions++;
@@ -169,39 +168,34 @@ static int tls1_check_duplicate_extensions(const CBS *cbs) {
     return 1;
   }
 
-  extension_types =
-      (uint16_t *)OPENSSL_malloc(sizeof(uint16_t) * num_extensions);
-  if (extension_types == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-    goto done;
+  Array<uint16_t> extension_types;
+  if (!extension_types.Init(num_extensions)) {
+    return 0;
   }
 
   // Second pass: gather the extension types.
   extensions = *cbs;
-  for (i = 0; i < num_extensions; i++) {
+  for (size_t i = 0; i < extension_types.size(); i++) {
     CBS extension;
 
     if (!CBS_get_u16(&extensions, &extension_types[i]) ||
         !CBS_get_u16_length_prefixed(&extensions, &extension)) {
       // This should not happen.
-      goto done;
+      return 0;
     }
   }
   assert(CBS_len(&extensions) == 0);
 
   // Sort the extensions and make sure there are no duplicates.
-  qsort(extension_types, num_extensions, sizeof(uint16_t), compare_uint16_t);
-  for (i = 1; i < num_extensions; i++) {
+  qsort(extension_types.data(), extension_types.size(), sizeof(uint16_t),
+        compare_uint16_t);
+  for (size_t i = 1; i < num_extensions; i++) {
     if (extension_types[i - 1] == extension_types[i]) {
-      goto done;
+      return 0;
     }
   }
 
-  ret = 1;
-
-done:
-  OPENSSL_free(extension_types);
-  return ret;
+  return 1;
 }
 
 int ssl_client_hello_init(SSL *ssl, SSL_CLIENT_HELLO *out,
@@ -297,23 +291,17 @@ static const uint16_t kDefaultGroups[] = {
     SSL_CURVE_SECP384R1,
 };
 
-void tls1_get_grouplist(SSL *ssl, const uint16_t **out_group_ids,
-                        size_t *out_group_ids_len) {
-  *out_group_ids = ssl->supported_group_list;
-  *out_group_ids_len = ssl->supported_group_list_len;
-  if (!*out_group_ids) {
-    *out_group_ids = kDefaultGroups;
-    *out_group_ids_len = OPENSSL_ARRAY_SIZE(kDefaultGroups);
+Span<const uint16_t> tls1_get_grouplist(const SSL *ssl) {
+  if (ssl->supported_group_list != nullptr) {
+    return MakeConstSpan(ssl->supported_group_list,
+                         ssl->supported_group_list_len);
   }
+  return Span<const uint16_t>(kDefaultGroups);
 }
 
 int tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
   SSL *const ssl = hs->ssl;
   assert(ssl->server);
-
-  const uint16_t *groups, *pref, *supp;
-  size_t groups_len, pref_len, supp_len;
-  tls1_get_grouplist(ssl, &groups, &groups_len);
 
   // Clients are not required to send a supported_groups extension. In this
   // case, the server is free to pick any group it likes. See RFC 4492,
@@ -324,22 +312,20 @@ int tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
   // support our favoured group. Thus we do not special-case an emtpy
   // |peer_supported_group_list|.
 
+  Span<const uint16_t> groups = tls1_get_grouplist(ssl);
+  Span<const uint16_t> pref, supp;
   if (ssl->options & SSL_OP_CIPHER_SERVER_PREFERENCE) {
     pref = groups;
-    pref_len = groups_len;
     supp = hs->peer_supported_group_list;
-    supp_len = hs->peer_supported_group_list_len;
   } else {
     pref = hs->peer_supported_group_list;
-    pref_len = hs->peer_supported_group_list_len;
     supp = groups;
-    supp_len = groups_len;
   }
 
-  for (size_t i = 0; i < pref_len; i++) {
-    for (size_t j = 0; j < supp_len; j++) {
-      if (pref[i] == supp[j]) {
-        *out_group_id = pref[i];
+  for (uint16_t pref_group : pref) {
+    for (uint16_t supp_group : supp) {
+      if (pref_group == supp_group) {
+        *out_group_id = pref_group;
         return 1;
       }
     }
@@ -412,12 +398,9 @@ err:
   return 0;
 }
 
-int tls1_check_group_id(SSL *ssl, uint16_t group_id) {
-  const uint16_t *groups;
-  size_t groups_len;
-  tls1_get_grouplist(ssl, &groups, &groups_len);
-  for (size_t i = 0; i < groups_len; i++) {
-    if (groups[i] == group_id) {
+int tls1_check_group_id(const SSL *ssl, uint16_t group_id) {
+  for (uint16_t supported : tls1_get_grouplist(ssl)) {
+    if (supported == group_id) {
       return 1;
     }
   }
@@ -1028,10 +1011,7 @@ static int ext_sigalgs_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
 
 static int ext_sigalgs_parse_clienthello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
                                          CBS *contents) {
-  OPENSSL_free(hs->peer_sigalgs);
-  hs->peer_sigalgs = NULL;
-  hs->num_peer_sigalgs = 0;
-
+  hs->peer_sigalgs.Reset();
   if (contents == NULL) {
     return 1;
   }
@@ -2111,13 +2091,11 @@ static int ext_key_share_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
     // We received a HelloRetryRequest without a new curve, so there is no new
     // share to append. Leave |hs->key_share| as-is.
     if (group_id == 0 &&
-        !CBB_add_bytes(&kse_bytes, hs->key_share_bytes,
-                       hs->key_share_bytes_len)) {
+        !CBB_add_bytes(&kse_bytes, hs->key_share_bytes.data(),
+                       hs->key_share_bytes.size())) {
       return 0;
     }
-    OPENSSL_free(hs->key_share_bytes);
-    hs->key_share_bytes = NULL;
-    hs->key_share_bytes_len = 0;
+    hs->key_share_bytes.Reset();
     if (group_id == 0) {
       return CBB_flush(out);
     }
@@ -2132,10 +2110,8 @@ static int ext_key_share_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
     }
 
     // Predict the most preferred group.
-    const uint16_t *groups;
-    size_t groups_len;
-    tls1_get_grouplist(ssl, &groups, &groups_len);
-    if (groups_len == 0) {
+    Span<const uint16_t> groups = tls1_get_grouplist(ssl);
+    if (groups.size() == 0) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_NO_GROUPS_SPECIFIED);
       return 0;
     }
@@ -2153,22 +2129,18 @@ static int ext_key_share_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
     return 0;
   }
 
-  if (!hs->received_hello_retry_request) {
-    // Save the contents of the extension to repeat it in the second
-    // ClientHello.
-    hs->key_share_bytes_len = CBB_len(&kse_bytes);
-    hs->key_share_bytes =
-        (uint8_t *)BUF_memdup(CBB_data(&kse_bytes), CBB_len(&kse_bytes));
-    if (hs->key_share_bytes == NULL) {
-      return 0;
-    }
+  // Save the contents of the extension to repeat it in the second ClientHello.
+  if (!hs->received_hello_retry_request &&
+      !hs->key_share_bytes.CopyFrom(
+          MakeConstSpan(CBB_data(&kse_bytes), CBB_len(&kse_bytes)))) {
+    return 0;
   }
 
   return CBB_flush(out);
 }
 
-int ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t **out_secret,
-                                        size_t *out_secret_len,
+int ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs,
+                                        Array<uint8_t> *out_secret,
                                         uint8_t *out_alert, CBS *contents) {
   CBS peer_key;
   uint16_t group_id;
@@ -2185,8 +2157,7 @@ int ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t **out_secret,
     return 0;
   }
 
-  if (!hs->key_share->Finish(out_secret, out_secret_len, out_alert,
-                             CBS_data(&peer_key), CBS_len(&peer_key))) {
+  if (!hs->key_share->Finish(out_secret, out_alert, peer_key)) {
     *out_alert = SSL_AD_INTERNAL_ERROR;
     return 0;
   }
@@ -2197,8 +2168,7 @@ int ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t **out_secret,
 }
 
 int ssl_ext_key_share_parse_clienthello(SSL_HANDSHAKE *hs, bool *out_found,
-                                        uint8_t **out_secret,
-                                        size_t *out_secret_len,
+                                        Array<uint8_t> *out_secret,
                                         uint8_t *out_alert, CBS *contents) {
   uint16_t group_id;
   CBS key_shares;
@@ -2241,29 +2211,23 @@ int ssl_ext_key_share_parse_clienthello(SSL_HANDSHAKE *hs, bool *out_found,
 
   if (!found) {
     *out_found = false;
-    *out_secret = NULL;
-    *out_secret_len = 0;
+    out_secret->Reset();
     return 1;
   }
 
   // Compute the DH secret.
-  uint8_t *secret = NULL;
-  size_t secret_len;
+  Array<uint8_t> secret;
   ScopedCBB public_key;
   UniquePtr<SSLKeyShare> key_share = SSLKeyShare::Create(group_id);
   if (!key_share ||
       !CBB_init(public_key.get(), 32) ||
-      !key_share->Accept(public_key.get(), &secret, &secret_len, out_alert,
-                         CBS_data(&peer_key), CBS_len(&peer_key)) ||
-      !CBB_finish(public_key.get(), &hs->ecdh_public_key,
-                  &hs->ecdh_public_key_len)) {
-    OPENSSL_free(secret);
+      !key_share->Accept(public_key.get(), &secret, out_alert, peer_key) ||
+      !CBBFinishArray(public_key.get(), &hs->ecdh_public_key)) {
     *out_alert = SSL_AD_ILLEGAL_PARAMETER;
     return 0;
   }
 
-  *out_secret = secret;
-  *out_secret_len = secret_len;
+  *out_secret = std::move(secret);
   *out_found = true;
   return 1;
 }
@@ -2276,15 +2240,13 @@ int ssl_ext_key_share_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
       !CBB_add_u16_length_prefixed(out, &kse_bytes) ||
       !CBB_add_u16(&kse_bytes, group_id) ||
       !CBB_add_u16_length_prefixed(&kse_bytes, &public_key) ||
-      !CBB_add_bytes(&public_key, hs->ecdh_public_key,
-                     hs->ecdh_public_key_len) ||
+      !CBB_add_bytes(&public_key, hs->ecdh_public_key.data(),
+                     hs->ecdh_public_key.size()) ||
       !CBB_flush(out)) {
     return 0;
   }
 
-  OPENSSL_free(hs->ecdh_public_key);
-  hs->ecdh_public_key = NULL;
-  hs->ecdh_public_key_len = 0;
+  hs->ecdh_public_key.Reset();
 
   hs->new_session->group_id = group_id;
   return 1;
@@ -2328,7 +2290,7 @@ static int ext_supported_versions_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
 // https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.2
 
 static int ext_cookie_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
-  if (hs->cookie == NULL) {
+  if (hs->cookie.size() == 0) {
     return 1;
   }
 
@@ -2336,15 +2298,13 @@ static int ext_cookie_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   if (!CBB_add_u16(out, TLSEXT_TYPE_cookie) ||
       !CBB_add_u16_length_prefixed(out, &contents) ||
       !CBB_add_u16_length_prefixed(&contents, &cookie) ||
-      !CBB_add_bytes(&cookie, hs->cookie, hs->cookie_len) ||
+      !CBB_add_bytes(&cookie, hs->cookie.data(), hs->cookie.size()) ||
       !CBB_flush(out)) {
     return 0;
   }
 
   // The cookie is no longer needed in memory.
-  OPENSSL_free(hs->cookie);
-  hs->cookie = NULL;
-  hs->cookie_len = 0;
+  hs->cookie.Reset();
   return 1;
 }
 
@@ -2370,12 +2330,8 @@ static int ext_supported_groups_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
     return 0;
   }
 
-  const uint16_t *groups;
-  size_t groups_len;
-  tls1_get_grouplist(ssl, &groups, &groups_len);
-
-  for (size_t i = 0; i < groups_len; i++) {
-    if (!CBB_add_u16(&groups_bytes, groups[i])) {
+  for (uint16_t group : tls1_get_grouplist(ssl)) {
+    if (!CBB_add_u16(&groups_bytes, group)) {
       return 0;
     }
   }
@@ -2391,6 +2347,29 @@ static int ext_supported_groups_parse_serverhello(SSL_HANDSHAKE *hs,
   return 1;
 }
 
+static bool parse_u16_array(const CBS *cbs, Array<uint16_t> *out) {
+  CBS copy = *cbs;
+  if ((CBS_len(&copy) & 1) != 0) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
+    return false;
+  }
+
+  Array<uint16_t> ret;
+  if (!ret.Init(CBS_len(&copy) / 2)) {
+    return false;
+  }
+  for (size_t i = 0; i < ret.size(); i++) {
+    if (!CBS_get_u16(&copy, &ret[i])) {
+      OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+      return false;
+    }
+  }
+
+  assert(CBS_len(&copy) == 0);
+  *out = std::move(ret);
+  return 1;
+}
+
 static int ext_supported_groups_parse_clienthello(SSL_HANDSHAKE *hs,
                                                   uint8_t *out_alert,
                                                   CBS *contents) {
@@ -2401,36 +2380,12 @@ static int ext_supported_groups_parse_clienthello(SSL_HANDSHAKE *hs,
   CBS supported_group_list;
   if (!CBS_get_u16_length_prefixed(contents, &supported_group_list) ||
       CBS_len(&supported_group_list) == 0 ||
-      (CBS_len(&supported_group_list) & 1) != 0 ||
-      CBS_len(contents) != 0) {
+      CBS_len(contents) != 0 ||
+      !parse_u16_array(&supported_group_list, &hs->peer_supported_group_list)) {
     return 0;
   }
-
-  hs->peer_supported_group_list =
-      (uint16_t *)OPENSSL_malloc(CBS_len(&supported_group_list));
-  if (hs->peer_supported_group_list == NULL) {
-    *out_alert = SSL_AD_INTERNAL_ERROR;
-    return 0;
-  }
-
-  const size_t num_groups = CBS_len(&supported_group_list) / 2;
-  for (size_t i = 0; i < num_groups; i++) {
-    if (!CBS_get_u16(&supported_group_list,
-                     &hs->peer_supported_group_list[i])) {
-      goto err;
-    }
-  }
-
-  assert(CBS_len(&supported_group_list) == 0);
-  hs->peer_supported_group_list_len = num_groups;
 
   return 1;
-
-err:
-  OPENSSL_free(hs->peer_supported_group_list);
-  hs->peer_supported_group_list = NULL;
-  *out_alert = SSL_AD_INTERNAL_ERROR;
-  return 0;
 }
 
 static int ext_supported_groups_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
@@ -3193,39 +3148,7 @@ int tls1_parse_peer_sigalgs(SSL_HANDSHAKE *hs, const CBS *in_sigalgs) {
     return 1;
   }
 
-  OPENSSL_free(hs->peer_sigalgs);
-  hs->peer_sigalgs = NULL;
-  hs->num_peer_sigalgs = 0;
-
-  size_t num_sigalgs = CBS_len(in_sigalgs);
-  if (num_sigalgs % 2 != 0) {
-    return 0;
-  }
-  num_sigalgs /= 2;
-
-  // supported_signature_algorithms in the certificate request is
-  // allowed to be empty.
-  if (num_sigalgs == 0) {
-    return 1;
-  }
-
-  // This multiplication doesn't overflow because sizeof(uint16_t) is two
-  // and we just divided |num_sigalgs| by two.
-  hs->peer_sigalgs = (uint16_t *)OPENSSL_malloc(num_sigalgs * sizeof(uint16_t));
-  if (hs->peer_sigalgs == NULL) {
-    return 0;
-  }
-  hs->num_peer_sigalgs = num_sigalgs;
-
-  CBS sigalgs;
-  CBS_init(&sigalgs, CBS_data(in_sigalgs), CBS_len(in_sigalgs));
-  for (size_t i = 0; i < num_sigalgs; i++) {
-    if (!CBS_get_u16(&sigalgs, &hs->peer_sigalgs[i])) {
-      return 0;
-    }
-  }
-
-  return 1;
+  return parse_u16_array(in_sigalgs, &hs->peer_sigalgs);
 }
 
 int tls1_get_legacy_signature_algorithm(uint16_t *out, const EVP_PKEY *pkey) {
@@ -3255,36 +3178,31 @@ int tls1_choose_signature_algorithm(SSL_HANDSHAKE *hs, uint16_t *out) {
     return 1;
   }
 
-  const uint16_t *sigalgs = cert->sigalgs;
-  size_t num_sigalgs = cert->num_sigalgs;
-  if (sigalgs == NULL) {
-    sigalgs = kSignSignatureAlgorithms;
-    num_sigalgs = OPENSSL_ARRAY_SIZE(kSignSignatureAlgorithms);
+  Span<const uint16_t> sigalgs = kSignSignatureAlgorithms;
+  if (cert->sigalgs != nullptr) {
+    sigalgs = MakeConstSpan(cert->sigalgs, cert->num_sigalgs);
   }
 
-  const uint16_t *peer_sigalgs = hs->peer_sigalgs;
-  size_t num_peer_sigalgs = hs->num_peer_sigalgs;
-  if (num_peer_sigalgs == 0 && ssl3_protocol_version(ssl) < TLS1_3_VERSION) {
+  Span<const uint16_t> peer_sigalgs = hs->peer_sigalgs;
+  if (peer_sigalgs.size() == 0 && ssl3_protocol_version(ssl) < TLS1_3_VERSION) {
     // If the client didn't specify any signature_algorithms extension then
     // we can assume that it supports SHA1. See
     // http://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
     static const uint16_t kDefaultPeerAlgorithms[] = {SSL_SIGN_RSA_PKCS1_SHA1,
                                                       SSL_SIGN_ECDSA_SHA1};
     peer_sigalgs = kDefaultPeerAlgorithms;
-    num_peer_sigalgs = OPENSSL_ARRAY_SIZE(kDefaultPeerAlgorithms);
   }
 
-  for (size_t i = 0; i < num_sigalgs; i++) {
-    uint16_t sigalg = sigalgs[i];
+  for (uint16_t sigalg : sigalgs) {
     // SSL_SIGN_RSA_PKCS1_MD5_SHA1 is an internal value and should never be
     // negotiated.
     if (sigalg == SSL_SIGN_RSA_PKCS1_MD5_SHA1 ||
-        !ssl_private_key_supports_signature_algorithm(hs, sigalgs[i])) {
+        !ssl_private_key_supports_signature_algorithm(hs, sigalg)) {
       continue;
     }
 
-    for (size_t j = 0; j < num_peer_sigalgs; j++) {
-      if (sigalg == peer_sigalgs[j]) {
+    for (uint16_t peer_sigalg : peer_sigalgs) {
+      if (sigalg == peer_sigalg) {
         *out = sigalg;
         return 1;
       }
