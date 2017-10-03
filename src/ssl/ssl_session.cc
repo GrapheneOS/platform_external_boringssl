@@ -672,21 +672,26 @@ static enum ssl_hs_wait_t ssl_lookup_session(
     data.session_id_length = session_id_len;
     OPENSSL_memcpy(data.session_id, session_id, session_id_len);
 
-    CRYPTO_MUTEX_lock_read(&ssl->session_ctx->lock);
+    MutexReadLock lock(&ssl->session_ctx->lock);
     session.reset(lh_SSL_SESSION_retrieve(ssl->session_ctx->sessions, &data));
     if (session) {
       // |lh_SSL_SESSION_retrieve| returns a non-owning pointer.
       SSL_SESSION_up_ref(session.get());
     }
     // TODO(davidben): This should probably move it to the front of the list.
-    CRYPTO_MUTEX_unlock_read(&ssl->session_ctx->lock);
   }
 
   // Fall back to the external cache, if it exists.
-  if (!session && ssl->session_ctx->get_session_cb != NULL) {
+  if (!session && (ssl->session_ctx->get_session_cb != nullptr ||
+                   ssl->session_ctx->get_session_cb_legacy != nullptr)) {
     int copy = 1;
-    session.reset(ssl->session_ctx->get_session_cb(ssl, (uint8_t *)session_id,
-                                                   session_id_len, &copy));
+    if (ssl->session_ctx->get_session_cb != nullptr) {
+      session.reset(ssl->session_ctx->get_session_cb(ssl, session_id,
+                                                     session_id_len, &copy));
+    } else {
+      session.reset(ssl->session_ctx->get_session_cb_legacy(
+          ssl, const_cast<uint8_t *>(session_id), session_id_len, &copy));
+    }
 
     if (!session) {
       return ssl_hs_ok;
@@ -722,72 +727,6 @@ static enum ssl_hs_wait_t ssl_lookup_session(
   return ssl_hs_ok;
 }
 
-bool ssl_is_probably_java(const SSL_CLIENT_HELLO *client_hello) {
-  CBS extension, groups;
-  if (SSL_is_dtls(client_hello->ssl) ||
-      !ssl_client_hello_get_extension(client_hello, &extension,
-                                      TLSEXT_TYPE_supported_groups) ||
-      !CBS_get_u16_length_prefixed(&extension, &groups) ||
-      CBS_len(&extension) != 0) {
-    return false;
-  }
-
-  // Original Java curve list.
-  static const uint8_t kCurveList1[] = {
-      0x00, 0x17, 0x00, 0x01, 0x00, 0x03, 0x00, 0x13, 0x00, 0x15,
-      0x00, 0x06, 0x00, 0x07, 0x00, 0x09, 0x00, 0x0a, 0x00, 0x18,
-      0x00, 0x0b, 0x00, 0x0c, 0x00, 0x19, 0x00, 0x0d, 0x00, 0x0e,
-      0x00, 0x0f, 0x00, 0x10, 0x00, 0x11, 0x00, 0x02, 0x00, 0x12,
-      0x00, 0x04, 0x00, 0x05, 0x00, 0x14, 0x00, 0x08, 0x00, 0x16};
-
-  // Newer Java curve list.
-  static const uint8_t kCurveList2[] = {
-      0x00, 0x17, 0x00, 0x18, 0x00, 0x19, 0x00, 0x09, 0x00, 0x0a,
-      0x00, 0x0b, 0x00, 0x0c, 0x00, 0x0d, 0x00, 0x0e, 0x00, 0x16};
-
-  // IcedTea curve list.
-  static const uint8_t kCurveList3[] = {0x00, 0x17, 0x00, 0x18, 0x00, 0x19};
-
-  auto groups_span = MakeConstSpan(CBS_data(&groups), CBS_len(&groups));
-  if (groups_span != kCurveList1 && groups_span != kCurveList2 &&
-      groups_span != kCurveList3) {
-    return false;
-  }
-
-  // Java has a very distinctive curve list, but IcedTea patches it to a more
-  // standard [P-256, P-384, P-521]. Additionally check the extension
-  // order. This may still flag other clients, but false positives only mean a
-  // loss of resumption. Any client new enough to support one of X25519,
-  // extended master secret, session tickets, or TLS 1.3 will be unaffected.
-  //
-  // Java sends different extensions depending on configuration and version, but
-  // those which are present are always in the same order. Check if the
-  // extensions are an ordered subset of |kJavaExtensions|.
-  static const uint16_t kJavaExtensions[] = {
-      TLSEXT_TYPE_supported_groups,
-      TLSEXT_TYPE_ec_point_formats,
-      TLSEXT_TYPE_signature_algorithms,
-      TLSEXT_TYPE_server_name,
-      17 /* status_request_v2 */,
-      TLSEXT_TYPE_status_request,
-      TLSEXT_TYPE_application_layer_protocol_negotiation,
-      TLSEXT_TYPE_renegotiate,
-  };
-  CBS extensions;
-  CBS_init(&extensions, client_hello->extensions, client_hello->extensions_len);
-  for (uint16_t expected : kJavaExtensions) {
-    CBS extensions_copy = extensions, body;
-    uint16_t type;
-    // Peek at the next extension.
-    if (CBS_get_u16(&extensions_copy, &type) &&
-        CBS_get_u16_length_prefixed(&extensions_copy, &body) &&
-        type == expected) {
-      extensions = extensions_copy;
-    }
-  }
-  return CBS_len(&extensions) == 0;
-}
-
 enum ssl_hs_wait_t ssl_get_prev_session(SSL *ssl,
                                         UniquePtr<SSL_SESSION> *out_session,
                                         bool *out_tickets_supported,
@@ -795,6 +734,8 @@ enum ssl_hs_wait_t ssl_get_prev_session(SSL *ssl,
                                         const SSL_CLIENT_HELLO *client_hello) {
   // This is used only by servers.
   assert(ssl->server);
+  UniquePtr<SSL_SESSION> session;
+  bool renew_ticket = false;
 
   // If tickets are disabled, always behave as if no tickets are present.
   const uint8_t *ticket = NULL;
@@ -804,37 +745,6 @@ enum ssl_hs_wait_t ssl_get_prev_session(SSL *ssl,
       ssl->version > SSL3_VERSION &&
       SSL_early_callback_ctx_extension_get(
           client_hello, TLSEXT_TYPE_session_ticket, &ticket, &ticket_len);
-
-  if (ssl_is_probably_java(client_hello)) {
-    // The Java client implementation of the 3SHAKE mitigation incorrectly
-    // rejects initial handshakes when all of the following are true:
-    //
-    // 1. The ClientHello offered a session.
-    // 2. The session was successfully resumed previously.
-    // 3. The server declines the session.
-    // 4. The server sends a certificate with a different (see below) SAN list
-    //    than in the previous session.
-    //
-    // (Note the 3SHAKE mitigation is to reject certificates changes on
-    // renegotiation, while Java's logic applies to initial handshakes as well.)
-    //
-    // The end result is long-lived Java clients break on certificate rotations
-    // where the SAN list changes too much. Older versions of Java break if the
-    // first DNS name of the two certificates is different. Newer ones will
-    // break if there is no intersection. The new logic mostly mitigates this,
-    // but this can still cause problems if switching to or from wildcards.
-    //
-    // Thus, fingerprint Java clients and decline all offered sessions. This
-    // avoids (2) while still introducing new sessions to clear any existing
-    // problematic sessions.
-    *out_session = nullptr;
-    *out_tickets_supported = tickets_supported;
-    *out_renew_ticket = false;
-    return ssl_hs_ok;
-  }
-
-  UniquePtr<SSL_SESSION> session;
-  bool renew_ticket = false;
   if (tickets_supported && ticket_len > 0) {
     switch (ssl_process_ticket(ssl, &session, &renew_ticket, ticket, ticket_len,
                                client_hello->session_id,
@@ -1056,6 +966,30 @@ int SSL_SESSION_set1_id_context(SSL_SESSION *session, const uint8_t *sid_ctx,
   return 1;
 }
 
+int SSL_SESSION_should_be_single_use(const SSL_SESSION *session) {
+  return SSL_SESSION_protocol_version(session) >= TLS1_3_VERSION;
+}
+
+int SSL_SESSION_is_resumable(const SSL_SESSION *session) {
+  return !session->not_resumable;
+}
+
+int SSL_SESSION_has_ticket(const SSL_SESSION *session) {
+  return session->tlsext_ticklen > 0;
+}
+
+void SSL_SESSION_get0_ticket(const SSL_SESSION *session,
+                             const uint8_t **out_ticket, size_t *out_len) {
+  if (out_ticket != nullptr) {
+    *out_ticket = session->tlsext_tick;
+  }
+  *out_len = session->tlsext_ticklen;
+}
+
+uint32_t SSL_SESSION_get_ticket_lifetime_hint(const SSL_SESSION *session) {
+  return session->tlsext_tick_lifetime_hint;
+}
+
 SSL_SESSION *SSL_magic_pending_session_ptr(void) {
   return (SSL_SESSION *)&g_pending_session_magic;
 }
@@ -1109,41 +1043,44 @@ int SSL_CTX_add_session(SSL_CTX *ctx, SSL_SESSION *session) {
   // Although |session| is inserted into two structures (a doubly-linked list
   // and the hash table), |ctx| only takes one reference.
   SSL_SESSION_up_ref(session);
+  UniquePtr<SSL_SESSION> owned_session(session);
 
   SSL_SESSION *old_session;
-  CRYPTO_MUTEX_lock_write(&ctx->lock);
+  MutexWriteLock lock(&ctx->lock);
   if (!lh_SSL_SESSION_insert(ctx->sessions, &old_session, session)) {
-    CRYPTO_MUTEX_unlock_write(&ctx->lock);
-    SSL_SESSION_free(session);
     return 0;
   }
+  // |ctx->sessions| took ownership of |session| and gave us back a reference to
+  // |old_session|. (|old_session| may be the same as |session|, in which case
+  // we traded identical references with |ctx->sessions|.)
+  owned_session.release();
+  owned_session.reset(old_session);
 
   if (old_session != NULL) {
     if (old_session == session) {
-      // |session| was already in the cache.
-      CRYPTO_MUTEX_unlock_write(&ctx->lock);
-      SSL_SESSION_free(old_session);
+      // |session| was already in the cache. There are no linked list pointers
+      // to update.
       return 0;
     }
 
-    // There was a session ID collision. |old_session| must be removed from
-    // the linked list and released.
+    // There was a session ID collision. |old_session| was replaced with
+    // |session| in the hash table, so |old_session| must be removed from the
+    // linked list to match.
     SSL_SESSION_list_remove(ctx, old_session);
-    SSL_SESSION_free(old_session);
   }
 
   SSL_SESSION_list_add(ctx, session);
 
   // Enforce any cache size limits.
   if (SSL_CTX_sess_get_cache_size(ctx) > 0) {
-    while (SSL_CTX_sess_number(ctx) > SSL_CTX_sess_get_cache_size(ctx)) {
+    while (lh_SSL_SESSION_num_items(ctx->sessions) >
+           SSL_CTX_sess_get_cache_size(ctx)) {
       if (!remove_session_lock(ctx, ctx->session_cache_tail, 0)) {
         break;
       }
     }
   }
 
-  CRYPTO_MUTEX_unlock_write(&ctx->lock);
   return 1;
 }
 
@@ -1222,9 +1159,8 @@ void SSL_CTX_flush_sessions(SSL_CTX *ctx, uint64_t time) {
     return;
   }
   tp.time = time;
-  CRYPTO_MUTEX_lock_write(&ctx->lock);
+  MutexWriteLock lock(&ctx->lock);
   lh_SSL_SESSION_doall_arg(tp.cache, timeout_doall_arg, &tp);
-  CRYPTO_MUTEX_unlock_write(&ctx->lock);
 }
 
 void SSL_CTX_sess_set_new_cb(SSL_CTX *ctx,
@@ -1247,14 +1183,21 @@ void (*SSL_CTX_sess_get_remove_cb(SSL_CTX *ctx))(SSL_CTX *ctx,
 }
 
 void SSL_CTX_sess_set_get_cb(SSL_CTX *ctx,
-                             SSL_SESSION *(*cb)(SSL *ssl,
-                                                uint8_t *id, int id_len,
-                                                int *out_copy)) {
+                             SSL_SESSION *(*cb)(SSL *ssl, const uint8_t *id,
+                                                int id_len, int *out_copy)) {
   ctx->get_session_cb = cb;
 }
 
-SSL_SESSION *(*SSL_CTX_sess_get_get_cb(SSL_CTX *ctx))(
-    SSL *ssl, uint8_t *id, int id_len, int *out_copy) {
+void SSL_CTX_sess_set_get_cb(SSL_CTX *ctx,
+                             SSL_SESSION *(*cb)(SSL *ssl, uint8_t *id,
+                                                int id_len, int *out_copy)) {
+  ctx->get_session_cb_legacy = cb;
+}
+
+SSL_SESSION *(*SSL_CTX_sess_get_get_cb(SSL_CTX *ctx))(SSL *ssl,
+                                                      const uint8_t *id,
+                                                      int id_len,
+                                                      int *out_copy) {
   return ctx->get_session_cb;
 }
 
