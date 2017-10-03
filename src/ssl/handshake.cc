@@ -114,6 +114,8 @@
 
 #include <assert.h>
 
+#include <utility>
+
 #include "../crypto/internal.h"
 #include "internal.h"
 
@@ -144,15 +146,7 @@ SSL_HANDSHAKE::SSL_HANDSHAKE(SSL *ssl_arg)
 }
 
 SSL_HANDSHAKE::~SSL_HANDSHAKE() {
-  OPENSSL_free(cookie);
-  OPENSSL_free(key_share_bytes);
-  OPENSSL_free(ecdh_public_key);
-  OPENSSL_free(peer_sigalgs);
-  OPENSSL_free(peer_supported_group_list);
-  OPENSSL_free(peer_key);
-  OPENSSL_free(server_params);
   ssl->ctx->x509_method->hs_flush_cached_ca_names(this);
-  OPENSSL_free(certificate_types);
   OPENSSL_free(key_block);
 }
 
@@ -179,10 +173,9 @@ int ssl_check_message_type(SSL *ssl, const SSLMessage &msg, int type) {
 }
 
 int ssl_add_message_cbb(SSL *ssl, CBB *cbb) {
-  uint8_t *msg;
-  size_t len;
-  if (!ssl->method->finish_message(ssl, cbb, &msg, &len) ||
-      !ssl->method->add_message(ssl, msg, len)) {
+  Array<uint8_t> msg;
+  if (!ssl->method->finish_message(ssl, cbb, &msg) ||
+      !ssl->method->add_message(ssl, std::move(msg))) {
     return 0;
   }
 
