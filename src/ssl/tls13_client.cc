@@ -99,7 +99,7 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
       return ssl_hs_error;
     }
 
-    if (!CBS_stow(&cookie_value, &hs->cookie, &hs->cookie_len)) {
+    if (!hs->cookie.CopyFrom(cookie_value)) {
       return ssl_hs_error;
     }
   }
@@ -113,18 +113,7 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
     }
 
     // The group must be supported.
-    const uint16_t *groups;
-    size_t groups_len;
-    tls1_get_grouplist(ssl, &groups, &groups_len);
-    int found = 0;
-    for (size_t i = 0; i < groups_len; i++) {
-      if (groups[i] == group_id) {
-        found = 1;
-        break;
-      }
-    }
-
-    if (!found) {
+    if (!tls1_check_group_id(ssl, group_id)) {
       ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
       OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CURVE);
       return ssl_hs_error;
@@ -336,22 +325,16 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
   }
 
   // Resolve ECDHE and incorporate it into the secret.
-  uint8_t *dhe_secret;
-  size_t dhe_secret_len;
+  Array<uint8_t> dhe_secret;
   alert = SSL_AD_DECODE_ERROR;
-  if (!ssl_ext_key_share_parse_serverhello(hs, &dhe_secret, &dhe_secret_len,
-                                           &alert, &key_share)) {
+  if (!ssl_ext_key_share_parse_serverhello(hs, &dhe_secret, &alert,
+                                           &key_share)) {
     ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
     return ssl_hs_error;
   }
 
-  if (!tls13_advance_key_schedule(hs, dhe_secret, dhe_secret_len)) {
-    OPENSSL_free(dhe_secret);
-    return ssl_hs_error;
-  }
-  OPENSSL_free(dhe_secret);
-
-  if (!ssl_hash_message(hs, msg) ||
+  if (!tls13_advance_key_schedule(hs, dhe_secret.data(), dhe_secret.size()) ||
+      !ssl_hash_message(hs, msg) ||
       !tls13_derive_handshake_secrets(hs)) {
     return ssl_hs_error;
   }
@@ -854,14 +837,6 @@ int tls13_process_new_session_ticket(SSL *ssl, const SSLMessage &msg) {
   }
 
   return 1;
-}
-
-void ssl_clear_tls13_state(SSL_HANDSHAKE *hs) {
-  hs->key_share.reset();
-
-  OPENSSL_free(hs->key_share_bytes);
-  hs->key_share_bytes = NULL;
-  hs->key_share_bytes_len = 0;
 }
 
 }  // namespace bssl
