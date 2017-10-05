@@ -1316,13 +1316,6 @@ var tlsVersions = []tlsVersion{
 		versionWire:  tls13Experiment3Version,
 		tls13Variant: TLS13Experiment3,
 	},
-	{
-		name:         "TLS13RecordTypeExperiment",
-		version:      VersionTLS13,
-		excludeFlag:  "-no-tls13",
-		versionWire:  tls13RecordTypeExperimentVersion,
-		tls13Variant: TLS13RecordTypeExperiment,
-	},
 }
 
 func allVersions(protocol protocol) []tlsVersion {
@@ -9619,6 +9612,28 @@ func addCurveTests() {
 		expectedError: ":ERROR_PARSING_EXTENSION:",
 	})
 
+	// Server-sent supported groups/curves are legal in TLS 1.3. They are
+	// illegal in TLS 1.2, but some servers send them anyway, so we must
+	// tolerate them.
+	testCases = append(testCases, testCase{
+		name: "SupportedCurves-ServerHello-TLS12",
+		config: Config{
+			MaxVersion: VersionTLS12,
+			Bugs: ProtocolBugs{
+				SendServerSupportedCurves: true,
+			},
+		},
+	})
+	testCases = append(testCases, testCase{
+		name: "SupportedCurves-EncryptedExtensions-TLS13",
+		config: Config{
+			MaxVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				SendServerSupportedCurves: true,
+			},
+		},
+	})
+
 	// Test that we tolerate unknown point formats, as long as
 	// pointFormatUncompressed is present. Limit ciphers to ECDHE ciphers to
 	// check they are still functional.
@@ -10762,10 +10777,7 @@ func addTLS13HandshakeTests() {
 		})
 
 		hasSessionID := false
-		hasEmptySessionID := false
-		if variant == TLS13NoSessionIDExperiment {
-			hasEmptySessionID = true
-		} else if variant != TLS13Default && variant != TLS13RecordTypeExperiment {
+		if variant != TLS13Default {
 			hasSessionID = true
 		}
 
@@ -10776,8 +10788,7 @@ func addTLS13HandshakeTests() {
 			config: Config{
 				MaxVersion: VersionTLS13,
 				Bugs: ProtocolBugs{
-					ExpectClientHelloSessionID:      hasSessionID,
-					ExpectEmptyClientHelloSessionID: hasEmptySessionID,
+					ExpectClientHelloSessionID: hasSessionID,
 				},
 			},
 			tls13Variant: variant,
