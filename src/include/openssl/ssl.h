@@ -591,7 +591,6 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define TLS1_3_EXPERIMENT_VERSION 0x7e01
 #define TLS1_3_EXPERIMENT2_VERSION 0x7e02
 #define TLS1_3_EXPERIMENT3_VERSION 0x7e03
-#define TLS1_3_RECORD_TYPE_EXPERIMENT_VERSION 0x7a12
 
 // SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
 // |version|. If |version| is zero, the default minimum version is used. It
@@ -1670,9 +1669,20 @@ OPENSSL_EXPORT int SSL_SESSION_to_bytes_for_ticket(const SSL_SESSION *in,
 OPENSSL_EXPORT SSL_SESSION *SSL_SESSION_from_bytes(
     const uint8_t *in, size_t in_len, const SSL_CTX *ctx);
 
-// SSL_SESSION_get_version returns a string describing the TLS version |session|
-// was established at. For example, "TLSv1.2" or "SSLv3".
+// SSL_SESSION_get_version returns a string describing the TLS or DTLS version
+// |session| was established at. For example, "TLSv1.2" or "SSLv3".
 OPENSSL_EXPORT const char *SSL_SESSION_get_version(const SSL_SESSION *session);
+
+// SSL_SESSION_get_protocol_version returns the TLS or DTLS version |session|
+// was established at.
+OPENSSL_EXPORT uint16_t
+SSL_SESSION_get_protocol_version(const SSL_SESSION *session);
+
+// SSL_SESSION_set_protocol_version sets |session|'s TLS or DTLS version to
+// |version|. This may be useful when writing tests but should otherwise not be
+// used. It returns one on success and zero on error.
+OPENSSL_EXPORT int SSL_SESSION_set_protocol_version(SSL_SESSION *session,
+                                                    uint16_t version);
 
 // SSL_SESSION_get_id returns a pointer to a buffer containing |session|'s
 // session ID and sets |*out_len| to its length.
@@ -3219,10 +3229,8 @@ OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 enum tls13_variant_t {
   tls13_default = 0,
   tls13_experiment = 1,
-  tls13_record_type_experiment = 2,
-  tls13_no_session_id_experiment = 3,
-  tls13_experiment2 = 4,
-  tls13_experiment3 = 5,
+  tls13_experiment2 = 2,
+  tls13_experiment3 = 3,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
@@ -4047,7 +4055,7 @@ DECLARE_STACK_OF(SSL_CUSTOM_EXTENSION)
 
 struct ssl_session_st {
   CRYPTO_refcount_t references;
-  int ssl_version;  // what ssl version session info is being kept in here?
+  uint16_t ssl_version;  // what ssl version session info is being kept in here?
 
   // group_id is the ID of the ECDH group used to establish this session or zero
   // if not applicable or unknown.
