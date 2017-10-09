@@ -57,7 +57,7 @@ int tls13_init_key_schedule(SSL_HANDSHAKE *hs) {
 
 int tls13_init_early_key_schedule(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
-  return init_key_schedule(hs, SSL_SESSION_protocol_version(ssl->session),
+  return init_key_schedule(hs, ssl_session_protocol_version(ssl->session),
                            ssl->session->cipher);
 }
 
@@ -116,7 +116,7 @@ int tls13_set_traffic_key(SSL *ssl, enum evp_aead_direction_t direction,
                           const uint8_t *traffic_secret,
                           size_t traffic_secret_len) {
   const SSL_SESSION *session = SSL_get_session(ssl);
-  uint16_t version = SSL_SESSION_protocol_version(session);
+  uint16_t version = ssl_session_protocol_version(session);
 
   if (traffic_secret_len > 0xff) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_OVERFLOW);
@@ -131,7 +131,7 @@ int tls13_set_traffic_key(SSL *ssl, enum evp_aead_direction_t direction,
     return 0;
   }
 
-  const EVP_MD *digest = SSL_SESSION_get_digest(session);
+  const EVP_MD *digest = ssl_session_get_digest(session);
 
   // Derive the key.
   size_t key_len = EVP_AEAD_key_length(aead);
@@ -149,9 +149,10 @@ int tls13_set_traffic_key(SSL *ssl, enum evp_aead_direction_t direction,
     return 0;
   }
 
-  UniquePtr<SSLAEADContext> traffic_aead = SSLAEADContext::Create(
-      direction, session->ssl_version, SSL_is_dtls(ssl), session->cipher, key,
-      key_len, NULL, 0, iv, iv_len);
+  UniquePtr<SSLAEADContext> traffic_aead =
+      SSLAEADContext::Create(direction, session->ssl_version, SSL_is_dtls(ssl),
+                             session->cipher, MakeConstSpan(key, key_len),
+                             Span<const uint8_t>(), MakeConstSpan(iv, iv_len));
   if (!traffic_aead) {
     return 0;
   }
@@ -235,7 +236,9 @@ int tls13_derive_application_secrets(SSL_HANDSHAKE *hs) {
                         hs->server_traffic_secret_0, hs->hash_len) &&
          derive_secret(hs, ssl->s3->exporter_secret, hs->hash_len,
                        (const uint8_t *)kTLS13LabelExporter,
-                       strlen(kTLS13LabelExporter));
+                       strlen(kTLS13LabelExporter)) &&
+         ssl_log_secret(ssl, "EXPORTER_SECRET", ssl->s3->exporter_secret,
+                        hs->hash_len);
 }
 
 static const char kTLS13LabelApplicationTraffic[] =
@@ -252,7 +255,7 @@ int tls13_rotate_traffic_key(SSL *ssl, enum evp_aead_direction_t direction) {
     secret_len = ssl->s3->write_traffic_secret_len;
   }
 
-  const EVP_MD *digest = SSL_SESSION_get_digest(SSL_get_session(ssl));
+  const EVP_MD *digest = ssl_session_get_digest(SSL_get_session(ssl));
   if (!hkdf_expand_label(secret, digest, secret, secret_len,
                          (const uint8_t *)kTLS13LabelApplicationTraffic,
                          strlen(kTLS13LabelApplicationTraffic), NULL, 0,
@@ -327,7 +330,7 @@ int tls13_export_keying_material(SSL *ssl, uint8_t *out, size_t out_len,
     hash_len = context_len;
   }
 
-  const EVP_MD *digest = SSL_SESSION_get_digest(SSL_get_session(ssl));
+  const EVP_MD *digest = ssl_session_get_digest(SSL_get_session(ssl));
   return hkdf_expand_label(out, digest, ssl->s3->exporter_secret,
                            ssl->s3->exporter_secret_len, (const uint8_t *)label,
                            label_len, hash, hash_len, out_len);
@@ -367,7 +370,7 @@ static int tls13_psk_binder(uint8_t *out, const EVP_MD *digest, uint8_t *psk,
 
 int tls13_write_psk_binder(SSL_HANDSHAKE *hs, uint8_t *msg, size_t len) {
   SSL *const ssl = hs->ssl;
-  const EVP_MD *digest = SSL_SESSION_get_digest(ssl->session);
+  const EVP_MD *digest = ssl_session_get_digest(ssl->session);
   size_t hash_len = EVP_MD_size(digest);
 
   if (len < hash_len + 3) {
