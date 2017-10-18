@@ -497,7 +497,11 @@ const (
 	RSABadValueCorrupt
 	RSABadValueTooLong
 	RSABadValueTooShort
-	RSABadValueWrongVersion
+	RSABadValueWrongVersion1
+	RSABadValueWrongVersion2
+	RSABadValueWrongBlockType
+	RSABadValueWrongLeadingByte
+	RSABadValueNoZero
 	NumRSABadValues
 )
 
@@ -559,6 +563,10 @@ type ProtocolBugs struct {
 	// SkipNewSessionTicket causes the server to skip sending the
 	// NewSessionTicket message despite promising to in ServerHello.
 	SkipNewSessionTicket bool
+
+	// UseFirstSessionTicket causes the client to cache only the first session
+	// ticket received.
+	UseFirstSessionTicket bool
 
 	// SkipClientCertificate causes the client to skip the Certificate
 	// message.
@@ -948,9 +956,21 @@ type ProtocolBugs struct {
 	// record size.
 	PackHandshakeFragments int
 
-	// PackHandshakeRecords, if true, causes handshake records in DTLS to be
-	// packed into individual packets, up to the specified packet size.
+	// PackHandshakeRecords, if non-zero, causes handshake and
+	// ChangeCipherSpec records in DTLS to be packed into individual
+	// packets, up to the specified packet size.
 	PackHandshakeRecords int
+
+	// PackAppDataWithHandshake, if true, extends PackHandshakeRecords to
+	// additionally include the first application data record sent after the
+	// final Finished message in a handshake. (If the final Finished message
+	// is sent by the peer, this option has no effect.) This requires that
+	// the runner rather than shim speak first in a given test.
+	PackAppDataWithHandshake bool
+
+	// SplitAndPackAppData, if true, causes application data in DTLS to be
+	// split into two records each and packed into one packet.
+	SplitAndPackAppData bool
 
 	// PackHandshakeFlight, if true, causes each handshake flight in TLS to
 	// be packed into records, up to the largest size record available.

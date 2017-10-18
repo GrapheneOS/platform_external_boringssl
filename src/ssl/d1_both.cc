@@ -287,7 +287,7 @@ static hm_fragment *dtls1_get_incoming_message(
     if (frag->type != msg_hdr->type ||
         frag->msg_len != msg_hdr->msg_len) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_FRAGMENT_MISMATCH);
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
       return NULL;
     }
     return frag;
@@ -315,7 +315,7 @@ int dtls1_read_message(SSL *ssl) {
     case SSL3_RT_APPLICATION_DATA:
       // Unencrypted application data records are always illegal.
       if (ssl->s3->aead_read_ctx->is_null_cipher()) {
-        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+        ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
         OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
         return -1;
       }
@@ -330,21 +330,21 @@ int dtls1_read_message(SSL *ssl) {
       // We do not support renegotiation, so encrypted ChangeCipherSpec records
       // are illegal.
       if (!ssl->s3->aead_read_ctx->is_null_cipher()) {
-        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+        ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
         OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
         return -1;
       }
 
       if (rr->length != 1 || rr->data[0] != SSL3_MT_CCS) {
         OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_CHANGE_CIPHER_SPEC);
-        ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+        ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
         return -1;
       }
 
       // Flag the ChangeCipherSpec for later.
       ssl->d1->has_change_cipher_spec = true;
       ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_CHANGE_CIPHER_SPEC,
-                          rr->data, rr->length);
+                          MakeSpan(rr->data, rr->length));
 
       rr->length = 0;
       ssl_read_buffer_discard(ssl);
@@ -355,7 +355,7 @@ int dtls1_read_message(SSL *ssl) {
       break;
 
     default:
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
       OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
       return -1;
   }
@@ -369,7 +369,7 @@ int dtls1_read_message(SSL *ssl) {
     CBS body;
     if (!dtls1_parse_fragment(&cbs, &msg_hdr, &body)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_HANDSHAKE_RECORD);
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
       return -1;
     }
 
@@ -380,14 +380,14 @@ int dtls1_read_message(SSL *ssl) {
         frag_off + frag_len > msg_len ||
         msg_len > ssl_max_handshake_message_len(ssl)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_EXCESSIVE_MESSAGE_SIZE);
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
       return -1;
     }
 
     // The encrypted epoch in DTLS has only one handshake message.
     if (ssl->d1->r_epoch == 1 && msg_hdr.seq != ssl->d1->handshake_read_seq) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
       return -1;
     }
 
@@ -433,8 +433,7 @@ bool dtls1_get_message(SSL *ssl, SSLMessage *out) {
   CBS_init(&out->raw, frag->data, DTLS1_HM_HEADER_LENGTH + frag->msg_len);
   out->is_v2_hello = false;
   if (!ssl->s3->has_message) {
-    ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_HANDSHAKE, frag->data,
-                        frag->msg_len + DTLS1_HM_HEADER_LENGTH);
+    ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_HANDSHAKE, out->raw);
     ssl->s3->has_message = true;
   }
   return true;
@@ -462,7 +461,11 @@ void dtls_clear_incoming_messages(SSL *ssl) {
   }
 }
 
-int dtls_has_incoming_messages(const SSL *ssl) {
+bool dtls_has_unprocessed_handshake_data(const SSL *ssl) {
+  if (ssl->d1->has_change_cipher_spec) {
+    return true;
+  }
+
   size_t current = ssl->d1->handshake_read_seq % SSL_MAX_HANDSHAKE_FLIGHT;
   for (size_t i = 0; i < SSL_MAX_HANDSHAKE_FLIGHT; i++) {
     // Skip the current message.
@@ -471,10 +474,10 @@ int dtls_has_incoming_messages(const SSL *ssl) {
       continue;
     }
     if (ssl->d1->incoming_messages[i] != NULL) {
-      return 1;
+      return true;
     }
   }
-  return 0;
+  return false;
 }
 
 int dtls1_parse_fragment(CBS *cbs, struct hm_header_st *out_hdr,
@@ -575,7 +578,7 @@ static int add_outgoing(SSL *ssl, int is_ccs, Array<uint8_t> data) {
     // TODO(svaldez): Move this up a layer to fix abstraction for SSLTranscript
     // on hs.
     if (ssl->s3->hs != NULL &&
-        !ssl->s3->hs->transcript.Update(data.data(), data.size())) {
+        !ssl->s3->hs->transcript.Update(data)) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
       return 0;
     }
@@ -673,7 +676,7 @@ static enum seal_result_t seal_next_message(SSL *ssl, uint8_t *out,
     }
 
     ssl_do_msg_callback(ssl, 1 /* write */, SSL3_RT_CHANGE_CIPHER_SPEC,
-                        kChangeCipherSpec, sizeof(kChangeCipherSpec));
+                        kChangeCipherSpec);
     return seal_success;
   }
 
@@ -716,7 +719,8 @@ static enum seal_result_t seal_next_message(SSL *ssl, uint8_t *out,
     return seal_error;
   }
 
-  ssl_do_msg_callback(ssl, 1 /* write */, SSL3_RT_HANDSHAKE, frag, frag_len);
+  ssl_do_msg_callback(ssl, 1 /* write */, SSL3_RT_HANDSHAKE,
+                      MakeSpan(frag, frag_len));
 
   if (!dtls_seal_record(ssl, out, out_len, max_out, SSL3_RT_HANDSHAKE,
                         out + prefix, frag_len, use_epoch)) {

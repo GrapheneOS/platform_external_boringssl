@@ -129,80 +129,55 @@
 namespace bssl {
 
 int dtls1_get_record(SSL *ssl) {
-again:
-  switch (ssl->s3->recv_shutdown) {
-    case ssl_shutdown_none:
-      break;
-    case ssl_shutdown_fatal_alert:
-      OPENSSL_PUT_ERROR(SSL, SSL_R_PROTOCOL_IS_SHUTDOWN);
-      return -1;
-    case ssl_shutdown_close_notify:
-      return 0;
-  }
-
-  // Read a new packet if there is no unconsumed one.
-  if (ssl_read_buffer_len(ssl) == 0) {
-    int read_ret = ssl_read_buffer_extend_to(ssl, 0 /* unused */);
-    if (read_ret < 0 && dtls1_is_timer_expired(ssl)) {
-      // Historically, timeouts were handled implicitly if the caller did not
-      // handle them.
-      //
-      // TODO(davidben): This was to support blocking sockets but affected
-      // non-blocking sockets. Can it be removed?
-      int timeout_ret = DTLSv1_handle_timeout(ssl);
-      if (timeout_ret <= 0) {
-        return timeout_ret;
+  for (;;) {
+    Span<uint8_t> body;
+    uint8_t type, alert;
+    size_t consumed;
+    enum ssl_open_record_t open_ret = dtls_open_record(
+        ssl, &type, &body, &consumed, &alert, ssl_read_buffer(ssl));
+    if (open_ret != ssl_open_record_partial) {
+      ssl_read_buffer_consume(ssl, consumed);
+    }
+    switch (open_ret) {
+      case ssl_open_record_partial: {
+        assert(ssl_read_buffer(ssl).empty());
+        int read_ret = ssl_read_buffer_extend_to(ssl, 0 /* unused */);
+        if (read_ret <= 0) {
+          return read_ret;
+        }
+        continue;
       }
-      goto again;
-    }
-    if (read_ret <= 0) {
-      return read_ret;
-    }
-  }
-  assert(ssl_read_buffer_len(ssl) > 0);
 
-  CBS body;
-  uint8_t type, alert;
-  size_t consumed;
-  enum ssl_open_record_t open_ret =
-      dtls_open_record(ssl, &type, &body, &consumed, &alert,
-                       ssl_read_buffer(ssl), ssl_read_buffer_len(ssl));
-  ssl_read_buffer_consume(ssl, consumed);
-  switch (open_ret) {
-    case ssl_open_record_partial:
-      // Impossible in DTLS.
-      break;
+      case ssl_open_record_success: {
+        if (body.size() > 0xffff) {
+          OPENSSL_PUT_ERROR(SSL, ERR_R_OVERFLOW);
+          return -1;
+        }
 
-    case ssl_open_record_success: {
-      if (CBS_len(&body) > 0xffff) {
-        OPENSSL_PUT_ERROR(SSL, ERR_R_OVERFLOW);
+        SSL3_RECORD *rr = &ssl->s3->rrec;
+        rr->type = type;
+        rr->length = static_cast<uint16_t>(body.size());
+        rr->data = body.data();
+        return 1;
+      }
+
+      case ssl_open_record_discard:
+        continue;
+
+      case ssl_open_record_close_notify:
+        return 0;
+
+      case ssl_open_record_error:
+        if (alert != 0) {
+          ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
+        }
         return -1;
-      }
-
-      SSL3_RECORD *rr = &ssl->s3->rrec;
-      rr->type = type;
-      rr->length = (uint16_t)CBS_len(&body);
-      rr->data = (uint8_t *)CBS_data(&body);
-      return 1;
     }
 
-    case ssl_open_record_discard:
-      goto again;
-
-    case ssl_open_record_close_notify:
-      return 0;
-
-    case ssl_open_record_fatal_alert:
-      return -1;
-
-    case ssl_open_record_error:
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
-      return -1;
+    assert(0);
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return -1;
   }
-
-  assert(0);
-  OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
-  return -1;
 }
 
 int dtls1_read_app_data(SSL *ssl, bool *out_got_handshake, uint8_t *buf,
@@ -228,7 +203,7 @@ again:
     struct hm_header_st msg_hdr;
     CBS_init(&cbs, rr->data, rr->length);
     if (!dtls1_parse_fragment(&cbs, &msg_hdr, &body)) {
-      ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_HANDSHAKE_RECORD);
       return -1;
     }
@@ -255,7 +230,7 @@ again:
   }
 
   if (rr->type != SSL3_RT_APPLICATION_DATA) {
-    ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+    ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
     OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
     return -1;
   }
@@ -293,8 +268,8 @@ void dtls1_read_close_notify(SSL *ssl) {
   // alerts also aren't delivered reliably, so we may even time out because the
   // peer never received our close_notify. Report to the caller that the channel
   // has fully shut down.
-  if (ssl->s3->recv_shutdown == ssl_shutdown_none) {
-    ssl->s3->recv_shutdown = ssl_shutdown_close_notify;
+  if (ssl->s3->read_shutdown == ssl_shutdown_none) {
+    ssl->s3->read_shutdown = ssl_shutdown_close_notify;
   }
 }
 
@@ -369,8 +344,7 @@ int dtls1_dispatch_alert(SSL *ssl) {
     BIO_flush(ssl->wbio);
   }
 
-  ssl_do_msg_callback(ssl, 1 /* write */, SSL3_RT_ALERT, ssl->s3->send_alert,
-                      2);
+  ssl_do_msg_callback(ssl, 1 /* write */, SSL3_RT_ALERT, ssl->s3->send_alert);
 
   int alert = (ssl->s3->send_alert[0] << 8) | ssl->s3->send_alert[1];
   ssl_do_info_callback(ssl, SSL_CB_WRITE_ALERT, alert);

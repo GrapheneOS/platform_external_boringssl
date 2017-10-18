@@ -317,19 +317,6 @@ int ssl_log_secret(const SSL *ssl, const char *label, const uint8_t *secret,
   return 1;
 }
 
-int ssl3_can_false_start(const SSL *ssl) {
-  const SSL_CIPHER *const cipher = SSL_get_current_cipher(ssl);
-
-  // False Start only for TLS 1.2 with an ECDHE+AEAD cipher and ALPN or NPN.
-  return !SSL_is_dtls(ssl) &&
-      SSL_version(ssl) == TLS1_2_VERSION &&
-      (ssl->s3->alpn_selected != NULL ||
-       ssl->s3->next_proto_negotiated != NULL) &&
-      cipher != NULL &&
-      cipher->algorithm_mkey == SSL_kECDHE &&
-      cipher->algorithm_mac == SSL_AEAD;
-}
-
 void ssl_do_info_callback(const SSL *ssl, int type, int value) {
   void (*cb)(const SSL *ssl, int type, int value) = NULL;
   if (ssl->info_callback != NULL) {
@@ -344,7 +331,7 @@ void ssl_do_info_callback(const SSL *ssl, int type, int value) {
 }
 
 void ssl_do_msg_callback(SSL *ssl, int is_write, int content_type,
-                         const void *buf, size_t len) {
+                         Span<const uint8_t> in) {
   if (ssl->msg_callback == NULL) {
     return;
   }
@@ -364,7 +351,7 @@ void ssl_do_msg_callback(SSL *ssl, int is_write, int content_type,
       version = SSL_version(ssl);
   }
 
-  ssl->msg_callback(is_write, version, content_type, buf, len, ssl,
+  ssl->msg_callback(is_write, version, content_type, in.data(), in.size(), ssl,
                     ssl->msg_callback_arg);
 }
 
@@ -744,12 +731,12 @@ void SSL_free(SSL *ssl) {
 }
 
 void SSL_set_connect_state(SSL *ssl) {
-  ssl->server = 0;
+  ssl->server = false;
   ssl->do_handshake = ssl_client_handshake;
 }
 
 void SSL_set_accept_state(SSL *ssl) {
-  ssl->server = 1;
+  ssl->server = true;
   ssl->do_handshake = ssl_server_handshake;
 }
 
@@ -852,7 +839,7 @@ int SSL_accept(SSL *ssl) {
 }
 
 static int ssl_do_post_handshake(SSL *ssl, const SSLMessage &msg) {
-  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+  if (ssl_protocol_version(ssl) >= TLS1_3_VERSION) {
     return tls13_post_handshake(ssl, msg);
   }
 
@@ -864,7 +851,7 @@ static int ssl_do_post_handshake(SSL *ssl, const SSLMessage &msg) {
   }
 
   if (msg.type != SSL3_MT_HELLO_REQUEST || CBS_len(&msg.body) != 0) {
-    ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
+    ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_HELLO_REQUEST);
     return 0;
   }
@@ -909,7 +896,7 @@ static int ssl_do_post_handshake(SSL *ssl, const SSLMessage &msg) {
   return 1;
 
 no_renegotiation:
-  ssl3_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_NO_RENEGOTIATION);
+  ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_NO_RENEGOTIATION);
   OPENSSL_PUT_ERROR(SSL, SSL_R_NO_RENEGOTIATION);
   return 0;
 }
@@ -937,28 +924,27 @@ static int ssl_read_impl(SSL *ssl, void *buf, int num, int peek) {
       }
     }
 
-    bool got_handshake = false;
-    int ret = ssl->method->read_app_data(ssl, &got_handshake, (uint8_t *)buf,
-                                         num, peek);
-    if (ret > 0 || !got_handshake) {
-      ssl->s3->key_update_count = 0;
-      return ret;
-    }
-
-    // If we received an interrupt in early read (the end_of_early_data alert),
-    // loop again for the handshake to process it.
-    if (SSL_in_init(ssl)) {
-      continue;
-    }
-
+    // Process any buffered post-handshake messages.
     SSLMessage msg;
-    while (ssl->method->get_message(ssl, &msg)) {
+    if (ssl->method->get_message(ssl, &msg)) {
       // Handle the post-handshake message and try again.
       if (!ssl_do_post_handshake(ssl, msg)) {
         return -1;
       }
       ssl->method->next_message(ssl);
+      continue;  // Loop again. We may have begun a new handshake.
     }
+
+    bool got_handshake = false;
+    int ret = ssl->method->read_app_data(ssl, &got_handshake, (uint8_t *)buf,
+                                         num, peek);
+    if (got_handshake) {
+      continue;  // Loop again to process the handshake data.
+    }
+    if (ret > 0) {
+      ssl->s3->key_update_count = 0;
+    }
+    return ret;
   }
 }
 
@@ -978,7 +964,7 @@ int SSL_write(SSL *ssl, const void *buf, int num) {
     return -1;
   }
 
-  if (ssl->s3->send_shutdown != ssl_shutdown_none) {
+  if (ssl->s3->write_shutdown != ssl_shutdown_none) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_PROTOCOL_IS_SHUTDOWN);
     return -1;
   }
@@ -1021,8 +1007,8 @@ int SSL_shutdown(SSL *ssl) {
 
   if (ssl->quiet_shutdown) {
     // Do nothing if configured not to send a close_notify.
-    ssl->s3->send_shutdown = ssl_shutdown_close_notify;
-    ssl->s3->recv_shutdown = ssl_shutdown_close_notify;
+    ssl->s3->write_shutdown = ssl_shutdown_close_notify;
+    ssl->s3->read_shutdown = ssl_shutdown_close_notify;
     return 1;
   }
 
@@ -1030,9 +1016,9 @@ int SSL_shutdown(SSL *ssl) {
   // waits for a close_notify to come in. Perform exactly one action and return
   // whether or not it succeeds.
 
-  if (ssl->s3->send_shutdown != ssl_shutdown_close_notify) {
+  if (ssl->s3->write_shutdown != ssl_shutdown_close_notify) {
     // Send a close_notify.
-    if (ssl3_send_alert(ssl, SSL3_AL_WARNING, SSL_AD_CLOSE_NOTIFY) <= 0) {
+    if (ssl_send_alert(ssl, SSL3_AL_WARNING, SSL_AD_CLOSE_NOTIFY) <= 0) {
       return -1;
     }
   } else if (ssl->s3->alert_dispatch) {
@@ -1040,16 +1026,16 @@ int SSL_shutdown(SSL *ssl) {
     if (ssl->method->dispatch_alert(ssl) <= 0) {
       return -1;
     }
-  } else if (ssl->s3->recv_shutdown != ssl_shutdown_close_notify) {
+  } else if (ssl->s3->read_shutdown != ssl_shutdown_close_notify) {
     // Wait for the peer's close_notify.
     ssl->method->read_close_notify(ssl);
-    if (ssl->s3->recv_shutdown != ssl_shutdown_close_notify) {
+    if (ssl->s3->read_shutdown != ssl_shutdown_close_notify) {
       return -1;
     }
   }
 
   // Return 0 for unidirectional shutdown and 1 for bidirectional shutdown.
-  return ssl->s3->recv_shutdown == ssl_shutdown_close_notify;
+  return ssl->s3->read_shutdown == ssl_shutdown_close_notify;
 }
 
 int SSL_send_fatal_alert(SSL *ssl, uint8_t alert) {
@@ -1063,7 +1049,7 @@ int SSL_send_fatal_alert(SSL *ssl, uint8_t alert) {
     return ssl->method->dispatch_alert(ssl);
   }
 
-  return ssl3_send_alert(ssl, SSL3_AL_FATAL, alert);
+  return ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
 }
 
 void SSL_CTX_set_early_data_enabled(SSL_CTX *ctx, int enabled) {
@@ -1137,7 +1123,7 @@ int SSL_get_error(const SSL *ssl, int ret_code) {
   }
 
   if (ret_code == 0) {
-    if (ssl->s3->recv_shutdown == ssl_shutdown_close_notify) {
+    if (ssl->s3->read_shutdown == ssl_shutdown_close_notify) {
       return SSL_ERROR_ZERO_RETURN;
     }
     // An EOF was observed which violates the protocol, and the underlying
@@ -1272,8 +1258,8 @@ int SSL_get_tls_unique(const SSL *ssl, uint8_t *out, size_t *out_len,
 
   // tls-unique is not defined for SSL 3.0 or TLS 1.3.
   if (!ssl->s3->initial_handshake_complete ||
-      ssl3_protocol_version(ssl) < TLS1_VERSION ||
-      ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+      ssl_protocol_version(ssl) < TLS1_VERSION ||
+      ssl_protocol_version(ssl) >= TLS1_3_VERSION) {
     return 0;
   }
 
@@ -1411,8 +1397,8 @@ static size_t copy_finished(void *out, size_t out_len, const uint8_t *in,
 
 size_t SSL_get_finished(const SSL *ssl, void *buf, size_t count) {
   if (!ssl->s3->initial_handshake_complete ||
-      ssl3_protocol_version(ssl) < TLS1_VERSION ||
-      ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+      ssl_protocol_version(ssl) < TLS1_VERSION ||
+      ssl_protocol_version(ssl) >= TLS1_3_VERSION) {
     return 0;
   }
 
@@ -1427,8 +1413,8 @@ size_t SSL_get_finished(const SSL *ssl, void *buf, size_t count) {
 
 size_t SSL_get_peer_finished(const SSL *ssl, void *buf, size_t count) {
   if (!ssl->s3->initial_handshake_complete ||
-      ssl3_protocol_version(ssl) < TLS1_VERSION ||
-      ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+      ssl_protocol_version(ssl) < TLS1_VERSION ||
+      ssl_protocol_version(ssl) >= TLS1_3_VERSION) {
     return 0;
   }
 
@@ -1449,7 +1435,7 @@ int SSL_get_extms_support(const SSL *ssl) {
   if (!ssl->s3->have_version) {
     return 0;
   }
-  if (ssl3_protocol_version(ssl) >= TLS1_3_VERSION) {
+  if (ssl_protocol_version(ssl) >= TLS1_3_VERSION) {
     return 1;
   }
 
@@ -1567,7 +1553,7 @@ int SSL_get_secure_renegotiation_support(const SSL *ssl) {
   if (!ssl->s3->have_version) {
     return 0;
   }
-  return ssl3_protocol_version(ssl) >= TLS1_3_VERSION ||
+  return ssl_protocol_version(ssl) >= TLS1_3_VERSION ||
          ssl->s3->send_connection_binding;
 }
 
@@ -1795,19 +1781,19 @@ void SSL_set_custom_verify(
 }
 
 void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx) {
-  ctx->signed_cert_timestamps_enabled = 1;
+  ctx->signed_cert_timestamps_enabled = true;
 }
 
 void SSL_enable_signed_cert_timestamps(SSL *ssl) {
-  ssl->signed_cert_timestamps_enabled = 1;
+  ssl->signed_cert_timestamps_enabled = true;
 }
 
 void SSL_CTX_enable_ocsp_stapling(SSL_CTX *ctx) {
-  ctx->ocsp_stapling_enabled = 1;
+  ctx->ocsp_stapling_enabled = true;
 }
 
 void SSL_enable_ocsp_stapling(SSL *ssl) {
-  ssl->ocsp_stapling_enabled = 1;
+  ssl->ocsp_stapling_enabled = true;
 }
 
 void SSL_get0_signed_cert_timestamp_list(const SSL *ssl, const uint8_t **out,
@@ -2004,7 +1990,7 @@ int SSL_CTX_set1_tls_channel_id(SSL_CTX *ctx, EVP_PKEY *private_key) {
   EVP_PKEY_free(ctx->tlsext_channel_id_private);
   EVP_PKEY_up_ref(private_key);
   ctx->tlsext_channel_id_private = private_key;
-  ctx->tlsext_channel_id_enabled = 1;
+  ctx->tlsext_channel_id_enabled = true;
 
   return 1;
 }
@@ -2018,7 +2004,7 @@ int SSL_set1_tls_channel_id(SSL *ssl, EVP_PKEY *private_key) {
   EVP_PKEY_free(ssl->tlsext_channel_id_private);
   EVP_PKEY_up_ref(private_key);
   ssl->tlsext_channel_id_private = private_key;
-  ssl->tlsext_channel_id_enabled = 1;
+  ssl->tlsext_channel_id_enabled = true;
 
   return 1;
 }
@@ -2091,24 +2077,24 @@ void SSL_set_shutdown(SSL *ssl, int mode) {
   assert((SSL_get_shutdown(ssl) & mode) == SSL_get_shutdown(ssl));
 
   if (mode & SSL_RECEIVED_SHUTDOWN &&
-      ssl->s3->recv_shutdown == ssl_shutdown_none) {
-    ssl->s3->recv_shutdown = ssl_shutdown_close_notify;
+      ssl->s3->read_shutdown == ssl_shutdown_none) {
+    ssl->s3->read_shutdown = ssl_shutdown_close_notify;
   }
 
   if (mode & SSL_SENT_SHUTDOWN &&
-      ssl->s3->send_shutdown == ssl_shutdown_none) {
-    ssl->s3->send_shutdown = ssl_shutdown_close_notify;
+      ssl->s3->write_shutdown == ssl_shutdown_none) {
+    ssl->s3->write_shutdown = ssl_shutdown_close_notify;
   }
 }
 
 int SSL_get_shutdown(const SSL *ssl) {
   int ret = 0;
-  if (ssl->s3->recv_shutdown != ssl_shutdown_none) {
+  if (ssl->s3->read_shutdown != ssl_shutdown_none) {
     // Historically, OpenSSL set |SSL_RECEIVED_SHUTDOWN| on both close_notify
     // and fatal alert.
     ret |= SSL_RECEIVED_SHUTDOWN;
   }
-  if (ssl->s3->send_shutdown == ssl_shutdown_close_notify) {
+  if (ssl->s3->write_shutdown == ssl_shutdown_close_notify) {
     // Historically, OpenSSL set |SSL_SENT_SHUTDOWN| on only close_notify.
     ret |= SSL_SENT_SHUTDOWN;
   }

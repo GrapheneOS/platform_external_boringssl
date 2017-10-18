@@ -96,6 +96,7 @@ type Conn struct {
 	handMsg          []byte   // pending assembled handshake message
 	handMsgLen       int      // handshake message length, not including the header
 	pendingFragments [][]byte // pending outgoing handshake fragments.
+	pendingPacket    []byte   // pending outgoing packet.
 
 	keyUpdateRequested bool
 	seenOneByteRecord  bool
@@ -1400,10 +1401,6 @@ func (c *Conn) Write(b []byte) (int, error) {
 	c.out.Lock()
 	defer c.out.Unlock()
 
-	// Flush any pending handshake data. PackHelloRequestWithFinished may
-	// have been set and the handshake not followed by Renegotiate.
-	c.flushHandshake()
-
 	if err := c.out.err; err != nil {
 		return 0, err
 	}
@@ -1486,7 +1483,10 @@ func (c *Conn) processTLS13NewSessionTicket(newSessionTicket *newSessionTicketMs
 	}
 
 	cacheKey := clientSessionCacheKey(c.conn.RemoteAddr(), c.config)
-	c.config.ClientSessionCache.Put(cacheKey, session)
+	_, ok := c.config.ClientSessionCache.Get(cacheKey)
+	if !ok || !c.config.Bugs.UseFirstSessionTicket {
+		c.config.ClientSessionCache.Put(cacheKey, session)
+	}
 	return nil
 }
 
