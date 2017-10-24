@@ -191,15 +191,14 @@ enum ssl_open_record_t tls_open_record(SSL *ssl, uint8_t *out_type,
                                        Span<uint8_t> *out, size_t *out_consumed,
                                        uint8_t *out_alert, Span<uint8_t> in) {
   *out_consumed = 0;
-  switch (ssl->s3->read_shutdown) {
-    case ssl_shutdown_none:
-      break;
-    case ssl_shutdown_fatal_alert:
-      OPENSSL_PUT_ERROR(SSL, SSL_R_PROTOCOL_IS_SHUTDOWN);
-      *out_alert = 0;
-      return ssl_open_record_error;
-    case ssl_shutdown_close_notify:
-      return ssl_open_record_close_notify;
+  if (ssl->s3->read_shutdown == ssl_shutdown_close_notify) {
+    return ssl_open_record_close_notify;
+  }
+
+  // If there is an unprocessed handshake message or we are already buffering
+  // too much, stop before decrypting another handshake record.
+  if (!tls_can_accept_handshake_data(ssl, out_alert)) {
+    return ssl_open_record_error;
   }
 
   CBS cbs = CBS(in);
@@ -331,6 +330,14 @@ enum ssl_open_record_t tls_open_record(SSL *ssl, uint8_t *out_type,
     return ssl_process_alert(ssl, out_alert, *out);
   }
 
+  // Handshake messages may not interleave with any other record type.
+  if (type != SSL3_RT_HANDSHAKE &&
+      tls_has_unprocessed_handshake_data(ssl)) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_RECORD);
+    *out_alert = SSL_AD_UNEXPECTED_MESSAGE;
+    return ssl_open_record_error;
+  }
+
   ssl->s3->warning_alert_count = 0;
 
   *out_type = type;
@@ -449,8 +456,8 @@ static bool tls_seal_scatter_suffix_len(const SSL *ssl, size_t *out_suffix_len,
 // |tls_seal_scatter_record| implements TLS 1.0 CBC 1/n-1 record splitting and
 // may write two records concatenated.
 static int tls_seal_scatter_record(SSL *ssl, uint8_t *out_prefix, uint8_t *out,
-                            uint8_t *out_suffix, uint8_t type,
-                            const uint8_t *in, size_t in_len) {
+                                   uint8_t *out_suffix, uint8_t type,
+                                   const uint8_t *in, size_t in_len) {
   if (type == SSL3_RT_APPLICATION_DATA && in_len > 1 &&
       ssl_needs_record_splitting(ssl)) {
     assert(ssl->s3->aead_write_ctx->ExplicitNonceLen() == 0);
@@ -567,12 +574,8 @@ enum ssl_open_record_t ssl_process_alert(SSL *ssl, uint8_t *out_alert,
   }
 
   if (alert_level == SSL3_AL_FATAL) {
-    ssl->s3->read_shutdown = ssl_shutdown_fatal_alert;
-
-    char tmp[16];
     OPENSSL_PUT_ERROR(SSL, SSL_AD_REASON_OFFSET + alert_descr);
-    BIO_snprintf(tmp, sizeof(tmp), "%d", alert_descr);
-    ERR_add_error_data(2, "SSL alert number ", tmp);
+    ERR_add_error_dataf("SSL alert number %d", alert_descr);
     *out_alert = 0;  // No alert to send back to the peer.
     return ssl_open_record_error;
   }
