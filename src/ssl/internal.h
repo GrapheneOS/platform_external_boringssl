@@ -1001,6 +1001,10 @@ size_t ssl_max_handshake_message_len(const SSL *ssl);
 // dtls_clear_incoming_messages releases all buffered incoming messages.
 void dtls_clear_incoming_messages(SSL *ssl);
 
+// tls_can_accept_handshake_data returns whether |ssl| is able to accept more
+// data into handshake buffer.
+bool tls_can_accept_handshake_data(const SSL *ssl, uint8_t *out_alert);
+
 // tls_has_unprocessed_handshake_data returns whether there is buffered
 // handshake data that has not been consumed by |get_message|.
 bool tls_has_unprocessed_handshake_data(const SSL *ssl);
@@ -1057,6 +1061,12 @@ void ssl_read_buffer_discard(SSL *ssl);
 // ssl_read_buffer_clear releases all memory associated with the read buffer and
 // zero-initializes it.
 void ssl_read_buffer_clear(SSL *ssl);
+
+// ssl_handle_open_record handles the result of passing |ssl_read_buffer| to a
+// record-processing function. If |ret| is a success or if the caller should
+// retry, it returns one and sets |*out_retry|. Otherwise, it returns <= 0.
+int ssl_handle_open_record(SSL *ssl, bool *out_retry, ssl_open_record_t ret,
+                           size_t consumed, uint8_t alert);
 
 // ssl_write_buffer_is_pending returns one if the write buffer has pending data
 // and zero if is empty.
@@ -1465,7 +1475,7 @@ void ssl_handshake_free(SSL_HANDSHAKE *hs);
 
 // ssl_check_message_type checks if |msg| has type |type|. If so it returns
 // one. Otherwise, it sends an alert and returns zero.
-int ssl_check_message_type(SSL *ssl, const SSLMessage &msg, int type);
+bool ssl_check_message_type(SSL *ssl, const SSLMessage &msg, int type);
 
 // ssl_run_handshake runs the TLS handshake. It returns one on success and <= 0
 // on error. It sets |out_early_return| to one if we've completed the handshake
@@ -1718,63 +1728,82 @@ struct CERT {
 
 // |SSL_PROTOCOL_METHOD| abstracts between TLS and DTLS.
 struct SSL_PROTOCOL_METHOD {
-  // is_dtls is one if the protocol is DTLS and zero otherwise.
-  char is_dtls;
-  int (*ssl_new)(SSL *ssl);
+  bool is_dtls;
+  bool (*ssl_new)(SSL *ssl);
   void (*ssl_free)(SSL *ssl);
   // get_message sets |*out| to the current handshake message and returns true
   // if one has been received. It returns false if more input is needed.
   bool (*get_message)(SSL *ssl, SSLMessage *out);
-  // read_message reads additional handshake data for |get_message|. On success,
-  // it returns one. Otherwise, it returns <= 0.
-  int (*read_message)(SSL *ssl);
   // next_message is called to release the current handshake message.
   void (*next_message)(SSL *ssl);
-  // read_app_data reads up to |len| bytes of application data into |buf|. On
-  // success, it returns the number of bytes read. Otherwise, it returns <= 0
-  // and sets |*out_got_handshake| to whether the failure was due to a
-  // post-handshake handshake message. If so, any handshake messages consumed
-  // may be read with |get_message|.
-  int (*read_app_data)(SSL *ssl, bool *out_got_handshake, uint8_t *buf, int len,
-                       int peek);
-  int (*read_change_cipher_spec)(SSL *ssl);
-  void (*read_close_notify)(SSL *ssl);
+  // Use the |ssl_open_handshake| wrapper.
+  ssl_open_record_t (*open_handshake)(SSL *ssl, size_t *out_consumed,
+                                      uint8_t *out_alert, Span<uint8_t> in);
+  // Use the |ssl_open_change_cipher_spec| wrapper.
+  ssl_open_record_t (*open_change_cipher_spec)(SSL *ssl, size_t *out_consumed,
+                                               uint8_t *out_alert,
+                                               Span<uint8_t> in);
+  // Use the |ssl_open_app_data| wrapper.
+  ssl_open_record_t (*open_app_data)(SSL *ssl, Span<uint8_t> *out,
+                                     size_t *out_consumed, uint8_t *out_alert,
+                                     Span<uint8_t> in);
   int (*write_app_data)(SSL *ssl, bool *out_needs_handshake, const uint8_t *buf,
                         int len);
   int (*dispatch_alert)(SSL *ssl);
-  // supports_cipher returns one if |cipher| is supported by this protocol and
-  // zero otherwise.
-  int (*supports_cipher)(const SSL_CIPHER *cipher);
+  // supports_cipher returns whether |cipher| is supported by this protocol.
+  bool (*supports_cipher)(const SSL_CIPHER *cipher);
   // init_message begins a new handshake message of type |type|. |cbb| is the
   // root CBB to be passed into |finish_message|. |*body| is set to a child CBB
-  // the caller should write to. It returns one on success and zero on error.
-  int (*init_message)(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
+  // the caller should write to. It returns true on success and false on error.
+  bool (*init_message)(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
   // finish_message finishes a handshake message. It sets |*out_msg| to the
-  // serialized message. It returns one on success and zero on error.
-  int (*finish_message)(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
-  // add_message adds a handshake message to the pending flight. It returns one
-  // on success and zero on error.
-  int (*add_message)(SSL *ssl, Array<uint8_t> msg);
+  // serialized message. It returns true on success and false on error.
+  bool (*finish_message)(SSL *ssl, CBB *cbb, bssl::Array<uint8_t> *out_msg);
+  // add_message adds a handshake message to the pending flight. It returns
+  // true on success and false on error.
+  bool (*add_message)(SSL *ssl, bssl::Array<uint8_t> msg);
   // add_change_cipher_spec adds a ChangeCipherSpec record to the pending
-  // flight. It returns one on success and zero on error.
-  int (*add_change_cipher_spec)(SSL *ssl);
-  // add_alert adds an alert to the pending flight. It returns one on success
-  // and zero on error.
-  int (*add_alert)(SSL *ssl, uint8_t level, uint8_t desc);
+  // flight. It returns true on success and false on error.
+  bool (*add_change_cipher_spec)(SSL *ssl);
+  // add_alert adds an alert to the pending flight. It returns true on success
+  // and false on error.
+  bool (*add_alert)(SSL *ssl, uint8_t level, uint8_t desc);
   // flush_flight flushes the pending flight to the transport. It returns one on
   // success and <= 0 on error.
   int (*flush_flight)(SSL *ssl);
   // on_handshake_complete is called when the handshake is complete.
   void (*on_handshake_complete)(SSL *ssl);
   // set_read_state sets |ssl|'s read cipher state to |aead_ctx|. It returns
-  // one on success and zero if changing the read state is forbidden at this
+  // true on success and false if changing the read state is forbidden at this
   // point.
-  int (*set_read_state)(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx);
+  bool (*set_read_state)(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx);
   // set_write_state sets |ssl|'s write cipher state to |aead_ctx|. It returns
-  // one on success and zero if changing the write state is forbidden at this
+  // true on success and false if changing the write state is forbidden at this
   // point.
-  int (*set_write_state)(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx);
+  bool (*set_write_state)(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx);
 };
+
+// The following wrappers call |open_*| but handle |read_shutdown| correctly.
+
+// ssl_open_handshake processes a record from |in| for reading a handshake
+// message.
+ssl_open_record_t ssl_open_handshake(SSL *ssl, size_t *out_consumed,
+                                     uint8_t *out_alert, Span<uint8_t> in);
+
+// ssl_open_change_cipher_spec processes a record from |in| for reading a
+// ChangeCipherSpec.
+ssl_open_record_t ssl_open_change_cipher_spec(SSL *ssl, size_t *out_consumed,
+                                              uint8_t *out_alert,
+                                              Span<uint8_t> in);
+
+// ssl_open_app_data processes a record from |in| for reading application data.
+// On success, it returns |ssl_open_record_success| and sets |*out| to the
+// input. If it encounters a post-handshake message, it returns
+// |ssl_open_record_discard|. The caller should then retry, after processing any
+// messages received with |get_message|.
+ssl_open_record_t ssl_open_app_data(SSL *ssl, Span<uint8_t> *out,
+                                    size_t *out_consumed, uint8_t *out_alert,
+                                    Span<uint8_t> in);
 
 // ssl_crypto_x509_method provides the |SSL_X509_METHOD| functions using
 // crypto/x509.
@@ -2105,15 +2134,6 @@ struct SSLContext {
   bool ed25519_enabled:1;
 };
 
-struct SSL3_RECORD {
-  // type is the record type.
-  uint8_t type;
-  // length is the number of unconsumed bytes in the record.
-  uint16_t length;
-  // data is a non-owning pointer to the first unconsumed byte of the record.
-  uint8_t *data;
-};
-
 struct SSL3_BUFFER {
   // buf is the memory allocated for this buffer.
   uint8_t *buf;
@@ -2130,7 +2150,7 @@ struct SSL3_BUFFER {
 enum ssl_shutdown_t {
   ssl_shutdown_none = 0,
   ssl_shutdown_close_notify = 1,
-  ssl_shutdown_fatal_alert = 2,
+  ssl_shutdown_error = 2,
 };
 
 struct SSL3_STATE {
@@ -2145,7 +2165,9 @@ struct SSL3_STATE {
   // write_buffer holds data to be written to the transport.
   SSL3_BUFFER write_buffer;
 
-  SSL3_RECORD rrec;  // each decoded record goes in here
+  // pending_app_data is the unconsumed application data. It points into
+  // |read_buffer|.
+  Span<uint8_t> pending_app_data;
 
   // partial write - check the numbers match
   unsigned int wnum;  // number of bytes sent so far
@@ -2159,6 +2181,10 @@ struct SSL3_STATE {
 
   // write_shutdown is the shutdown state for the write half of the connection.
   enum ssl_shutdown_t write_shutdown;
+
+  // read_error, if |read_shutdown| is |ssl_shutdown_error|, is the error for
+  // the receive half of the connection.
+  ERR_SAVE_STATE *read_error;
 
   int alert_dispatch;
 
@@ -2684,55 +2710,51 @@ void ssl_update_cache(SSL_HANDSHAKE *hs, int mode);
 
 int ssl_send_alert(SSL *ssl, int level, int desc);
 bool ssl3_get_message(SSL *ssl, SSLMessage *out);
-int ssl3_read_message(SSL *ssl);
+ssl_open_record_t ssl3_open_handshake(SSL *ssl, size_t *out_consumed,
+                                      uint8_t *out_alert, Span<uint8_t> in);
 void ssl3_next_message(SSL *ssl);
 
 int ssl3_dispatch_alert(SSL *ssl);
-int ssl3_read_app_data(SSL *ssl, bool *out_got_handshake, uint8_t *buf, int len,
-                       int peek);
-int ssl3_read_change_cipher_spec(SSL *ssl);
-void ssl3_read_close_notify(SSL *ssl);
-// ssl3_get_record reads a new input record. On success, it places it in
-// |ssl->s3->rrec| and returns one. Otherwise it returns <= 0 on error or if
-// more data is needed.
-int ssl3_get_record(SSL *ssl);
+ssl_open_record_t ssl3_open_app_data(SSL *ssl, Span<uint8_t> *out,
+                                     size_t *out_consumed, uint8_t *out_alert,
+                                     Span<uint8_t> in);
+ssl_open_record_t ssl3_open_change_cipher_spec(SSL *ssl, size_t *out_consumed,
+                                               uint8_t *out_alert,
+                                               Span<uint8_t> in);
 int ssl3_write_app_data(SSL *ssl, bool *out_needs_handshake, const uint8_t *buf,
                         int len);
 
-int ssl3_new(SSL *ssl);
+bool ssl3_new(SSL *ssl);
 void ssl3_free(SSL *ssl);
 
-int ssl3_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
-int ssl3_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
-int ssl3_add_message(SSL *ssl, Array<uint8_t> msg);
-int ssl3_add_change_cipher_spec(SSL *ssl);
-int ssl3_add_alert(SSL *ssl, uint8_t level, uint8_t desc);
+bool ssl3_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
+bool ssl3_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
+bool ssl3_add_message(SSL *ssl, Array<uint8_t> msg);
+bool ssl3_add_change_cipher_spec(SSL *ssl);
+bool ssl3_add_alert(SSL *ssl, uint8_t level, uint8_t desc);
 int ssl3_flush_flight(SSL *ssl);
 
-int dtls1_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
-int dtls1_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
-int dtls1_add_message(SSL *ssl, Array<uint8_t> msg);
-int dtls1_add_change_cipher_spec(SSL *ssl);
-int dtls1_add_alert(SSL *ssl, uint8_t level, uint8_t desc);
+bool dtls1_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
+bool dtls1_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
+bool dtls1_add_message(SSL *ssl, Array<uint8_t> msg);
+bool dtls1_add_change_cipher_spec(SSL *ssl);
+bool dtls1_add_alert(SSL *ssl, uint8_t level, uint8_t desc);
 int dtls1_flush_flight(SSL *ssl);
 
 // ssl_add_message_cbb finishes the handshake message in |cbb| and adds it to
-// the pending flight. It returns one on success and zero on error.
-int ssl_add_message_cbb(SSL *ssl, CBB *cbb);
+// the pending flight. It returns true on success and false on error.
+bool ssl_add_message_cbb(SSL *ssl, CBB *cbb);
 
-// ssl_hash_message incorporates |msg| into the handshake hash. It returns one
-// on success and zero on allocation failure.
+// ssl_hash_message incorporates |msg| into the handshake hash. It returns true
+// on success and false on allocation failure.
 bool ssl_hash_message(SSL_HANDSHAKE *hs, const SSLMessage &msg);
 
-// dtls1_get_record reads a new input record. On success, it places it in
-// |ssl->s3->rrec| and returns one. Otherwise it returns <= 0 on error or if
-// more data is needed.
-int dtls1_get_record(SSL *ssl);
-
-int dtls1_read_app_data(SSL *ssl, bool *out_got_handshake, uint8_t *buf,
-                        int len, int peek);
-int dtls1_read_change_cipher_spec(SSL *ssl);
-void dtls1_read_close_notify(SSL *ssl);
+ssl_open_record_t dtls1_open_app_data(SSL *ssl, Span<uint8_t> *out,
+                                      size_t *out_consumed, uint8_t *out_alert,
+                                      Span<uint8_t> in);
+ssl_open_record_t dtls1_open_change_cipher_spec(SSL *ssl, size_t *out_consumed,
+                                                uint8_t *out_alert,
+                                                Span<uint8_t> in);
 
 int dtls1_write_app_data(SSL *ssl, bool *out_needs_handshake,
                          const uint8_t *buf, int len);
@@ -2742,26 +2764,22 @@ int dtls1_write_app_data(SSL *ssl, bool *out_needs_handshake,
 int dtls1_write_record(SSL *ssl, int type, const uint8_t *buf, size_t len,
                        enum dtls1_use_epoch_t use_epoch);
 
-int dtls1_send_finished(SSL *ssl, int a, int b, const char *sender, int slen);
 int dtls1_retransmit_outgoing_messages(SSL *ssl);
-void dtls1_clear_record_buffer(SSL *ssl);
-int dtls1_parse_fragment(CBS *cbs, struct hm_header_st *out_hdr,
+bool dtls1_parse_fragment(CBS *cbs, struct hm_header_st *out_hdr,
                          CBS *out_body);
-int dtls1_check_timeout_num(SSL *ssl);
-int dtls1_handshake_write(SSL *ssl);
+bool dtls1_check_timeout_num(SSL *ssl);
 
 void dtls1_start_timer(SSL *ssl);
 void dtls1_stop_timer(SSL *ssl);
-int dtls1_is_timer_expired(SSL *ssl);
+bool dtls1_is_timer_expired(SSL *ssl);
 unsigned int dtls1_min_mtu(void);
 
-int dtls1_new(SSL *ssl);
-int dtls1_accept(SSL *ssl);
-int dtls1_connect(SSL *ssl);
+bool dtls1_new(SSL *ssl);
 void dtls1_free(SSL *ssl);
 
 bool dtls1_get_message(SSL *ssl, SSLMessage *out);
-int dtls1_read_message(SSL *ssl);
+ssl_open_record_t dtls1_open_handshake(SSL *ssl, size_t *out_consumed,
+                                       uint8_t *out_alert, Span<uint8_t> in);
 void dtls1_next_message(SSL *ssl);
 int dtls1_dispatch_alert(SSL *ssl);
 
@@ -2857,6 +2875,10 @@ void ssl_ctx_get_current_time(const SSL_CTX *ctx,
 
 // ssl_reset_error_state resets state for |SSL_get_error|.
 void ssl_reset_error_state(SSL *ssl);
+
+// ssl_set_read_error sets |ssl|'s read half into an error state, saving the
+// current state of the error queue.
+void ssl_set_read_error(SSL* ssl);
 
 }  // namespace bssl
 

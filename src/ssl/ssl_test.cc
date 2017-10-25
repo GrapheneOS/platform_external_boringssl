@@ -3760,47 +3760,6 @@ TEST_P(SSLVersionTest, SessionVersion) {
   EXPECT_EQ(version(), SSL_SESSION_get_protocol_version(session.get()));
 }
 
-// Test that a handshake-level errors are sticky.
-TEST_P(SSLVersionTest, StickyErrorHandshake_ParseClientHello) {
-  UniquePtr<SSL_CTX> ctx = CreateContext();
-  ASSERT_TRUE(ctx);
-  UniquePtr<SSL> ssl(SSL_new(ctx.get()));
-  ASSERT_TRUE(ssl);
-  SSL_set_accept_state(ssl.get());
-
-  // Pass in an empty ClientHello.
-  if (is_dtls()) {
-    static const uint8_t kBadClientHello[] = {
-        0x16, 0xfe, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x0c, 0x01, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    SSL_set0_rbio(ssl.get(),
-                  BIO_new_mem_buf(kBadClientHello, sizeof(kBadClientHello)));
-  } else {
-    static const uint8_t kBadClientHello[] = {0x16, 0x03, 0x01, 0x00, 0x04,
-                                              0x01, 0x00, 0x00, 0x00};
-    SSL_set0_rbio(ssl.get(),
-                  BIO_new_mem_buf(kBadClientHello, sizeof(kBadClientHello)));
-  }
-
-  SSL_set0_wbio(ssl.get(), BIO_new(BIO_s_mem()));
-
-  // The handshake logic should reject the ClientHello.
-  int ret = SSL_do_handshake(ssl.get());
-  EXPECT_NE(1, ret);
-  EXPECT_EQ(SSL_ERROR_SSL, SSL_get_error(ssl.get(), ret));
-  EXPECT_EQ(ERR_LIB_SSL, ERR_GET_LIB(ERR_peek_error()));
-  EXPECT_EQ(SSL_R_DECODE_ERROR, ERR_GET_REASON(ERR_peek_error()));
-  ERR_clear_error();
-
-  // If we drive the handshake again, the error is replayed.
-  ret = SSL_do_handshake(ssl.get());
-  EXPECT_NE(1, ret);
-  EXPECT_EQ(SSL_ERROR_SSL, SSL_get_error(ssl.get(), ret));
-  EXPECT_EQ(ERR_LIB_SSL, ERR_GET_LIB(ERR_peek_error()));
-  EXPECT_EQ(SSL_R_DECODE_ERROR, ERR_GET_REASON(ERR_peek_error()));
-}
-
 TEST_P(SSLVersionTest, SSLPending) {
   UniquePtr<SSL> ssl(SSL_new(client_ctx_.get()));
   ASSERT_TRUE(ssl);
@@ -3825,6 +3784,39 @@ TEST_P(SSLVersionTest, SSLPending) {
 
   ASSERT_EQ(2, SSL_read(client_.get(), buf, 2));
   EXPECT_EQ(3, SSL_pending(client_.get()));
+}
+
+// Test that post-handshake tickets consumed by |SSL_shutdown| are ignored.
+TEST(SSLTest, ShutdownIgnoresTickets) {
+  bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(ctx);
+  ASSERT_TRUE(SSL_CTX_set_min_proto_version(ctx.get(), TLS1_3_VERSION));
+  ASSERT_TRUE(SSL_CTX_set_max_proto_version(ctx.get(), TLS1_3_VERSION));
+
+  bssl::UniquePtr<X509> cert = GetTestCertificate();
+  bssl::UniquePtr<EVP_PKEY> key = GetTestKey();
+  ASSERT_TRUE(cert);
+  ASSERT_TRUE(key);
+  ASSERT_TRUE(SSL_CTX_use_certificate(ctx.get(), cert.get()));
+  ASSERT_TRUE(SSL_CTX_use_PrivateKey(ctx.get(), key.get()));
+
+  SSL_CTX_set_session_cache_mode(ctx.get(), SSL_SESS_CACHE_BOTH);
+
+  bssl::UniquePtr<SSL> client, server;
+  ASSERT_TRUE(ConnectClientAndServer(&client, &server, ctx.get(), ctx.get()));
+
+  SSL_CTX_sess_set_new_cb(ctx.get(), [](SSL *ssl, SSL_SESSION *session) -> int {
+    ADD_FAILURE() << "New session callback called during SSL_shutdown";
+    return 0;
+  });
+
+  // Send close_notify.
+  EXPECT_EQ(0, SSL_shutdown(server.get()));
+  EXPECT_EQ(0, SSL_shutdown(client.get()));
+
+  // Receive close_notify.
+  EXPECT_EQ(1, SSL_shutdown(server.get()));
+  EXPECT_EQ(1, SSL_shutdown(client.get()));
 }
 
 // TODO(davidben): Convert this file to GTest properly.

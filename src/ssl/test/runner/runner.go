@@ -1173,13 +1173,15 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 		shimKilledLock.Unlock()
 	}
 
-	var isValgrindError bool
+	var isValgrindError, mustFail bool
 	if exitError, ok := childErr.(*exec.ExitError); ok {
 		switch exitError.Sys().(syscall.WaitStatus).ExitStatus() {
 		case 88:
 			return errMoreMallocs
 		case 89:
 			return errUnimplemented
+		case 90:
+			mustFail = true
 		case 99:
 			isValgrindError = true
 		}
@@ -1209,7 +1211,7 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 		correctFailure = correctFailure && strings.Contains(localError, test.expectedLocalError)
 	}
 
-	if failed != test.shouldFail || failed && !correctFailure {
+	if failed != test.shouldFail || failed && !correctFailure || mustFail {
 		childError := "none"
 		if childErr != nil {
 			childError = childErr.Error()
@@ -1223,6 +1225,8 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 			msg = "unexpected success"
 		case failed && !correctFailure:
 			msg = "bad error (wanted '" + expectedError + "' / '" + test.expectedLocalError + "')"
+		case mustFail:
+			msg = "test failure"
 		default:
 			panic("internal error")
 		}
@@ -4893,6 +4897,92 @@ read alert 1 0
 				sendEmptyRecords:  1,
 				sendWarningAlerts: 1,
 				flags:             []string{"-check-close-notify"},
+			})
+
+			// Test that SSL_shutdown still processes KeyUpdate.
+			tests = append(tests, testCase{
+				name: "Shutdown-Shim-KeyUpdate",
+				config: Config{
+					MinVersion: VersionTLS13,
+					MaxVersion: VersionTLS13,
+					Bugs: ProtocolBugs{
+						ExpectCloseNotify: true,
+					},
+				},
+				shimShutsDown:    true,
+				sendKeyUpdates:   1,
+				keyUpdateRequest: keyUpdateRequested,
+				flags:            []string{"-check-close-notify"},
+			})
+
+			// Test that SSL_shutdown processes HelloRequest
+			// correctly.
+			tests = append(tests, testCase{
+				name: "Shutdown-Shim-HelloRequest-Ignore",
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+					Bugs: ProtocolBugs{
+						SendHelloRequestBeforeEveryAppDataRecord: true,
+						ExpectCloseNotify:                        true,
+					},
+				},
+				shimShutsDown: true,
+				flags: []string{
+					"-renegotiate-ignore",
+					"-check-close-notify",
+				},
+			})
+			tests = append(tests, testCase{
+				name: "Shutdown-Shim-HelloRequest-Reject",
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+					Bugs: ProtocolBugs{
+						SendHelloRequestBeforeEveryAppDataRecord: true,
+						ExpectCloseNotify:                        true,
+					},
+				},
+				shimShutsDown: true,
+				shouldFail:    true,
+				expectedError: ":NO_RENEGOTIATION:",
+				flags:         []string{"-check-close-notify"},
+			})
+			tests = append(tests, testCase{
+				name: "Shutdown-Shim-HelloRequest-CannotHandshake",
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+					Bugs: ProtocolBugs{
+						SendHelloRequestBeforeEveryAppDataRecord: true,
+						ExpectCloseNotify:                        true,
+					},
+				},
+				shimShutsDown: true,
+				shouldFail:    true,
+				expectedError: ":NO_RENEGOTIATION:",
+				flags: []string{
+					"-check-close-notify",
+					"-renegotiate-freely",
+				},
+			})
+
+			tests = append(tests, testCase{
+				testType: serverTest,
+				name:     "Shutdown-Shim-Renegotiate-Server-Forbidden",
+				config: Config{
+					MaxVersion: VersionTLS12,
+					Bugs: ProtocolBugs{
+						ExpectCloseNotify: true,
+					},
+				},
+				shimShutsDown: true,
+				renegotiate:   1,
+				shouldFail:    true,
+				expectedError: ":NO_RENEGOTIATION:",
+				flags: []string{
+					"-check-close-notify",
+				},
 			})
 		}
 	} else {
