@@ -104,18 +104,6 @@ void ec_GFp_simple_group_finish(EC_GROUP *group) {
   BN_free(&group->one);
 }
 
-int ec_GFp_simple_group_copy(EC_GROUP *dest, const EC_GROUP *src) {
-  if (!BN_copy(&dest->field, &src->field) ||
-      !BN_copy(&dest->a, &src->a) ||
-      !BN_copy(&dest->b, &src->b) ||
-      !BN_copy(&dest->one, &src->one)) {
-    return 0;
-  }
-
-  dest->a_is_minus3 = src->a_is_minus3;
-  return 1;
-}
-
 int ec_GFp_simple_group_set_curve(EC_GROUP *group, const BIGNUM *p,
                                   const BIGNUM *a, const BIGNUM *b,
                                   BN_CTX *ctx) {
@@ -247,12 +235,6 @@ void ec_GFp_simple_point_finish(EC_POINT *point) {
   BN_free(&point->X);
   BN_free(&point->Y);
   BN_free(&point->Z);
-}
-
-void ec_GFp_simple_point_clear_finish(EC_POINT *point) {
-  BN_clear_free(&point->X);
-  BN_clear_free(&point->Y);
-  BN_clear_free(&point->Z);
 }
 
 int ec_GFp_simple_point_copy(EC_POINT *dest, const EC_POINT *src) {
@@ -814,11 +796,11 @@ int ec_GFp_simple_cmp(const EC_GROUP *group, const EC_POINT *a,
   const BIGNUM *tmp1_, *tmp2_;
   int ret = -1;
 
-  if (EC_POINT_is_at_infinity(group, a)) {
-    return EC_POINT_is_at_infinity(group, b) ? 0 : 1;
+  if (ec_GFp_simple_is_at_infinity(group, a)) {
+    return ec_GFp_simple_is_at_infinity(group, b) ? 0 : 1;
   }
 
-  if (EC_POINT_is_at_infinity(group, b)) {
+  if (ec_GFp_simple_is_at_infinity(group, b)) {
     return 1;
   }
 

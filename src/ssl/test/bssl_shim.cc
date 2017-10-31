@@ -1101,7 +1101,6 @@ static void MessageCallback(int is_write, int version, int content_type,
 // Connect returns a new socket connected to localhost on |port| or -1 on
 // error.
 static int Connect(uint16_t port) {
-  time_t start_time = time(nullptr);
   for (int af : { AF_INET6, AF_INET }) {
     int sock = socket(af, SOCK_STREAM, 0);
     if (sock == -1) {
@@ -1148,11 +1147,6 @@ static int Connect(uint16_t port) {
   }
 
   PrintSocketError("connect");
-  // TODO(davidben): Remove this logging when https://crbug.com/boringssl/199 is
-  // resolved.
-  fprintf(stderr, "start_time = %lld, end_time = %lld\n",
-          static_cast<long long>(start_time),
-          static_cast<long long>(time(nullptr)));
   return -1;
 }
 
@@ -2198,6 +2192,12 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session, SSL *ssl,
     } while (config->async && RetryAsync(ssl, ret));
     if (ret != 1 ||
         !CheckHandshakeProperties(ssl, is_resume, config)) {
+      return false;
+    }
+
+    if (is_resume && !is_retry && !config->is_server &&
+        config->expect_no_offer_early_data && SSL_in_early_data(ssl)) {
+      fprintf(stderr, "Client unexpectedly offered early data.\n");
       return false;
     }
 
