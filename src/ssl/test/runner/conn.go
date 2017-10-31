@@ -244,14 +244,6 @@ func (hc *halfConn) resetCipher() {
 	hc.incEpoch()
 }
 
-func (hc *halfConn) doKeyUpdate(c *Conn, isOutgoing bool) {
-	side := serverWrite
-	if c.isClient == isOutgoing {
-		side = clientWrite
-	}
-	hc.useTrafficSecret(hc.wireVersion, c.cipherSuite, updateTrafficSecret(c.cipherSuite.hash(), hc.trafficSecret), side)
-}
-
 // incSeq increments the sequence number.
 func (hc *halfConn) incSeq(isOutgoing bool) {
 	limit := 0
@@ -737,6 +729,26 @@ func (hc *halfConn) splitBlock(b *block, n int) (*block, *block) {
 	return b, bb
 }
 
+func (c *Conn) useInTrafficSecret(version uint16, suite *cipherSuite, secret []byte) error {
+	if c.hand.Len() != 0 {
+		return c.in.setErrorLocked(errors.New("tls: buffered handshake messages on cipher change"))
+	}
+	side := serverWrite
+	if !c.isClient {
+		side = clientWrite
+	}
+	c.in.useTrafficSecret(version, suite, secret, side)
+	return nil
+}
+
+func (c *Conn) useOutTrafficSecret(version uint16, suite *cipherSuite, secret []byte) {
+	side := serverWrite
+	if c.isClient {
+		side = clientWrite
+	}
+	c.out.useTrafficSecret(version, suite, secret, side)
+}
+
 func (c *Conn) doReadRecord(want recordType) (recordType, *block, error) {
 RestartReadRecord:
 	if c.isDTLS {
@@ -940,8 +952,11 @@ Again:
 			break
 		}
 		if !isResumptionExperiment(c.wireVersion) {
-			err := c.in.changeCipherSpec(c.config)
-			if err != nil {
+			if c.hand.Len() != 0 {
+				c.in.setErrorLocked(errors.New("tls: buffered handshake messages on cipher change"))
+				break
+			}
+			if err := c.in.changeCipherSpec(c.config); err != nil {
 				c.in.setErrorLocked(c.sendAlert(err.(alert)))
 			}
 		}
@@ -1522,7 +1537,9 @@ func (c *Conn) handlePostHandshakeMessage() error {
 		if c.config.Bugs.RejectUnsolicitedKeyUpdate {
 			return errors.New("tls: unexpected KeyUpdate message")
 		}
-		c.in.doKeyUpdate(c, false)
+		if err := c.useInTrafficSecret(c.in.wireVersion, c.cipherSuite, updateTrafficSecret(c.cipherSuite.hash(), c.in.trafficSecret)); err != nil {
+			return err
+		}
 		if keyUpdate.keyUpdateRequest == keyUpdateRequested {
 			c.keyUpdateRequested = true
 		}
@@ -1554,8 +1571,7 @@ func (c *Conn) ReadKeyUpdateACK() error {
 		return errors.New("tls: received invalid KeyUpdate message")
 	}
 
-	c.in.doKeyUpdate(c, false)
-	return nil
+	return c.useInTrafficSecret(c.in.wireVersion, c.cipherSuite, updateTrafficSecret(c.cipherSuite.hash(), c.in.trafficSecret))
 }
 
 func (c *Conn) Renegotiate() error {
@@ -1885,7 +1901,7 @@ func (c *Conn) sendKeyUpdateLocked(keyUpdateRequest byte) error {
 	if err := c.flushHandshake(); err != nil {
 		return err
 	}
-	c.out.doKeyUpdate(c, true)
+	c.useOutTrafficSecret(c.out.wireVersion, c.cipherSuite, updateTrafficSecret(c.cipherSuite.hash(), c.out.trafficSecret))
 	return nil
 }
 

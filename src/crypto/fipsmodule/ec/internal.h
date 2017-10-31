@@ -82,7 +82,6 @@ extern "C" {
 struct ec_method_st {
   int (*group_init)(EC_GROUP *);
   void (*group_finish)(EC_GROUP *);
-  int (*group_copy)(EC_GROUP *, const EC_GROUP *);
   int (*group_set_curve)(EC_GROUP *, const BIGNUM *p, const BIGNUM *a,
                          const BIGNUM *b, BN_CTX *);
   int (*point_get_affine_coordinates)(const EC_GROUP *, const EC_POINT *,
@@ -114,6 +113,8 @@ const EC_METHOD *EC_GFp_mont_method(void);
 struct ec_group_st {
   const EC_METHOD *meth;
 
+  // Unlike all other |EC_POINT|s, |generator| does not own |generator->group|
+  // to avoid a reference cycle.
   EC_POINT *generator;
   BIGNUM order;
 
@@ -130,13 +131,17 @@ struct ec_group_st {
 
   int a_is_minus3;  // enable optimized point arithmetics for special case
 
+  CRYPTO_refcount_t references;
+
   BN_MONT_CTX *mont;  // Montgomery structure.
 
   BIGNUM one;  // The value one.
 } /* EC_GROUP */;
 
 struct ec_point_st {
-  const EC_METHOD *meth;
+  // group is an owning reference to |group|, unless this is
+  // |group->generator|.
+  EC_GROUP *group;
 
   BIGNUM X;
   BIGNUM Y;
@@ -145,7 +150,6 @@ struct ec_point_st {
 } /* EC_POINT */;
 
 EC_GROUP *ec_group_new(const EC_METHOD *meth);
-int ec_group_copy(EC_GROUP *dest, const EC_GROUP *src);
 
 // ec_group_get_order_mont returns a Montgomery context for operations modulo
 // |group|'s order. It may return NULL in the case that |group| is not a
@@ -158,7 +162,6 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *g_scalar,
 // method functions in simple.c
 int ec_GFp_simple_group_init(EC_GROUP *);
 void ec_GFp_simple_group_finish(EC_GROUP *);
-int ec_GFp_simple_group_copy(EC_GROUP *, const EC_GROUP *);
 int ec_GFp_simple_group_set_curve(EC_GROUP *, const BIGNUM *p, const BIGNUM *a,
                                   const BIGNUM *b, BN_CTX *);
 int ec_GFp_simple_group_get_curve(const EC_GROUP *, BIGNUM *p, BIGNUM *a,
@@ -166,7 +169,6 @@ int ec_GFp_simple_group_get_curve(const EC_GROUP *, BIGNUM *p, BIGNUM *a,
 unsigned ec_GFp_simple_group_get_degree(const EC_GROUP *);
 int ec_GFp_simple_point_init(EC_POINT *);
 void ec_GFp_simple_point_finish(EC_POINT *);
-void ec_GFp_simple_point_clear_finish(EC_POINT *);
 int ec_GFp_simple_point_copy(EC_POINT *, const EC_POINT *);
 int ec_GFp_simple_point_set_to_infinity(const EC_GROUP *, EC_POINT *);
 int ec_GFp_simple_set_Jprojective_coordinates_GFp(const EC_GROUP *, EC_POINT *,
@@ -205,7 +207,6 @@ int ec_GFp_mont_group_init(EC_GROUP *);
 int ec_GFp_mont_group_set_curve(EC_GROUP *, const BIGNUM *p, const BIGNUM *a,
                                 const BIGNUM *b, BN_CTX *);
 void ec_GFp_mont_group_finish(EC_GROUP *);
-int ec_GFp_mont_group_copy(EC_GROUP *, const EC_GROUP *);
 int ec_GFp_mont_field_mul(const EC_GROUP *, BIGNUM *r, const BIGNUM *a,
                           const BIGNUM *b, BN_CTX *);
 int ec_GFp_mont_field_sqr(const EC_GROUP *, BIGNUM *r, const BIGNUM *a,
