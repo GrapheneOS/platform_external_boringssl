@@ -73,14 +73,13 @@ static void ssl3_on_handshake_complete(SSL *ssl) {
   // The handshake should have released its final message.
   assert(!ssl->s3->has_message);
 
-  // During the handshake, |init_buf| is retained. Release if it there is no
+  // During the handshake, |hs_buf| is retained. Release if it there is no
   // excess in it. There may be excess left if there server sent Finished and
   // HelloRequest in the same record.
   //
   // TODO(davidben): SChannel does not support this. Reject this case.
-  if (ssl->init_buf != NULL && ssl->init_buf->length == 0) {
-    BUF_MEM_free(ssl->init_buf);
-    ssl->init_buf = NULL;
+  if (ssl->s3->hs_buf && ssl->s3->hs_buf->length == 0) {
+    ssl->s3->hs_buf.reset();
   }
 }
 
@@ -93,17 +92,13 @@ static bool ssl3_set_read_state(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx) {
   }
 
   OPENSSL_memset(ssl->s3->read_sequence, 0, sizeof(ssl->s3->read_sequence));
-
-  Delete(ssl->s3->aead_read_ctx);
-  ssl->s3->aead_read_ctx = aead_ctx.release();
+  ssl->s3->aead_read_ctx = std::move(aead_ctx);
   return true;
 }
 
 static bool ssl3_set_write_state(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx) {
   OPENSSL_memset(ssl->s3->write_sequence, 0, sizeof(ssl->s3->write_sequence));
-
-  Delete(ssl->s3->aead_write_ctx);
-  ssl->s3->aead_write_ctx = aead_ctx.release();
+  ssl->s3->aead_write_ctx = std::move(aead_ctx);
   return true;
 }
 

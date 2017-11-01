@@ -901,28 +901,20 @@ var (
 // exit first.
 func acceptOrWait(listener *net.TCPListener, waitChan chan error) (net.Conn, error) {
 	type connOrError struct {
-		conn               net.Conn
-		err                error
-		startTime, endTime time.Time
+		conn net.Conn
+		err  error
 	}
 	connChan := make(chan connOrError, 1)
 	go func() {
-		startTime := time.Now()
 		if !*useGDB {
 			listener.SetDeadline(time.Now().Add(*idleTimeout))
 		}
 		conn, err := listener.Accept()
-		endTime := time.Now()
-		connChan <- connOrError{conn, err, startTime, endTime}
+		connChan <- connOrError{conn, err}
 		close(connChan)
 	}()
 	select {
 	case result := <-connChan:
-		if result.err != nil {
-			// TODO(davidben): Remove this logging when
-			// https://crbug.com/boringssl/199 is resolved.
-			fmt.Fprintf(os.Stderr, "acceptOrWait failed, startTime=%v, endTime=%v\n", result.startTime, result.endTime)
-		}
 		return result.conn, result.err
 	case childErr := <-waitChan:
 		waitChan <- childErr
@@ -2761,11 +2753,12 @@ read alert 1 0
 			},
 		},
 		{
-			// Test the server so there is a large certificate as
-			// well as application data.
+			// Test the TLS 1.2 server so there is a large
+			// unencrypted certificate as well as application data.
 			testType: serverTest,
-			name:     "MaxSendFragment",
+			name:     "MaxSendFragment-TLS12",
 			config: Config{
+				MaxVersion: VersionTLS12,
 				Bugs: ProtocolBugs{
 					MaxReceivePlaintext: 512,
 				},
@@ -2777,11 +2770,50 @@ read alert 1 0
 			},
 		},
 		{
-			// Test the server so there is a large certificate as
-			// well as application data.
+			// Test the TLS 1.2 server so there is a large
+			// unencrypted certificate as well as application data.
 			testType: serverTest,
-			name:     "MaxSendFragment-TooLarge",
+			name:     "MaxSendFragment-TLS12-TooLarge",
 			config: Config{
+				MaxVersion: VersionTLS12,
+				Bugs: ProtocolBugs{
+					// Ensure that some of the records are
+					// 512.
+					MaxReceivePlaintext: 511,
+				},
+			},
+			messageLen: 1024,
+			flags: []string{
+				"-max-send-fragment", "512",
+				"-read-size", "1024",
+			},
+			shouldFail:         true,
+			expectedLocalError: "local error: record overflow",
+		},
+		{
+			// Test the TLS 1.3 server so there is a large encrypted
+			// certificate as well as application data.
+			testType: serverTest,
+			name:     "MaxSendFragment-TLS13",
+			config: Config{
+				MaxVersion: VersionTLS13,
+				Bugs: ProtocolBugs{
+					MaxReceivePlaintext: 512,
+				},
+			},
+			messageLen: 1024,
+			flags: []string{
+				"-max-send-fragment", "512",
+				"-read-size", "1024",
+			},
+		},
+		{
+			// Test the TLS 1.3 server so there is a large encrypted
+			// certificate as well as application data.
+			testType: serverTest,
+			name:     "MaxSendFragment-TLS13-TooLarge",
+			config: Config{
+				MaxVersion: VersionTLS13,
 				Bugs: ProtocolBugs{
 					// Ensure that some of the records are
 					// 512.
@@ -11724,6 +11756,28 @@ func addTLS13HandshakeTests() {
 		},
 		shouldFail:    true,
 		expectedError: ":ALPN_MISMATCH_ON_EARLY_DATA:",
+	})
+
+	// Test that the client does not offer early data if it is incompatible
+	// with ALPN preferences.
+	testCases = append(testCases, testCase{
+		testType: clientTest,
+		name:     "TLS13-EarlyData-ALPNPreferenceChanged",
+		config: Config{
+			MaxVersion:       VersionTLS13,
+			MaxEarlyDataSize: 16384,
+			NextProtos:       []string{"foo", "bar"},
+		},
+		resumeSession: true,
+		flags: []string{
+			"-enable-early-data",
+			"-expect-early-data-info",
+			"-expect-no-offer-early-data",
+			"-on-initial-advertise-alpn", "\x03foo",
+			"-on-resume-advertise-alpn", "\x03bar",
+			"-on-initial-expect-alpn", "foo",
+			"-on-resume-expect-alpn", "bar",
+		},
 	})
 
 	// Test that the server correctly rejects 0-RTT when the previous

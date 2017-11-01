@@ -746,10 +746,10 @@ class SSLAEADContext {
 struct DTLS1_BITMAP {
   // map is a bit mask of the last 64 sequence numbers. Bit
   // |1<<i| corresponds to |max_seq_num - i|.
-  uint64_t map;
+  uint64_t map = 0;
   // max_seq_num is the largest sequence number seen so far as a 64-bit
   // integer.
-  uint64_t max_seq_num;
+  uint64_t max_seq_num = 0;
 };
 
 
@@ -998,9 +998,6 @@ struct SSLMessage {
 // in a handshake message for |ssl|.
 size_t ssl_max_handshake_message_len(const SSL *ssl);
 
-// dtls_clear_incoming_messages releases all buffered incoming messages.
-void dtls_clear_incoming_messages(SSL *ssl);
-
 // tls_can_accept_handshake_data returns whether |ssl| is able to accept more
 // data into handshake buffer.
 bool tls_can_accept_handshake_data(const SSL *ssl, uint8_t *out_alert);
@@ -1014,10 +1011,17 @@ bool tls_has_unprocessed_handshake_data(const SSL *ssl);
 bool dtls_has_unprocessed_handshake_data(const SSL *ssl);
 
 struct DTLS_OUTGOING_MESSAGE {
-  uint8_t *data;
-  uint32_t len;
-  uint16_t epoch;
-  char is_ccs;
+  DTLS_OUTGOING_MESSAGE() {}
+  DTLS_OUTGOING_MESSAGE(const DTLS_OUTGOING_MESSAGE &) = delete;
+  DTLS_OUTGOING_MESSAGE &operator=(const DTLS_OUTGOING_MESSAGE &) = delete;
+  ~DTLS_OUTGOING_MESSAGE() { Clear(); }
+
+  void Clear();
+
+  uint8_t *data = nullptr;
+  uint32_t len = 0;
+  uint16_t epoch = 0;
+  bool is_ccs = false;
 };
 
 // dtls_clear_outgoing_messages releases all buffered outgoing messages.
@@ -1036,8 +1040,57 @@ void ssl_do_msg_callback(SSL *ssl, int is_write, int content_type,
 
 // Transport buffers.
 
-// ssl_read_buffer returns the current read buffer.
-Span<uint8_t> ssl_read_buffer(SSL *ssl);
+class SSLBuffer {
+ public:
+  SSLBuffer() {}
+  ~SSLBuffer() { Clear(); }
+
+  SSLBuffer(const SSLBuffer &) = delete;
+  SSLBuffer &operator=(const SSLBuffer &) = delete;
+
+  uint8_t *data() { return buf_ + offset_; }
+  size_t size() const { return size_; }
+  bool empty() const { return size_ == 0; }
+  size_t cap() const { return cap_; }
+
+  Span<uint8_t> span() { return MakeSpan(data(), size()); }
+
+  Span<uint8_t> remaining() {
+    return MakeSpan(data() + size(), cap() - size());
+  }
+
+  // Clear releases the buffer.
+  void Clear();
+
+  // EnsureCap ensures the buffer has capacity at least |new_cap|, aligned such
+  // that data written after |header_len| is aligned to a
+  // |SSL3_ALIGN_PAYLOAD|-byte boundary. It returns true on success and false
+  // on error.
+  bool EnsureCap(size_t header_len, size_t new_cap);
+
+  // DidWrite extends the buffer by |len|. The caller must have filled in to
+  // this point.
+  void DidWrite(size_t len);
+
+  // Consume consumes |len| bytes from the front of the buffer.  The memory
+  // consumed will remain valid until the next call to |DiscardConsumed| or
+  // |Clear|.
+  void Consume(size_t len);
+
+  // DiscardConsumed discards the consumed bytes from the buffer. If the buffer
+  // is now empty, it releases memory used by it.
+  void DiscardConsumed();
+
+ private:
+  // buf_ is the memory allocated for this buffer.
+  uint8_t *buf_ = nullptr;
+  // offset_ is the offset into |buf_| which the buffer contents start at.
+  uint16_t offset_ = 0;
+  // size_ is the size of the buffer contents from |buf_| + |offset_|.
+  uint16_t size_ = 0;
+  // cap_ is how much memory beyond |buf_| + |offset_| is available.
+  uint16_t cap_ = 0;
+};
 
 // ssl_read_buffer_extend_to extends the read buffer to the desired length. For
 // TLS, it reads to the end of the buffer until the buffer is |len| bytes
@@ -1048,48 +1101,17 @@ Span<uint8_t> ssl_read_buffer(SSL *ssl);
 // non-empty.
 int ssl_read_buffer_extend_to(SSL *ssl, size_t len);
 
-// ssl_read_buffer_consume consumes |len| bytes from the read buffer. It
-// advances the data pointer and decrements the length. The memory consumed will
-// remain valid until the next call to |ssl_read_buffer_extend| or it is
-// discarded with |ssl_read_buffer_discard|.
-void ssl_read_buffer_consume(SSL *ssl, size_t len);
-
-// ssl_read_buffer_discard discards the consumed bytes from the read buffer. If
-// the buffer is now empty, it releases memory used by it.
-void ssl_read_buffer_discard(SSL *ssl);
-
-// ssl_read_buffer_clear releases all memory associated with the read buffer and
-// zero-initializes it.
-void ssl_read_buffer_clear(SSL *ssl);
-
-// ssl_handle_open_record handles the result of passing |ssl_read_buffer| to a
-// record-processing function. If |ret| is a success or if the caller should
-// retry, it returns one and sets |*out_retry|. Otherwise, it returns <= 0.
+// ssl_handle_open_record handles the result of passing |ssl->s3->read_buffer|
+// to a record-processing function. If |ret| is a success or if the caller
+// should retry, it returns one and sets |*out_retry|. Otherwise, it returns <=
+// 0.
 int ssl_handle_open_record(SSL *ssl, bool *out_retry, ssl_open_record_t ret,
                            size_t consumed, uint8_t alert);
-
-// ssl_write_buffer_is_pending returns one if the write buffer has pending data
-// and zero if is empty.
-int ssl_write_buffer_is_pending(const SSL *ssl);
-
-// ssl_write_buffer_init initializes the write buffer. On success, it sets
-// |*out_ptr| to the start of the write buffer with space for up to |max_len|
-// bytes. It returns one on success and zero on failure. Call
-// |ssl_write_buffer_set_len| to complete initialization.
-int ssl_write_buffer_init(SSL *ssl, uint8_t **out_ptr, size_t max_len);
-
-// ssl_write_buffer_set_len is called after |ssl_write_buffer_init| to complete
-// initialization after |len| bytes are written to the buffer.
-void ssl_write_buffer_set_len(SSL *ssl, size_t len);
 
 // ssl_write_buffer_flush flushes the write buffer to the transport. It returns
 // one on success and <= 0 on error. For DTLS, whether or not the write
 // succeeds, the write buffer will be cleared.
 int ssl_write_buffer_flush(SSL *ssl);
-
-// ssl_write_buffer_clear releases all memory associated with the write buffer
-// and zero-initializes it.
-void ssl_write_buffer_clear(SSL *ssl);
 
 
 // Certificate functions.
@@ -1468,10 +1490,7 @@ struct SSL_HANDSHAKE {
   uint16_t early_data_written = 0;
 };
 
-SSL_HANDSHAKE *ssl_handshake_new(SSL *ssl);
-
-// ssl_handshake_free releases all memory associated with |hs|.
-void ssl_handshake_free(SSL_HANDSHAKE *hs);
+UniquePtr<SSL_HANDSHAKE> ssl_handshake_new(SSL *ssl);
 
 // ssl_check_message_type checks if |msg| has type |type|. If so it returns
 // one. Otherwise, it sends an alert and returns zero.
@@ -1555,6 +1574,10 @@ enum ssl_cert_verify_context_t {
 bool tls13_get_cert_verify_signature_input(
     SSL_HANDSHAKE *hs, Array<uint8_t> *out,
     enum ssl_cert_verify_context_t cert_verify_context);
+
+// ssl_is_alpn_protocol_allowed returns whether |protocol| is a valid server
+// selection for |ssl|'s client preferences.
+bool ssl_is_alpn_protocol_allowed(const SSL *ssl, Span<const uint8_t> protocol);
 
 // ssl_negotiate_alpn negotiates the ALPN extension, if applicable. It returns
 // true on successful negotiation or if nothing was negotiated. It returns false
@@ -2134,17 +2157,6 @@ struct SSLContext {
   bool ed25519_enabled:1;
 };
 
-struct SSL3_BUFFER {
-  // buf is the memory allocated for this buffer.
-  uint8_t *buf;
-  // offset is the offset into |buf| which the buffer contents start at.
-  uint16_t offset;
-  // len is the length of the buffer contents from |buf| + |offset|.
-  uint16_t len;
-  // cap is how much memory beyond |buf| + |offset| is available.
-  uint16_t cap;
-};
-
 // An ssl_shutdown_t describes the shutdown state of one end of the connection,
 // whether it is alive or has been shutdown via close_notify or fatal alert.
 enum ssl_shutdown_t {
@@ -2154,55 +2166,65 @@ enum ssl_shutdown_t {
 };
 
 struct SSL3_STATE {
-  uint8_t read_sequence[8];
-  uint8_t write_sequence[8];
+  static constexpr bool kAllowUniquePtr = true;
 
-  uint8_t server_random[SSL3_RANDOM_SIZE];
-  uint8_t client_random[SSL3_RANDOM_SIZE];
+  SSL3_STATE();
+  ~SSL3_STATE();
+
+  uint8_t read_sequence[8] = {0};
+  uint8_t write_sequence[8] = {0};
+
+  uint8_t server_random[SSL3_RANDOM_SIZE] = {0};
+  uint8_t client_random[SSL3_RANDOM_SIZE] = {0};
 
   // read_buffer holds data from the transport to be processed.
-  SSL3_BUFFER read_buffer;
+  SSLBuffer read_buffer;
   // write_buffer holds data to be written to the transport.
-  SSL3_BUFFER write_buffer;
+  SSLBuffer write_buffer;
 
   // pending_app_data is the unconsumed application data. It points into
   // |read_buffer|.
   Span<uint8_t> pending_app_data;
 
   // partial write - check the numbers match
-  unsigned int wnum;  // number of bytes sent so far
-  int wpend_tot;      // number bytes written
-  int wpend_type;
-  int wpend_ret;  // number of bytes submitted
-  const uint8_t *wpend_buf;
+  unsigned int wnum = 0;  // number of bytes sent so far
+  int wpend_tot = 0;      // number bytes written
+  int wpend_type = 0;
+  int wpend_ret = 0;  // number of bytes submitted
+  const uint8_t *wpend_buf = nullptr;
 
   // read_shutdown is the shutdown state for the read half of the connection.
-  enum ssl_shutdown_t read_shutdown;
+  enum ssl_shutdown_t read_shutdown = ssl_shutdown_none;
 
   // write_shutdown is the shutdown state for the write half of the connection.
-  enum ssl_shutdown_t write_shutdown;
+  enum ssl_shutdown_t write_shutdown = ssl_shutdown_none;
 
   // read_error, if |read_shutdown| is |ssl_shutdown_error|, is the error for
   // the receive half of the connection.
-  ERR_SAVE_STATE *read_error;
+  UniquePtr<ERR_SAVE_STATE> read_error;
 
-  int alert_dispatch;
+  int alert_dispatch = 0;
 
-  int total_renegotiations;
+  int total_renegotiations = 0;
+
+  // This holds a variable that indicates what we were doing when a 0 or -1 is
+  // returned.  This is needed for non-blocking IO so we know what request
+  // needs re-doing when in SSL_accept or SSL_connect
+  int rwstate = SSL_NOTHING;
 
   // early_data_skipped is the amount of early data that has been skipped by the
   // record layer.
-  uint16_t early_data_skipped;
+  uint16_t early_data_skipped = 0;
 
   // empty_record_count is the number of consecutive empty records received.
-  uint8_t empty_record_count;
+  uint8_t empty_record_count = 0;
 
   // warning_alert_count is the number of consecutive warning alerts
   // received.
-  uint8_t warning_alert_count;
+  uint8_t warning_alert_count = 0;
 
   // key_update_count is the number of consecutive KeyUpdates received.
-  uint8_t key_update_count;
+  uint8_t key_update_count = 0;
 
   // skip_early_data instructs the record layer to skip unexpected early data
   // messages when 0RTT is rejected.
@@ -2246,56 +2268,49 @@ struct SSL3_STATE {
   // wpend_pending is true if we have a pending write outstanding.
   bool wpend_pending:1;
 
-  uint8_t send_alert[2];
+  uint8_t send_alert[2] = {0};
+
+  // hs_buf is the buffer of handshake data to process.
+  UniquePtr<BUF_MEM> hs_buf;
 
   // pending_flight is the pending outgoing flight. This is used to flush each
   // handshake flight in a single write. |write_buffer| must be written out
   // before this data.
-  BUF_MEM *pending_flight;
+  UniquePtr<BUF_MEM> pending_flight;
 
   // pending_flight_offset is the number of bytes of |pending_flight| which have
   // been successfully written.
-  uint32_t pending_flight_offset;
+  uint32_t pending_flight_offset = 0;
 
   // aead_read_ctx is the current read cipher state.
-  SSLAEADContext *aead_read_ctx;
+  UniquePtr<SSLAEADContext> aead_read_ctx;
 
   // aead_write_ctx is the current write cipher state.
-  SSLAEADContext *aead_write_ctx;
+  UniquePtr<SSLAEADContext> aead_write_ctx;
 
   // hs is the handshake state for the current handshake or NULL if there isn't
   // one.
-  SSL_HANDSHAKE *hs;
+  UniquePtr<SSL_HANDSHAKE> hs;
 
-  uint8_t write_traffic_secret[EVP_MAX_MD_SIZE];
-  uint8_t read_traffic_secret[EVP_MAX_MD_SIZE];
-  uint8_t exporter_secret[EVP_MAX_MD_SIZE];
-  uint8_t early_exporter_secret[EVP_MAX_MD_SIZE];
-  uint8_t write_traffic_secret_len;
-  uint8_t read_traffic_secret_len;
-  uint8_t exporter_secret_len;
-  uint8_t early_exporter_secret_len;
+  uint8_t write_traffic_secret[EVP_MAX_MD_SIZE] = {0};
+  uint8_t read_traffic_secret[EVP_MAX_MD_SIZE] = {0};
+  uint8_t exporter_secret[EVP_MAX_MD_SIZE] = {0};
+  uint8_t early_exporter_secret[EVP_MAX_MD_SIZE] = {0};
+  uint8_t write_traffic_secret_len = 0;
+  uint8_t read_traffic_secret_len = 0;
+  uint8_t exporter_secret_len = 0;
+  uint8_t early_exporter_secret_len = 0;
 
   // Connection binding to prevent renegotiation attacks
-  uint8_t previous_client_finished[12];
-  uint8_t previous_client_finished_len;
-  uint8_t previous_server_finished_len;
-  uint8_t previous_server_finished[12];
-
-  // State pertaining to the pending handshake.
-  //
-  // TODO(davidben): Move everything not needed after the handshake completes to
-  // |hs| and remove this.
-  struct {
-    uint8_t new_mac_secret_len;
-    uint8_t new_key_len;
-    uint8_t new_fixed_iv_len;
-  } tmp;
+  uint8_t previous_client_finished[12] = {0};
+  uint8_t previous_client_finished_len = 0;
+  uint8_t previous_server_finished_len = 0;
+  uint8_t previous_server_finished[12] = {0};
 
   // established_session is the session established by the connection. This
   // session is only filled upon the completion of the handshake and is
   // immutable.
-  SSL_SESSION *established_session;
+  UniquePtr<SSL_SESSION> established_session;
 
   // Next protocol negotiation. For the client, this is the protocol that we
   // sent in NextProtocol and is set when handling ServerHello extensions.
@@ -2303,8 +2318,7 @@ struct SSL3_STATE {
   // For a server, this is the client's selected_protocol from NextProtocol and
   // is set when handling the NextProtocol message, before the Finished
   // message.
-  uint8_t *next_proto_negotiated;
-  size_t next_proto_negotiated_len;
+  Array<uint8_t> next_proto_negotiated;
 
   // ALPN information
   // (we are in the process of transitioning from NPN to ALPN.)
@@ -2312,22 +2326,21 @@ struct SSL3_STATE {
   // In a server these point to the selected ALPN protocol after the
   // ClientHello has been processed. In a client these contain the protocol
   // that the server selected once the ServerHello has been processed.
-  uint8_t *alpn_selected;
-  size_t alpn_selected_len;
+  Array<uint8_t> alpn_selected;
 
   // hostname, on the server, is the value of the SNI extension.
-  char *hostname;
+  UniquePtr<char> hostname;
 
   // For a server:
   //     If |tlsext_channel_id_valid| is true, then this contains the
   //     verified Channel ID from the client: a P256 point, (x,y), where
   //     each are big-endian values.
-  uint8_t tlsext_channel_id[64];
+  uint8_t tlsext_channel_id[64] = {0};
 
   // ticket_age_skew is the difference, in seconds, between the client-sent
   // ticket age and the server-computed value in TLS 1.3 server connections
   // which resumed a session.
-  int32_t ticket_age_skew;
+  int32_t ticket_age_skew = 0;
 };
 
 // lengths of messages
@@ -2351,18 +2364,26 @@ struct hm_header_st {
 
 // An hm_fragment is an incoming DTLS message, possibly not yet assembled.
 struct hm_fragment {
+  static constexpr bool kAllowUniquePtr = true;
+
+  hm_fragment() {}
+  hm_fragment(const hm_fragment &) = delete;
+  hm_fragment &operator=(const hm_fragment &) = delete;
+
+  ~hm_fragment();
+
   // type is the type of the message.
-  uint8_t type;
+  uint8_t type = 0;
   // seq is the sequence number of this message.
-  uint16_t seq;
+  uint16_t seq = 0;
   // msg_len is the length of the message body.
-  uint32_t msg_len;
+  uint32_t msg_len = 0;
   // data is a pointer to the message, including message header. It has length
   // |DTLS1_HM_HEADER_LENGTH| + |msg_len|.
-  uint8_t *data;
+  uint8_t *data = nullptr;
   // reassembly is a bitmask of |msg_len| bits corresponding to which parts of
   // the message have been received. It is NULL if the message is complete.
-  uint8_t *reassembly;
+  uint8_t *reassembly = nullptr;
 };
 
 struct OPENSSL_timeval {
@@ -2371,6 +2392,11 @@ struct OPENSSL_timeval {
 };
 
 struct DTLS1_STATE {
+  static constexpr bool kAllowUniquePtr = true;
+
+  DTLS1_STATE();
+  ~DTLS1_STATE();
+
   // has_change_cipher_spec is true if we have received a ChangeCipherSpec from
   // the peer in this epoch.
   bool has_change_cipher_spec:1;
@@ -2385,54 +2411,54 @@ struct DTLS1_STATE {
   // peer sent the final flight.
   bool flight_has_reply:1;
 
-  uint8_t cookie[DTLS1_COOKIE_LENGTH];
-  size_t cookie_len;
+  uint8_t cookie[DTLS1_COOKIE_LENGTH] = {0};
+  size_t cookie_len = 0;
 
   // The current data and handshake epoch.  This is initially undefined, and
   // starts at zero once the initial handshake is completed.
-  uint16_t r_epoch;
-  uint16_t w_epoch;
+  uint16_t r_epoch = 0;
+  uint16_t w_epoch = 0;
 
   // records being received in the current epoch
   DTLS1_BITMAP bitmap;
 
-  uint16_t handshake_write_seq;
-  uint16_t handshake_read_seq;
+  uint16_t handshake_write_seq = 0;
+  uint16_t handshake_read_seq = 0;
 
   // save last sequence number for retransmissions
-  uint8_t last_write_sequence[8];
-  SSLAEADContext *last_aead_write_ctx;
+  uint8_t last_write_sequence[8] = {0};
+  UniquePtr<SSLAEADContext> last_aead_write_ctx;
 
   // incoming_messages is a ring buffer of incoming handshake messages that have
   // yet to be processed. The front of the ring buffer is message number
   // |handshake_read_seq|, at position |handshake_read_seq| %
   // |SSL_MAX_HANDSHAKE_FLIGHT|.
-  hm_fragment *incoming_messages[SSL_MAX_HANDSHAKE_FLIGHT];
+  UniquePtr<hm_fragment> incoming_messages[SSL_MAX_HANDSHAKE_FLIGHT];
 
   // outgoing_messages is the queue of outgoing messages from the last handshake
   // flight.
   DTLS_OUTGOING_MESSAGE outgoing_messages[SSL_MAX_HANDSHAKE_FLIGHT];
-  uint8_t outgoing_messages_len;
+  uint8_t outgoing_messages_len = 0;
 
   // outgoing_written is the number of outgoing messages that have been
   // written.
-  uint8_t outgoing_written;
+  uint8_t outgoing_written = 0;
   // outgoing_offset is the number of bytes of the next outgoing message have
   // been written.
-  uint32_t outgoing_offset;
+  uint32_t outgoing_offset = 0;
 
-  unsigned int mtu;  // max DTLS packet size
+  unsigned mtu = 0;  // max DTLS packet size
 
   // num_timeouts is the number of times the retransmit timer has fired since
   // the last time it was reset.
-  unsigned int num_timeouts;
+  unsigned num_timeouts = 0;
 
   // Indicates when the last handshake msg or heartbeat sent will
   // timeout.
-  struct OPENSSL_timeval next_timeout;
+  struct OPENSSL_timeval next_timeout = {0, 0};
 
   // timeout_duration_ms is the timeout duration in milliseconds.
-  unsigned timeout_duration_ms;
+  unsigned timeout_duration_ms = 0;
 };
 
 // SSLConnection backs the public |SSL| type. Due to compatibility constraints,
@@ -2472,8 +2498,6 @@ struct SSLConnection {
   // progress.
   enum ssl_hs_wait_t (*do_handshake)(SSL_HANDSHAKE *hs);
 
-  BUF_MEM *init_buf;  // buffer used during init
-
   SSL3_STATE *s3;   // SSLv3 variables
   DTLS1_STATE *d1;  // DTLSv1 variables
 
@@ -2492,11 +2516,6 @@ struct SSLConnection {
   // client cert?
   // This is used to hold the server certificate used
   CERT *cert;
-
-  // This holds a variable that indicates what we were doing when a 0 or -1 is
-  // returned.  This is needed for non-blocking IO so we know what request
-  // needs re-doing when in SSL_accept or SSL_connect
-  int rwstate;
 
   // initial_timeout_duration_ms is the default DTLS timeout duration in
   // milliseconds. It's used to initialize the timer any time it's restarted.
@@ -2601,7 +2620,6 @@ struct SSLConnection {
 };
 
 // From draft-ietf-tls-tls13-18, used in determining PSK modes.
-#define SSL_PSK_KE     0x0
 #define SSL_PSK_DHE_KE 0x1
 
 // From draft-ietf-tls-tls13-16, used in determining whether to respond with a

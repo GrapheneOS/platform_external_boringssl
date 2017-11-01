@@ -149,16 +149,14 @@ SSL_HANDSHAKE::~SSL_HANDSHAKE() {
   ssl->ctx->x509_method->hs_flush_cached_ca_names(this);
 }
 
-SSL_HANDSHAKE *ssl_handshake_new(SSL *ssl) {
+UniquePtr<SSL_HANDSHAKE> ssl_handshake_new(SSL *ssl) {
   UniquePtr<SSL_HANDSHAKE> hs = MakeUnique<SSL_HANDSHAKE>(ssl);
   if (!hs ||
       !hs->transcript.Init()) {
     return nullptr;
   }
-  return hs.release();
+  return hs;
 }
-
-void ssl_handshake_free(SSL_HANDSHAKE *hs) { Delete(hs); }
 
 bool ssl_check_message_type(SSL *ssl, const SSLMessage &msg, int type) {
   if (msg.type != type) {
@@ -282,7 +280,7 @@ static void set_crypto_buffer(CRYPTO_BUFFER **dest, CRYPTO_BUFFER *src) {
 
 enum ssl_verify_result_t ssl_verify_peer_cert(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
-  const SSL_SESSION *prev_session = ssl->s3->established_session;
+  const SSL_SESSION *prev_session = ssl->s3->established_session.get();
   if (prev_session != NULL) {
     // If renegotiating, the server must not change the server certificate. See
     // https://mitls.org/pages/attacks/3SHAKE. We never resume on renegotiation,
@@ -505,10 +503,10 @@ int ssl_run_handshake(SSL_HANDSHAKE *hs, bool *out_early_return) {
         ssl_open_record_t ret;
         if (hs->wait == ssl_hs_read_change_cipher_spec) {
           ret = ssl_open_change_cipher_spec(ssl, &consumed, &alert,
-                                            ssl_read_buffer(ssl));
+                                            ssl->s3->read_buffer.span());
         } else {
-          ret =
-              ssl_open_handshake(ssl, &consumed, &alert, ssl_read_buffer(ssl));
+          ret = ssl_open_handshake(ssl, &consumed, &alert,
+                                   ssl->s3->read_buffer.span());
         }
         if (ret == ssl_open_record_error &&
             hs->wait == ssl_hs_read_server_hello) {
@@ -533,7 +531,7 @@ int ssl_run_handshake(SSL_HANDSHAKE *hs, bool *out_early_return) {
         if (retry) {
           continue;
         }
-        ssl_read_buffer_discard(ssl);
+        ssl->s3->read_buffer.DiscardConsumed();
         break;
       }
 
@@ -548,42 +546,42 @@ int ssl_run_handshake(SSL_HANDSHAKE *hs, bool *out_early_return) {
       }
 
       case ssl_hs_certificate_selection_pending:
-        ssl->rwstate = SSL_CERTIFICATE_SELECTION_PENDING;
+        ssl->s3->rwstate = SSL_CERTIFICATE_SELECTION_PENDING;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_x509_lookup:
-        ssl->rwstate = SSL_X509_LOOKUP;
+        ssl->s3->rwstate = SSL_X509_LOOKUP;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_channel_id_lookup:
-        ssl->rwstate = SSL_CHANNEL_ID_LOOKUP;
+        ssl->s3->rwstate = SSL_CHANNEL_ID_LOOKUP;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_private_key_operation:
-        ssl->rwstate = SSL_PRIVATE_KEY_OPERATION;
+        ssl->s3->rwstate = SSL_PRIVATE_KEY_OPERATION;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_pending_session:
-        ssl->rwstate = SSL_PENDING_SESSION;
+        ssl->s3->rwstate = SSL_PENDING_SESSION;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_pending_ticket:
-        ssl->rwstate = SSL_PENDING_TICKET;
+        ssl->s3->rwstate = SSL_PENDING_TICKET;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_certificate_verify:
-        ssl->rwstate = SSL_CERTIFICATE_VERIFY;
+        ssl->s3->rwstate = SSL_CERTIFICATE_VERIFY;
         hs->wait = ssl_hs_ok;
         return -1;
 
       case ssl_hs_early_data_rejected:
-        ssl->rwstate = SSL_EARLY_DATA_REJECTED;
+        ssl->s3->rwstate = SSL_EARLY_DATA_REJECTED;
         // Cause |SSL_write| to start failing immediately.
         hs->can_early_write = false;
         return -1;
