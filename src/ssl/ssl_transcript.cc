@@ -209,6 +209,30 @@ const EVP_MD *SSLTranscript::Digest() const {
   return EVP_MD_CTX_md(hash_.get());
 }
 
+bool SSLTranscript::UpdateForHelloRetryRequest() {
+  if (buffer_) {
+    buffer_->length = 0;
+  }
+
+  uint8_t old_hash[EVP_MAX_MD_SIZE];
+  size_t hash_len;
+  if (!GetHash(old_hash, &hash_len)) {
+    return false;
+  }
+  const uint8_t header[4] = {SSL3_MT_MESSAGE_HASH, 0, 0,
+                             static_cast<uint8_t>(hash_len)};
+  if (!EVP_DigestInit_ex(hash_.get(), Digest(), nullptr) ||
+      !Update(header) ||
+      !Update(MakeConstSpan(old_hash, hash_len))) {
+    return false;
+  }
+  return true;
+}
+
+bool SSLTranscript::CopyHashContext(EVP_MD_CTX *ctx) {
+  return EVP_MD_CTX_copy_ex(ctx, hash_.get());
+}
+
 bool SSLTranscript::Update(Span<const uint8_t> in) {
   // Depending on the state of the handshake, either the handshake buffer may be
   // active, the rolling hash, or both.
@@ -348,12 +372,11 @@ bool SSLTranscript::GetFinishedMAC(uint8_t *out, size_t *out_len,
   // its own.
   assert(!buffer_);
 
-  const char *label = TLS_MD_CLIENT_FINISH_CONST;
-  size_t label_len = TLS_MD_SERVER_FINISH_CONST_SIZE;
-  if (from_server) {
-    label = TLS_MD_SERVER_FINISH_CONST;
-    label_len = TLS_MD_SERVER_FINISH_CONST_SIZE;
-  }
+  static const char kClientLabel[] = "client finished";
+  static const char kServerLabel[] = "server finished";
+  auto label = from_server
+                   ? MakeConstSpan(kServerLabel, sizeof(kServerLabel) - 1)
+                   : MakeConstSpan(kClientLabel, sizeof(kClientLabel) - 1);
 
   uint8_t digests[EVP_MAX_MD_SIZE];
   size_t digests_len;
@@ -362,9 +385,9 @@ bool SSLTranscript::GetFinishedMAC(uint8_t *out, size_t *out_len,
   }
 
   static const size_t kFinishedLen = 12;
-  if (!tls1_prf(Digest(), out, kFinishedLen, session->master_key,
-                session->master_key_length, label, label_len, digests,
-                digests_len, NULL, 0)) {
+  if (!tls1_prf(Digest(), MakeSpan(out, kFinishedLen),
+                MakeConstSpan(session->master_key, session->master_key_length),
+                label, MakeConstSpan(digests, digests_len), {})) {
     return false;
   }
 

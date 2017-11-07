@@ -86,7 +86,6 @@ cc_defaults {
         "src/crypto/cpu-intel.c",
         "src/crypto/cpu-ppc64le.c",
         "src/crypto/crypto.c",
-        "src/crypto/curve25519/curve25519.c",
         "src/crypto/curve25519/spake25519.c",
         "src/crypto/curve25519/x25519-x86_64.c",
         "src/crypto/dh/check.c",
@@ -236,6 +235,7 @@ cc_defaults {
         "src/crypto/x509v3/v3_skey.c",
         "src/crypto/x509v3/v3_sxnet.c",
         "src/crypto/x509v3/v3_utl.c",
+        "src/third_party/fiat/curve25519.c",
     ],
     target: {
         linux_arm64: {
