@@ -392,6 +392,10 @@ bool ssl_negotiate_version(SSL_HANDSHAKE *hs, uint8_t *out_alert,
 // call this function before the version is determined.
 uint16_t ssl_protocol_version(const SSL *ssl);
 
+// ssl_is_draft21 returns whether the version corresponds to a draft21 TLS 1.3
+// variant.
+bool ssl_is_draft21(uint16_t version);
+
 // ssl_is_resumption_experiment returns whether the version corresponds to a
 // TLS 1.3 resumption experiment.
 bool ssl_is_resumption_experiment(uint16_t version);
@@ -490,14 +494,12 @@ bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
 const EVP_MD *ssl_get_handshake_digest(uint16_t version,
                                        const SSL_CIPHER *cipher);
 
-// ssl_create_cipher_list evaluates |rule_str| according to the ciphers in
-// |ssl_method|. It sets |*out_cipher_list| to a newly-allocated
-// |ssl_cipher_preference_list_st| containing the result. It returns true on
-// success and false on failure. If |strict| is true, nonsense will be
-// rejected. If false, nonsense will be silently ignored. An empty result is
-// considered an error regardless of |strict|.
+// ssl_create_cipher_list evaluates |rule_str|. It sets |*out_cipher_list| to a
+// newly-allocated |ssl_cipher_preference_list_st| containing the result. It
+// returns true on success and false on failure. If |strict| is true, nonsense
+// will be rejected. If false, nonsense will be silently ignored. An empty
+// result is considered an error regardless of |strict|.
 bool ssl_create_cipher_list(
-    const SSL_PROTOCOL_METHOD *ssl_method,
     struct ssl_cipher_preference_list_st **out_cipher_list,
     const char *rule_str, bool strict);
 
@@ -544,6 +546,16 @@ class SSLTranscript {
   // rolling hash. It returns one on success and zero on failure. It is an error
   // to call this function after the handshake buffer is released.
   bool InitHash(uint16_t version, const SSL_CIPHER *cipher);
+
+  // UpdateForHelloRetryRequest resets the rolling hash with the
+  // HelloRetryRequest construction. It returns true on success and false on
+  // failure. It is an error to call this function before the handshake buffer
+  // is released.
+  bool UpdateForHelloRetryRequest();
+
+  // CopyHashContext copies the hash context into |ctx| and returns true on
+  // success.
+  bool CopyHashContext(EVP_MD_CTX *ctx);
 
   Span<const uint8_t> buffer() {
     return MakeConstSpan(reinterpret_cast<const uint8_t *>(buffer_->data),
@@ -596,14 +608,12 @@ class SSLTranscript {
   ScopedEVP_MD_CTX md5_;
 };
 
-// tls1_prf computes the PRF function for |ssl|. It writes |out_len| bytes to
-// |out|, using |secret| as the secret and |label| as the label. |seed1| and
-// |seed2| are concatenated to form the seed parameter. It returns one on
-// success and zero on failure.
-int tls1_prf(const EVP_MD *digest, uint8_t *out, size_t out_len,
-             const uint8_t *secret, size_t secret_len, const char *label,
-             size_t label_len, const uint8_t *seed1, size_t seed1_len,
-             const uint8_t *seed2, size_t seed2_len);
+// tls1_prf computes the PRF function for |ssl|. It fills |out|, using |secret|
+// as the secret and |label| as the label. |seed1| and |seed2| are concatenated
+// to form the seed parameter. It returns true on success and false on failure.
+bool tls1_prf(const EVP_MD *digest, Span<uint8_t> out,
+              Span<const uint8_t> secret, Span<const char> label,
+              Span<const uint8_t> seed1, Span<const uint8_t> seed2);
 
 
 // Encryption layer.
@@ -1161,6 +1171,9 @@ UniquePtr<STACK_OF(CRYPTO_BUFFER)> ssl_parse_client_CA_list(SSL *ssl,
                                                             uint8_t *out_alert,
                                                             CBS *cbs);
 
+// ssl_has_client_CAs returns there are configured CAs.
+bool ssl_has_client_CAs(SSL *ssl);
+
 // ssl_add_client_CA_list adds the configured CA list to |cbb| in the format
 // used by a TLS CertificateRequest message. It returns one on success and zero
 // on error.
@@ -1181,14 +1194,16 @@ int ssl_on_certificate_selected(SSL_HANDSHAKE *hs);
 // TLS 1.3 key derivation.
 
 // tls13_init_key_schedule initializes the handshake hash and key derivation
-// state. The cipher suite and PRF hash must have been selected at this point.
-// It returns one on success and zero on error.
-int tls13_init_key_schedule(SSL_HANDSHAKE *hs);
+// state, and incorporates the PSK. The cipher suite and PRF hash must have been
+// selected at this point. It returns one on success and zero on error.
+int tls13_init_key_schedule(SSL_HANDSHAKE *hs, const uint8_t *psk,
+                            size_t psk_len);
 
 // tls13_init_early_key_schedule initializes the handshake hash and key
-// derivation state from the resumption secret to derive the early secrets. It
-// returns one on success and zero on error.
-int tls13_init_early_key_schedule(SSL_HANDSHAKE *hs);
+// derivation state from the resumption secret and incorporates the PSK to
+// derive the early secrets. It returns one on success and zero on error.
+int tls13_init_early_key_schedule(SSL_HANDSHAKE *hs, const uint8_t *psk,
+                                  size_t psk_len);
 
 // tls13_advance_key_schedule incorporates |in| into the key schedule with
 // HKDF-Extract. It returns one on success and zero on error.
@@ -1234,6 +1249,11 @@ int tls13_export_keying_material(SSL *ssl, uint8_t *out, size_t out_len,
 // 0 for the Client Finished.
 int tls13_finished_mac(SSL_HANDSHAKE *hs, uint8_t *out,
                        size_t *out_len, int is_server);
+
+// tls13_derive_session_psk calculates the PSK for this session based on the
+// resumption master secret and |nonce|. It returns true on success, and false
+// on failure.
+bool tls13_derive_session_psk(SSL_SESSION *session, Span<const uint8_t> nonce);
 
 // tls13_write_psk_binder calculates the PSK binder value and replaces the last
 // bytes of |msg| with the resulting value. It returns 1 on success, and 0 on
@@ -1773,8 +1793,6 @@ struct SSL_PROTOCOL_METHOD {
   int (*write_app_data)(SSL *ssl, bool *out_needs_handshake, const uint8_t *buf,
                         int len);
   int (*dispatch_alert)(SSL *ssl);
-  // supports_cipher returns whether |cipher| is supported by this protocol.
-  bool (*supports_cipher)(const SSL_CIPHER *cipher);
   // init_message begins a new handshake message of type |type|. |cbb| is the
   // root CBB to be passed into |finish_message|. |*body| is set to a child CBB
   // the caller should write to. It returns true on success and false on error.
@@ -2803,7 +2821,7 @@ int dtls1_dispatch_alert(SSL *ssl);
 
 int tls1_change_cipher_state(SSL_HANDSHAKE *hs, evp_aead_direction_t direction);
 int tls1_generate_master_secret(SSL_HANDSHAKE *hs, uint8_t *out,
-                                const uint8_t *premaster, size_t premaster_len);
+                                Span<const uint8_t> premaster);
 
 // tls1_get_grouplist returns the locally-configured group preference list.
 Span<const uint16_t> tls1_get_grouplist(const SSL *ssl);
@@ -2865,8 +2883,8 @@ int tls1_verify_channel_id(SSL_HANDSHAKE *hs, const SSLMessage &msg);
 
 // tls1_write_channel_id generates a Channel ID message and puts the output in
 // |cbb|. |ssl->tlsext_channel_id_private| must already be set before calling.
-// This function returns one on success and zero on error.
-int tls1_write_channel_id(SSL_HANDSHAKE *hs, CBB *cbb);
+// This function returns true on success and false on error.
+bool tls1_write_channel_id(SSL_HANDSHAKE *hs, CBB *cbb);
 
 // tls1_channel_id_hash computes the hash to be signed by Channel ID and writes
 // it to |out|, which must contain at least |EVP_MAX_MD_SIZE| bytes. It returns

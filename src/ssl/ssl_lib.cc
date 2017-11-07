@@ -986,6 +986,13 @@ static int ssl_read_impl(SSL *ssl) {
     // Process any buffered post-handshake messages.
     SSLMessage msg;
     if (ssl->method->get_message(ssl, &msg)) {
+      // If we received an interrupt in early read (EndOfEarlyData), loop again
+      // for the handshake to process it.
+      if (SSL_in_init(ssl)) {
+        ssl->s3->hs->can_early_read = false;
+        continue;
+      }
+
       // Handle the post-handshake message and try again.
       if (!ssl_do_post_handshake(ssl, msg)) {
         ssl_set_read_error(ssl);
@@ -1827,23 +1834,19 @@ const char *SSL_get_cipher_list(const SSL *ssl, int n) {
 }
 
 int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str) {
-  return ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str,
-                                false /* not strict */);
+  return ssl_create_cipher_list(&ctx->cipher_list, str, false /* not strict */);
 }
 
 int SSL_CTX_set_strict_cipher_list(SSL_CTX *ctx, const char *str) {
-  return ssl_create_cipher_list(ctx->method, &ctx->cipher_list, str,
-                                true /* strict */);
+  return ssl_create_cipher_list(&ctx->cipher_list, str, true /* strict */);
 }
 
 int SSL_set_cipher_list(SSL *ssl, const char *str) {
-  return ssl_create_cipher_list(ssl->ctx->method, &ssl->cipher_list, str,
-                                false /* not strict */);
+  return ssl_create_cipher_list(&ssl->cipher_list, str, false /* not strict */);
 }
 
 int SSL_set_strict_cipher_list(SSL *ssl, const char *str) {
-  return ssl_create_cipher_list(ssl->ctx->method, &ssl->cipher_list, str,
-                                true /* strict */);
+  return ssl_create_cipher_list(&ssl->cipher_list, str, true /* strict */);
 }
 
 const char *SSL_get_servername(const SSL *ssl, const int type) {

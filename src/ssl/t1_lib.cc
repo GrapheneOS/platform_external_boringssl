@@ -1800,8 +1800,18 @@ static size_t ext_pre_shared_key_clienthello_length(SSL_HANDSHAKE *hs) {
 
 static bool ext_pre_shared_key_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
+  hs->needs_psk_binder = false;
   if (hs->max_version < TLS1_3_VERSION || ssl->session == NULL ||
       ssl_session_protocol_version(ssl->session) < TLS1_3_VERSION) {
+    return true;
+  }
+
+  // Per draft-ietf-tls-tls13-21 section 4.1.4, skip offering the session if the
+  // selected cipher in HelloRetryRequest does not match. This avoids performing
+  // the transcript hash transformation for multiple hashes.
+  if (hs->received_hello_retry_request &&
+      ssl_is_draft21(ssl->version) &&
+      ssl->session->cipher->algorithm_prf != hs->new_cipher->algorithm_prf) {
     return true;
   }
 
@@ -3265,54 +3275,45 @@ int tls1_verify_channel_id(SSL_HANDSHAKE *hs, const SSLMessage &msg) {
   return 1;
 }
 
-int tls1_write_channel_id(SSL_HANDSHAKE *hs, CBB *cbb) {
+bool tls1_write_channel_id(SSL_HANDSHAKE *hs, CBB *cbb) {
   SSL *const ssl = hs->ssl;
   uint8_t digest[EVP_MAX_MD_SIZE];
   size_t digest_len;
   if (!tls1_channel_id_hash(hs, digest, &digest_len)) {
-    return 0;
+    return false;
   }
 
   EC_KEY *ec_key = EVP_PKEY_get0_EC_KEY(ssl->tlsext_channel_id_private);
-  if (ec_key == NULL) {
+  if (ec_key == nullptr) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
-    return 0;
+    return false;
   }
 
-  int ret = 0;
-  BIGNUM *x = BN_new();
-  BIGNUM *y = BN_new();
-  ECDSA_SIG *sig = NULL;
-  if (x == NULL || y == NULL ||
+  UniquePtr<BIGNUM> x(BN_new()), y(BN_new());
+  if (!x || !y ||
       !EC_POINT_get_affine_coordinates_GFp(EC_KEY_get0_group(ec_key),
                                            EC_KEY_get0_public_key(ec_key),
-                                           x, y, NULL)) {
-    goto err;
+                                           x.get(), y.get(), nullptr)) {
+    return false;
   }
 
-  sig = ECDSA_do_sign(digest, digest_len, ec_key);
-  if (sig == NULL) {
-    goto err;
+  UniquePtr<ECDSA_SIG> sig(ECDSA_do_sign(digest, digest_len, ec_key));
+  if (!sig) {
+    return false;
   }
 
   CBB child;
   if (!CBB_add_u16(cbb, TLSEXT_TYPE_channel_id) ||
       !CBB_add_u16_length_prefixed(cbb, &child) ||
-      !BN_bn2cbb_padded(&child, 32, x) ||
-      !BN_bn2cbb_padded(&child, 32, y) ||
+      !BN_bn2cbb_padded(&child, 32, x.get()) ||
+      !BN_bn2cbb_padded(&child, 32, y.get()) ||
       !BN_bn2cbb_padded(&child, 32, sig->r) ||
       !BN_bn2cbb_padded(&child, 32, sig->s) ||
       !CBB_flush(cbb)) {
-    goto err;
+    return false;
   }
 
-  ret = 1;
-
-err:
-  BN_free(x);
-  BN_free(y);
-  ECDSA_SIG_free(sig);
-  return ret;
+  return true;
 }
 
 int tls1_channel_id_hash(SSL_HANDSHAKE *hs, uint8_t *out, size_t *out_len) {
