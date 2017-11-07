@@ -592,6 +592,7 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_2_VERSION 0xfefd
 
 #define TLS1_3_DRAFT_VERSION 0x7f12
+#define TLS1_3_DRAFT21_VERSION 0x7f15
 #define TLS1_3_EXPERIMENT_VERSION 0x7e01
 #define TLS1_3_EXPERIMENT2_VERSION 0x7e02
 #define TLS1_3_EXPERIMENT3_VERSION 0x7e03
@@ -976,6 +977,25 @@ OPENSSL_EXPORT int SSL_set_ocsp_response(SSL *ssl,
 // specify raw RSASSA-PKCS1-v1_5 with an MD5/SHA-1 concatenation, as used in TLS
 // before TLS 1.2.
 #define SSL_SIGN_RSA_PKCS1_MD5_SHA1 0xff01
+
+// SSL_get_signature_algorithm_name returns a human-readable name for |sigalg|,
+// or NULL if unknown. If |include_curve| is one, the curve for ECDSA algorithms
+// is included as in TLS 1.3. Otherwise, it is excluded as in TLS 1.2.
+OPENSSL_EXPORT const char *SSL_get_signature_algorithm_name(uint16_t sigalg,
+                                                            int include_curve);
+
+// SSL_get_signature_algorithm_key_type returns the key type associated with
+// |sigalg| as an |EVP_PKEY_*| constant or |EVP_PKEY_NONE| if unknown.
+OPENSSL_EXPORT int SSL_get_signature_algorithm_key_type(uint16_t sigalg);
+
+// SSL_get_signature_algorithm_digest returns the digest function associated
+// with |sigalg| or |NULL| if |sigalg| has no prehash (Ed25519) or is unknown.
+OPENSSL_EXPORT const EVP_MD *SSL_get_signature_algorithm_digest(
+    uint16_t sigalg);
+
+// SSL_is_signature_algorithm_rsa_pss returns one if |sigalg| is an RSA-PSS
+// signature algorithm and zero otherwise.
+OPENSSL_EXPORT int SSL_is_signature_algorithm_rsa_pss(uint16_t sigalg);
 
 // SSL_CTX_set_signing_algorithm_prefs configures |ctx| to use |prefs| as the
 // preference list when signing with |ctx|'s private key. It returns one on
@@ -3234,6 +3254,7 @@ enum tls13_variant_t {
   tls13_experiment = 1,
   tls13_experiment2 = 2,
   tls13_experiment3 = 3,
+  tls13_draft21 = 4,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the

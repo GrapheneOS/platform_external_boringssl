@@ -84,7 +84,6 @@ crypto_sources := \
   src/crypto/cpu-intel.c\
   src/crypto/cpu-ppc64le.c\
   src/crypto/crypto.c\
-  src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\
   src/crypto/curve25519/x25519-x86_64.c\
   src/crypto/dh/check.c\
@@ -234,6 +233,7 @@ crypto_sources := \
   src/crypto/x509v3/v3_skey.c\
   src/crypto/x509v3/v3_sxnet.c\
   src/crypto/x509v3/v3_utl.c\
+  src/third_party/fiat/curve25519.c\
 
 ssl_sources := \
   src/ssl/bio_ssl.cc\
