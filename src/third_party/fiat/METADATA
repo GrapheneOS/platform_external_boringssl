@@ -1,10 +1,10 @@
 name: "fiat"
 description:
-    "Fiat-Crypto: Synthesizing Correct-by-Construction Code for Cryptographic Primitives".
+    "Fiat-Crypto: Synthesizing Correct-by-Construction Code for Cryptographic Primitives."
 
 third_party {
   url {
-    type: HOMEPAGE
+    type: GIT
     value: "https://github.com/mit-plv/fiat-crypto"
   }
   version: "6c4d4afb26de639718fcac39094353ca7feec365"
