@@ -160,7 +160,7 @@ int ECDSA_do_verify(const uint8_t *digest, size_t digest_len,
     OPENSSL_PUT_ERROR(ECDSA, ECDSA_R_BAD_SIGNATURE);
     goto err;
   }
-  // calculate tmp1 = inv(S) mod order
+  // tmp = inv(s) mod order
   int no_inverse;
   if (!BN_mod_inverse_odd(u2, &no_inverse, sig->s, order, ctx)) {
     OPENSSL_PUT_ERROR(ECDSA, ERR_R_BN_LIB);
@@ -174,7 +174,7 @@ int ECDSA_do_verify(const uint8_t *digest, size_t digest_len,
     OPENSSL_PUT_ERROR(ECDSA, ERR_R_BN_LIB);
     goto err;
   }
-  // u2 = r * w mod q
+  // u2 = r * tmp mod order
   if (!BN_mod_mul(u2, sig->r, u2, order, ctx)) {
     OPENSSL_PUT_ERROR(ECDSA, ERR_R_BN_LIB);
     goto err;
@@ -267,13 +267,11 @@ static int ecdsa_sign_setup(const EC_KEY *eckey, BN_CTX *ctx_in, BIGNUM **kinvp,
         goto err;
       }
     } else if (digest_len > 0) {
-      do {
-        if (!BN_generate_dsa_nonce(k, order, EC_KEY_get0_private_key(eckey),
-                                   digest, digest_len, ctx)) {
-          OPENSSL_PUT_ERROR(ECDSA, ECDSA_R_RANDOM_NUMBER_GENERATION_FAILED);
-          goto err;
-        }
-      } while (BN_is_zero(k));
+      if (!BN_generate_dsa_nonce(k, order, EC_KEY_get0_private_key(eckey),
+                                 digest, digest_len, ctx)) {
+        OPENSSL_PUT_ERROR(ECDSA, ECDSA_R_RANDOM_NUMBER_GENERATION_FAILED);
+        goto err;
+      }
     } else if (!BN_rand_range_ex(k, 1, order)) {
       OPENSSL_PUT_ERROR(ECDSA, ECDSA_R_RANDOM_NUMBER_GENERATION_FAILED);
       goto err;
