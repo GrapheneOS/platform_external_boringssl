@@ -77,6 +77,7 @@
 
 #include "internal.h"
 #include "../../internal.h"
+#include "../bn/internal.h"
 #include "../delocate.h"
 
 
@@ -279,63 +280,6 @@ DEFINE_METHOD_FUNCTION(struct built_in_curves, OPENSSL_built_in_curves) {
 #endif
 }
 
-// built_in_curve_scalar_field_monts contains Montgomery contexts for
-// performing inversions in the scalar fields of each of the built-in
-// curves. It's protected by |built_in_curve_scalar_field_monts_once|.
-DEFINE_LOCAL_DATA(BN_MONT_CTX **, built_in_curve_scalar_field_monts) {
-  const struct built_in_curves *const curves = OPENSSL_built_in_curves();
-
-  BN_MONT_CTX **monts =
-      OPENSSL_malloc(sizeof(BN_MONT_CTX *) * OPENSSL_NUM_BUILT_IN_CURVES);
-  if (monts == NULL) {
-    return;
-  }
-
-  OPENSSL_memset(monts, 0, sizeof(BN_MONT_CTX *) * OPENSSL_NUM_BUILT_IN_CURVES);
-
-  BIGNUM *order = BN_new();
-  BN_CTX *bn_ctx = BN_CTX_new();
-  BN_MONT_CTX *mont_ctx = NULL;
-
-  if (bn_ctx == NULL ||
-      order == NULL) {
-    goto err;
-  }
-
-  for (size_t i = 0; i < OPENSSL_NUM_BUILT_IN_CURVES; i++) {
-    const struct built_in_curve *curve = &curves->curves[i];
-    const unsigned param_len = curve->param_len;
-    const uint8_t *params = curve->params;
-
-    mont_ctx = BN_MONT_CTX_new();
-    if (mont_ctx == NULL) {
-      goto err;
-    }
-
-    if (!BN_bin2bn(params + 5 * param_len, param_len, order) ||
-        !BN_MONT_CTX_set(mont_ctx, order, bn_ctx)) {
-      goto err;
-    }
-
-    monts[i] = mont_ctx;
-    mont_ctx = NULL;
-  }
-
-  *out = monts;
-  goto done;
-
-err:
-  BN_MONT_CTX_free(mont_ctx);
-  for (size_t i = 0; i < OPENSSL_NUM_BUILT_IN_CURVES; i++) {
-    BN_MONT_CTX_free(monts[i]);
-  }
-  OPENSSL_free((BN_MONT_CTX**) monts);
-
-done:
-  BN_free(order);
-  BN_CTX_free(bn_ctx);
-}
-
 EC_GROUP *ec_group_new(const EC_METHOD *meth) {
   EC_GROUP *ret;
 
@@ -383,6 +327,11 @@ static void ec_group_set0_generator(EC_GROUP *group, EC_POINT *generator) {
 
 EC_GROUP *EC_GROUP_new_curve_GFp(const BIGNUM *p, const BIGNUM *a,
                                  const BIGNUM *b, BN_CTX *ctx) {
+  if (BN_num_bytes(p) > EC_MAX_SCALAR_BYTES) {
+    OPENSSL_PUT_ERROR(EC, EC_R_INVALID_FIELD);
+    return NULL;
+  }
+
   EC_GROUP *ret = ec_group_new(EC_GFp_mont_method());
   if (ret == NULL) {
     return NULL;
@@ -409,12 +358,36 @@ int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
     // Additionally, |generator| must been created from
     // |EC_GROUP_new_curve_GFp|, not a copy, so that
     // |generator->group->generator| is set correctly.
+    OPENSSL_PUT_ERROR(EC, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
+    return 0;
+  }
+
+  if (BN_num_bytes(order) > EC_MAX_SCALAR_BYTES) {
+    OPENSSL_PUT_ERROR(EC, EC_R_INVALID_FIELD);
     return 0;
   }
 
   // Require a cofactor of one for custom curves, which implies prime order.
   if (!BN_is_one(cofactor)) {
     OPENSSL_PUT_ERROR(EC, EC_R_INVALID_COFACTOR);
+    return 0;
+  }
+
+  // Require that p < 2×order. This simplifies some ECDSA operations.
+  //
+  // Note any curve which did not satisfy this must have been invalid or use a
+  // tiny prime (less than 17). See the proof in |field_element_to_scalar| in
+  // the ECDSA implementation.
+  BIGNUM *tmp = BN_new();
+  if (tmp == NULL ||
+      !BN_lshift1(tmp, order)) {
+    BN_free(tmp);
+    return 0;
+  }
+  int ok = BN_cmp(tmp, &group->field) > 0;
+  BN_free(tmp);
+  if (!ok) {
+    OPENSSL_PUT_ERROR(EC, EC_R_INVALID_GROUP_ORDER);
     return 0;
   }
 
@@ -426,13 +399,18 @@ int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
     return 0;
   }
 
+  BN_MONT_CTX_free(group->order_mont);
+  group->order_mont = BN_MONT_CTX_new();
+  if (group->order_mont == NULL ||
+      !BN_MONT_CTX_set(group->order_mont, &group->order, NULL)) {
+    return 0;
+  }
+
   ec_group_set0_generator(group, copy);
   return 1;
 }
 
-static EC_GROUP *ec_group_new_from_data(unsigned built_in_index) {
-  const struct built_in_curves *const curves = OPENSSL_built_in_curves();
-  const struct built_in_curve *curve = &curves->curves[built_in_index];
+static EC_GROUP *ec_group_new_from_data(const struct built_in_curve *curve) {
   EC_GROUP *group = NULL;
   EC_POINT *P = NULL;
   BIGNUM *p = NULL, *a = NULL, *b = NULL, *x = NULL, *y = NULL;
@@ -481,9 +459,11 @@ static EC_GROUP *ec_group_new_from_data(unsigned built_in_index) {
     goto err;
   }
 
-  const BN_MONT_CTX **monts = *built_in_curve_scalar_field_monts();
-  if (monts != NULL) {
-    group->order_mont = monts[built_in_index];
+  group->order_mont = BN_MONT_CTX_new();
+  if (group->order_mont == NULL ||
+      !BN_MONT_CTX_set(group->order_mont, &group->order, ctx)) {
+    OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
+    goto err;
   }
 
   ec_group_set0_generator(group, P);
@@ -505,29 +485,65 @@ err:
   return group;
 }
 
-EC_GROUP *EC_GROUP_new_by_curve_name(int nid) {
-  const struct built_in_curves *const curves = OPENSSL_built_in_curves();
-  EC_GROUP *ret = NULL;
+// Built-in groups are allocated lazily and static once allocated.
+// TODO(davidben): Make these actually static. https://crbug.com/boringssl/20.
+struct built_in_groups_st {
+  EC_GROUP *groups[OPENSSL_NUM_BUILT_IN_CURVES];
+};
+DEFINE_BSS_GET(struct built_in_groups_st, built_in_groups);
+DEFINE_STATIC_MUTEX(built_in_groups_lock);
 
+EC_GROUP *EC_GROUP_new_by_curve_name(int nid) {
+  struct built_in_groups_st *groups = built_in_groups_bss_get();
+  EC_GROUP **group_ptr = NULL;
+  const struct built_in_curves *const curves = OPENSSL_built_in_curves();
+  const struct built_in_curve *curve = NULL;
   for (size_t i = 0; i < OPENSSL_NUM_BUILT_IN_CURVES; i++) {
-    const struct built_in_curve *curve = &curves->curves[i];
-    if (curve->nid == nid) {
-      ret = ec_group_new_from_data(i);
+    if (curves->curves[i].nid == nid) {
+      curve = &curves->curves[i];
+      group_ptr = &groups->groups[i];
       break;
     }
   }
 
-  if (ret == NULL) {
+  if (curve == NULL) {
     OPENSSL_PUT_ERROR(EC, EC_R_UNKNOWN_GROUP);
     return NULL;
   }
 
-  ret->curve_name = nid;
+  CRYPTO_STATIC_MUTEX_lock_read(built_in_groups_lock_bss_get());
+  EC_GROUP *ret = *group_ptr;
+  CRYPTO_STATIC_MUTEX_unlock_read(built_in_groups_lock_bss_get());
+  if (ret != NULL) {
+    return ret;
+  }
+
+  ret = ec_group_new_from_data(curve);
+  if (ret == NULL) {
+    return NULL;
+  }
+
+  EC_GROUP *to_free = NULL;
+  CRYPTO_STATIC_MUTEX_lock_write(built_in_groups_lock_bss_get());
+  if (*group_ptr == NULL) {
+    *group_ptr = ret;
+    // Filling in |ret->curve_name| makes |EC_GROUP_free| and |EC_GROUP_dup|
+    // into no-ops. At this point, |ret| is considered static.
+    ret->curve_name = nid;
+  } else {
+    to_free = ret;
+    ret = *group_ptr;
+  }
+  CRYPTO_STATIC_MUTEX_unlock_write(built_in_groups_lock_bss_get());
+
+  EC_GROUP_free(to_free);
   return ret;
 }
 
 void EC_GROUP_free(EC_GROUP *group) {
   if (group == NULL ||
+      // Built-in curves are static.
+      group->curve_name != NID_undef ||
       !CRYPTO_refcount_dec_and_test_zero(&group->references)) {
     return;
   }
@@ -538,17 +554,16 @@ void EC_GROUP_free(EC_GROUP *group) {
 
   ec_point_free(group->generator, 0 /* don't free group */);
   BN_free(&group->order);
+  BN_MONT_CTX_free(group->order_mont);
 
   OPENSSL_free(group);
 }
 
-const BN_MONT_CTX *ec_group_get_order_mont(const EC_GROUP *group) {
-  return group->order_mont;
-}
-
 EC_GROUP *EC_GROUP_dup(const EC_GROUP *a) {
-  if (a == NULL) {
-    return NULL;
+  if (a == NULL ||
+      // Built-in curves are static.
+      a->curve_name != NID_undef) {
+    return (EC_GROUP *)a;
   }
 
   // Groups are logically immutable (but for |EC_GROUP_set_generator| which must
@@ -808,7 +823,53 @@ int EC_POINT_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *g_scalar,
   // nothing to multiply. But, nobody should be calling this function with
   // nothing to multiply in the first place.
   if ((g_scalar == NULL && p_scalar == NULL) ||
-      ((p == NULL) != (p_scalar == NULL)))  {
+      (p == NULL) != (p_scalar == NULL))  {
+    OPENSSL_PUT_ERROR(EC, ERR_R_PASSED_NULL_PARAMETER);
+    return 0;
+  }
+
+  // We cannot easily process arbitrary scalars in constant-time, and there is
+  // no need to do so. Require that scalars be the same size as the order.
+  //
+  // One could require they be fully reduced, but some consumers try to check
+  // that |order| * |pubkey| is the identity. This comes from following NIST SP
+  // 800-56A section 5.6.2.3.2. (Though all our curves have cofactor one, so
+  // this check isn't useful.)
+  int ret = 0;
+  EC_SCALAR g_scalar_storage, p_scalar_storage;
+  EC_SCALAR *g_scalar_arg = NULL, *p_scalar_arg = NULL;
+  unsigned order_bits = BN_num_bits(&group->order);
+  if (g_scalar != NULL) {
+    if (BN_is_negative(g_scalar) || BN_num_bits(g_scalar) > order_bits ||
+        !ec_bignum_to_scalar(group, &g_scalar_storage, g_scalar)) {
+      OPENSSL_PUT_ERROR(EC, EC_R_INVALID_SCALAR);
+      goto err;
+    }
+    g_scalar_arg = &g_scalar_storage;
+  }
+
+  if (p_scalar != NULL) {
+    if (BN_is_negative(p_scalar) || BN_num_bits(p_scalar) > order_bits ||
+        !ec_bignum_to_scalar(group, &p_scalar_storage, p_scalar)) {
+      OPENSSL_PUT_ERROR(EC, EC_R_INVALID_SCALAR);
+      goto err;
+    }
+    p_scalar_arg = &p_scalar_storage;
+  }
+
+  ret = ec_point_mul_scalar(group, r, g_scalar_arg, p, p_scalar_arg, ctx);
+
+err:
+  OPENSSL_cleanse(&g_scalar_storage, sizeof(g_scalar_storage));
+  OPENSSL_cleanse(&p_scalar_storage, sizeof(p_scalar_storage));
+  return ret;
+}
+
+int ec_point_mul_scalar(const EC_GROUP *group, EC_POINT *r,
+                        const EC_SCALAR *g_scalar, const EC_POINT *p,
+                        const EC_SCALAR *p_scalar, BN_CTX *ctx) {
+  if ((g_scalar == NULL && p_scalar == NULL) ||
+      (p == NULL) != (p_scalar == NULL))  {
     OPENSSL_PUT_ERROR(EC, ERR_R_PASSED_NULL_PARAMETER);
     return 0;
   }
@@ -862,4 +923,21 @@ size_t EC_get_builtin_curves(EC_builtin_curve *out_curves,
   }
 
   return OPENSSL_NUM_BUILT_IN_CURVES;
+}
+
+int ec_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
+                        const BIGNUM *in) {
+  if (BN_is_negative(in) || in->top > group->order.top) {
+    OPENSSL_PUT_ERROR(EC, EC_R_INVALID_SCALAR);
+    return 0;
+  }
+  OPENSSL_memset(out->words, 0, group->order.top * sizeof(BN_ULONG));
+  OPENSSL_memcpy(out->words, in->d, in->top * sizeof(BN_ULONG));
+  return 1;
+}
+
+int ec_random_nonzero_scalar(const EC_GROUP *group, EC_SCALAR *out,
+                             const uint8_t additional_data[32]) {
+  return bn_rand_range_words(out->words, 1, group->order.d, group->order.top,
+                             additional_data);
 }
