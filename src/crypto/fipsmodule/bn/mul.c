@@ -59,50 +59,48 @@
 #include <assert.h>
 #include <string.h>
 
+#include <openssl/err.h>
+#include <openssl/mem.h>
+
 #include "internal.h"
+#include "../../internal.h"
 
 
 #define BN_MUL_RECURSIVE_SIZE_NORMAL 16
 #define BN_SQR_RECURSIVE_SIZE_NORMAL BN_MUL_RECURSIVE_SIZE_NORMAL
 
 
-static void bn_mul_normal(BN_ULONG *r, BN_ULONG *a, int na, BN_ULONG *b,
-                          int nb) {
-  BN_ULONG *rr;
-
+static void bn_mul_normal(BN_ULONG *r, const BN_ULONG *a, size_t na,
+                          const BN_ULONG *b, size_t nb) {
   if (na < nb) {
-    int itmp;
-    BN_ULONG *ltmp;
-
-    itmp = na;
+    size_t itmp = na;
     na = nb;
     nb = itmp;
-    ltmp = a;
+    const BN_ULONG *ltmp = a;
     a = b;
     b = ltmp;
   }
-  rr = &(r[na]);
-  if (nb <= 0) {
-    (void)bn_mul_words(r, a, na, 0);
+  BN_ULONG *rr = &(r[na]);
+  if (nb == 0) {
+    OPENSSL_memset(r, 0, na * sizeof(BN_ULONG));
     return;
-  } else {
-    rr[0] = bn_mul_words(r, a, na, b[0]);
   }
+  rr[0] = bn_mul_words(r, a, na, b[0]);
 
   for (;;) {
-    if (--nb <= 0) {
+    if (--nb == 0) {
       return;
     }
     rr[1] = bn_mul_add_words(&(r[1]), a, na, b[1]);
-    if (--nb <= 0) {
+    if (--nb == 0) {
       return;
     }
     rr[2] = bn_mul_add_words(&(r[2]), a, na, b[2]);
-    if (--nb <= 0) {
+    if (--nb == 0) {
       return;
     }
     rr[3] = bn_mul_add_words(&(r[3]), a, na, b[3]);
-    if (--nb <= 0) {
+    if (--nb == 0) {
       return;
     }
     rr[4] = bn_mul_add_words(&(r[4]), a, na, b[4]);
@@ -294,8 +292,8 @@ BN_ULONG bn_sub_part_words(BN_ULONG *r, const BN_ULONG *a, const BN_ULONG *b,
 // a[0]*b[0]+a[1]*b[1]+(a[0]-a[1])*(b[1]-b[0])
 // a[1]*b[1]
 // dnX may not be positive, but n2/2+dnX has to be
-static void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
-                             int dna, int dnb, BN_ULONG *t) {
+static void bn_mul_recursive(BN_ULONG *r, const BN_ULONG *a, const BN_ULONG *b,
+                             int n2, int dna, int dnb, BN_ULONG *t) {
   int n = n2 / 2, c1, c2;
   int tna = n + dna, tnb = n + dnb;
   unsigned int neg, zero;
@@ -426,8 +424,9 @@ static void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 // n+tn is the word length
 // t needs to be n*4 is size, as does r
 // tnX may not be negative but less than n
-static void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
-                                  int tna, int tnb, BN_ULONG *t) {
+static void bn_mul_part_recursive(BN_ULONG *r, const BN_ULONG *a,
+                                  const BN_ULONG *b, int n, int tna, int tnb,
+                                  BN_ULONG *t) {
   int i, j, n2 = n * 2;
   int c1, c2, neg;
   BN_ULONG ln, lo, *p;
@@ -658,28 +657,47 @@ err:
   return ret;
 }
 
+int bn_mul_small(BN_ULONG *r, size_t num_r, const BN_ULONG *a, size_t num_a,
+                 const BN_ULONG *b, size_t num_b) {
+  if (num_r != num_a + num_b) {
+    OPENSSL_PUT_ERROR(BN, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
+    return 0;
+  }
+  // TODO(davidben): Should this call |bn_mul_comba4| too? |BN_mul| does not
+  // hit that code.
+  if (num_a == 8 && num_b == 8) {
+    bn_mul_comba8(r, a, b);
+  } else {
+    bn_mul_normal(r, a, num_a, b, num_b);
+  }
+  return 1;
+}
+
 // tmp must have 2*n words
-static void bn_sqr_normal(BN_ULONG *r, const BN_ULONG *a, int n,
+static void bn_sqr_normal(BN_ULONG *r, const BN_ULONG *a, size_t n,
                           BN_ULONG *tmp) {
-  int max = n * 2;
+  if (n == 0) {
+    return;
+  }
+
+  size_t max = n * 2;
   const BN_ULONG *ap = a;
   BN_ULONG *rp = r;
   rp[0] = rp[max - 1] = 0;
   rp++;
-  int j = n;
 
   // Compute the contribution of a[i] * a[j] for all i < j.
-  if (--j > 0) {
+  if (n > 1) {
     ap++;
-    rp[j] = bn_mul_words(rp, ap, j, ap[-1]);
+    rp[n - 1] = bn_mul_words(rp, ap, n - 1, ap[-1]);
     rp += 2;
   }
-
-  for (int i = n - 2; i > 0; i--) {
-    j--;
-    ap++;
-    rp[j] = bn_mul_add_words(rp, ap, j, ap[-1]);
-    rp += 2;
+  if (n > 2) {
+    for (size_t i = n - 2; i > 0; i--) {
+      ap++;
+      rp[i] = bn_mul_add_words(rp, ap, i, ap[-1]);
+      rp += 2;
+    }
   }
 
   // The final result fits in |max| words, so none of the following operations
@@ -864,4 +882,21 @@ int BN_sqr(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx) {
 err:
   BN_CTX_end(ctx);
   return ret;
+}
+
+int bn_sqr_small(BN_ULONG *r, size_t num_r, const BN_ULONG *a, size_t num_a) {
+  if (num_r != 2 * num_a || num_a > BN_SMALL_MAX_WORDS) {
+    OPENSSL_PUT_ERROR(BN, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
+    return 0;
+  }
+  if (num_a == 4) {
+    bn_sqr_comba4(r, a);
+  } else if (num_a == 8) {
+    bn_sqr_comba8(r, a);
+  } else {
+    BN_ULONG tmp[2 * BN_SMALL_MAX_WORDS];
+    bn_sqr_normal(r, a, num_a, tmp);
+    OPENSSL_cleanse(tmp, 2 * num_a * sizeof(BN_ULONG));
+  }
+  return 1;
 }
