@@ -404,9 +404,10 @@ bool ssl_is_draft22(uint16_t version);
 // TLS 1.3 resumption experiment.
 bool ssl_is_resumption_experiment(uint16_t version);
 
-// ssl_is_resumption_variant returns whether the version corresponds to a
+// ssl_is_resumption_variant returns whether the variant corresponds to a
 // TLS 1.3 resumption experiment.
-bool ssl_is_resumption_variant(enum tls13_variant_t variant);
+bool ssl_is_resumption_variant(uint16_t max_version,
+                               enum tls13_variant_t variant);
 
 // ssl_is_resumption_client_ccs_experiment returns whether the version
 // corresponds to a TLS 1.3 resumption experiment that sends a client CCS.
@@ -1244,10 +1245,10 @@ int tls13_derive_resumption_secret(SSL_HANDSHAKE *hs);
 
 // tls13_export_keying_material provides an exporter interface to use the
 // |exporter_secret|.
-int tls13_export_keying_material(SSL *ssl, uint8_t *out, size_t out_len,
-                                 const char *label, size_t label_len,
-                                 const uint8_t *context, size_t context_len,
-                                 int use_context);
+int tls13_export_keying_material(SSL *ssl, Span<uint8_t> out,
+                                 Span<const uint8_t> secret,
+                                 Span<const char> label,
+                                 Span<const uint8_t> context);
 
 // tls13_finished_mac calculates the MAC of the handshake transcript to verify
 // the integrity of the Finished message, and stores the result in |out| and
