@@ -122,7 +122,7 @@ static void fe_frombytes(fe *h, const uint8_t *s) {
 //
 //   Have q+2^(-255)x = 2^(-255)(h + 19 2^(-25) h9 + 2^(-1))
 //   so floor(2^(-255)(h + 19 2^(-25) h9 + 2^(-1))) = q.
-static void fe_tobytes_impl(uint8_t *s, const uint32_t h[10]) {
+static void fe_tobytes_impl(uint8_t s[32], const uint32_t h[10]) {
   assert_fe_loose(h);
   int32_t h0 = h[0];
   int32_t h1 = h[1];
@@ -203,11 +203,11 @@ static void fe_tobytes_impl(uint8_t *s, const uint32_t h[10]) {
   s[31] = h9 >> 18;
 }
 
-static void fe_tobytes(uint8_t *s, const fe *h) {
+static void fe_tobytes(uint8_t s[32], const fe *h) {
   fe_tobytes_impl(s, h->v);
 }
 
-static void fe_loose_tobytes(uint8_t *s, const fe_loose *h) {
+static void fe_loose_tobytes(uint8_t s[32], const fe_loose *h) {
   fe_tobytes_impl(s, h->v);
 }
 
@@ -281,13 +281,6 @@ static void fe_add_impl(uint32_t out[10], const uint32_t in1[10], const uint32_t
 
 // h = f + g
 // Can overlap h with f or g.
-//
-// Preconditions:
-//    |f| bounded by 1.1*2^25,1.1*2^24,1.1*2^25,1.1*2^24,etc.
-//    |g| bounded by 1.1*2^25,1.1*2^24,1.1*2^25,1.1*2^24,etc.
-//
-// Postconditions:
-//    |h| bounded by 1.1*2^26,1.1*2^25,1.1*2^26,1.1*2^25,etc.
 static void fe_add(fe_loose *h, const fe *f, const fe *g) {
   assert_fe(f->v);
   assert_fe(g->v);
@@ -331,13 +324,6 @@ static void fe_sub_impl(uint32_t out[10], const uint32_t in1[10], const uint32_t
 
 // h = f - g
 // Can overlap h with f or g.
-//
-// Preconditions:
-//    |f| bounded by 1.1*2^25,1.1*2^24,1.1*2^25,1.1*2^24,etc.
-//    |g| bounded by 1.1*2^25,1.1*2^24,1.1*2^25,1.1*2^24,etc.
-//
-// Postconditions:
-//    |h| bounded by 1.1*2^26,1.1*2^25,1.1*2^26,1.1*2^25,etc.
 static void fe_sub(fe_loose *h, const fe *f, const fe *g) {
   assert_fe(f->v);
   assert_fe(g->v);
@@ -766,12 +752,6 @@ static void fe_neg_impl(uint32_t out[10], const uint32_t in2[10]) {
 }
 
 // h = -f
-//
-// Preconditions:
-//    |f| bounded by 1.1*2^25,1.1*2^24,1.1*2^25,1.1*2^24,etc.
-//
-// Postconditions:
-//    |h| bounded by 1.1*2^25,1.1*2^24,1.1*2^25,1.1*2^24,etc.
 static void fe_neg(fe_loose *h, const fe *f) {
   assert_fe(f->v);
   fe_neg_impl(h->v, f->v);
@@ -794,9 +774,6 @@ static void fe_cmov(fe_loose *f, const fe_loose *g, unsigned b) {
 
 // return 0 if f == 0
 // return 1 if f != 0
-//
-// Preconditions:
-//    |f| bounded by 1.1*2^26,1.1*2^25,1.1*2^26,1.1*2^25,etc.
 static int fe_isnonzero(const fe_loose *f) {
   uint8_t s[32];
   fe_loose_tobytes(s, f);
@@ -807,9 +784,6 @@ static int fe_isnonzero(const fe_loose *f) {
 
 // return 1 if f is in {1,3,5,...,q-2}
 // return 0 if f is in {0,2,4,...,q-1}
-//
-// Preconditions:
-//    |f| bounded by 1.1*2^26,1.1*2^25,1.1*2^26,1.1*2^25,etc.
 static int fe_isnegative(const fe *f) {
   uint8_t s[32];
   fe_tobytes(s, f);
@@ -995,7 +969,7 @@ static void fe_pow22523(fe *out, const fe *z) {
   fe_mul_ttt(out, &t0, z);
 }
 
-void x25519_ge_tobytes(uint8_t *s, const ge_p2 *h) {
+void x25519_ge_tobytes(uint8_t s[32], const ge_p2 *h) {
   fe recip;
   fe x;
   fe y;
@@ -1007,7 +981,7 @@ void x25519_ge_tobytes(uint8_t *s, const ge_p2 *h) {
   s[31] ^= fe_isnegative(&x) << 7;
 }
 
-static void ge_p3_tobytes(uint8_t *s, const ge_p3 *h) {
+static void ge_p3_tobytes(uint8_t s[32], const ge_p3 *h) {
   fe recip;
   fe x;
   fe y;
@@ -3848,7 +3822,7 @@ static void ge_double_scalarmult_vartime(ge_p2 *r, const uint8_t *a,
 //   s[0]+256*s[1]+...+256^31*s[31] = s mod l
 //   where l = 2^252 + 27742317777372353535851937790883648493.
 //   Overwrites s in place.
-void x25519_sc_reduce(uint8_t *s) {
+void x25519_sc_reduce(uint8_t s[64]) {
   int64_t s0 = 2097151 & load_3(s);
   int64_t s1 = 2097151 & (load_4(s + 2) >> 5);
   int64_t s2 = 2097151 & (load_3(s + 5) >> 2);
@@ -4676,8 +4650,8 @@ void ED25519_keypair(uint8_t out_public_key[32], uint8_t out_private_key[64]) {
   ED25519_keypair_from_seed(out_public_key, out_private_key, seed);
 }
 
-int ED25519_sign(uint8_t *out_sig, const uint8_t *message, size_t message_len,
-                 const uint8_t private_key[64]) {
+int ED25519_sign(uint8_t out_sig[64], const uint8_t *message,
+                 size_t message_len, const uint8_t private_key[64]) {
   uint8_t az[SHA512_DIGEST_LENGTH];
   SHA512(private_key, 32, az);
 
@@ -4928,6 +4902,24 @@ static void x25519_scalar_mult_generic(uint8_t out[32],
   e[0] &= 248;
   e[31] &= 127;
   e[31] |= 64;
+
+  // The following implementation was transcribed to Coq and proven to
+  // correspond to unary scalar multiplication in affine coordinates given that
+  // x1 != 0 is the x coordinate of some point on the curve. It was also checked
+  // in Coq that doing a ladderstep with x1 = x3 = 0 gives z2' = z3' = 0, and z2
+  // = z3 = 0 gives z2' = z3' = 0. The statement was quantified over the
+  // underlying field, so it applies to Curve25519 itself and the quadratic
+  // twist of Curve25519. It was not proven in Coq that prime-field arithmetic
+  // correctly simulates extension-field arithmetic on prime-field values.
+  // The decoding of the byte array representation of e was not considered.
+  // Specification of Montgomery curves in affine coordinates:
+  // <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Spec/MontgomeryCurve.v#L27>
+  // Proof that these form a group that is isomorphic to a Weierstrass curve:
+  // <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/AffineProofs.v#L35>
+  // Coq transcription and correctness proof of the loop (where scalarbits=255):
+  // <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/XZ.v#L118>
+  // <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/XZProofs.v#L278>
+  // preconditions: 0 <= e < 2^255 (not necessarily e < order), fe_invert(0) = 0
   fe_frombytes(&x1, point);
   fe_1(&x2);
   fe_0(&z2);
@@ -4937,11 +4929,22 @@ static void x25519_scalar_mult_generic(uint8_t out[32],
   unsigned swap = 0;
   int pos;
   for (pos = 254; pos >= 0; --pos) {
+    // loop invariant as of right before the test, for the case where x1 != 0:
+    //   pos >= -1; if z2 = 0 then x2 is nonzero; if z3 = 0 then x3 is nonzero
+    //   let r := e >> (pos+1) in the following equalities of projective points:
+    //   to_xz (r*P)     === if swap then (x3, z3) else (x2, z2)
+    //   to_xz ((r+1)*P) === if swap then (x2, z2) else (x3, z3)
+    //   x1 is the nonzero x coordinate of the nonzero point (r*P-(r+1)*P)
     unsigned b = 1 & (e[pos / 8] >> (pos & 7));
     swap ^= b;
     fe_cswap(&x2, &x3, swap);
     fe_cswap(&z2, &z3, swap);
     swap = b;
+    // Coq transcription of ladderstep formula (called from transcribed loop):
+    // <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/XZ.v#L89>
+    // <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/XZProofs.v#L131>
+    // x1 != 0 <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/XZProofs.v#L217>
+    // x1  = 0 <https://github.com/mit-plv/fiat-crypto/blob/2456d821825521f7e03e65882cc3521795b0320f/src/Curves/Montgomery/XZProofs.v#L147>
     fe_sub(&tmp0l, &x3, &z3);
     fe_sub(&tmp1l, &x2, &z2);
     fe_add(&x2l, &x2, &z2);
@@ -4961,6 +4964,7 @@ static void x25519_scalar_mult_generic(uint8_t out[32],
     fe_mul_ttt(&z3, &x1, &z2);
     fe_mul_tll(&z2, &tmp1l, &tmp0l);
   }
+  // here pos=-1, so r=e, so to_xz (e*P) === if swap then (x3, z3) else (x2, z2)
   fe_cswap(&x2, &x3, swap);
   fe_cswap(&z2, &z3, swap);
 
