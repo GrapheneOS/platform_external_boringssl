@@ -33,30 +33,18 @@ const (
 
 // A draft version of TLS 1.3 that is sent over the wire for the current draft.
 const (
-	tls13DraftVersion       = 0x7f12
-	tls13Draft21Version     = 0x7f15
-	tls13ExperimentVersion  = 0x7e01
 	tls13Experiment2Version = 0x7e02
-	tls13Experiment3Version = 0x7e03
 	tls13Draft22Version     = 0x7f16
 )
 
 const (
-	TLS13Default     = 0
-	TLS13Experiment  = 1
-	TLS13Experiment2 = 2
-	TLS13Experiment3 = 3
-	TLS13Draft21     = 4
-	TLS13Draft22     = 5
+	TLS13Draft22     = 0
+	TLS13Experiment2 = 1
 )
 
 var allTLSWireVersions = []uint16{
-	tls13DraftVersion,
 	tls13Draft22Version,
-	tls13Draft21Version,
-	tls13Experiment3Version,
 	tls13Experiment2Version,
-	tls13ExperimentVersion,
 	VersionTLS12,
 	VersionTLS11,
 	VersionTLS10,
@@ -1525,6 +1513,14 @@ type ProtocolBugs struct {
 	// PadClientHello, if non-zero, pads the ClientHello to a multiple of
 	// that many bytes.
 	PadClientHello int
+
+	// SendDraftTLS13DowngradeRandom, if true, causes the server to send the
+	// draft TLS 1.3 anti-downgrade signal.
+	SendDraftTLS13DowngradeRandom bool
+
+	// ExpectDraftTLS13DowngradeRandom, if true, causes the client to
+	// require the server send the draft TLS 1.3 anti-downgrade signal.
+	ExpectDraftTLS13DowngradeRandom bool
 }
 
 func (c *Config) serverInit() {
@@ -1637,7 +1633,7 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 		switch vers {
 		case VersionSSL30, VersionTLS10, VersionTLS11, VersionTLS12:
 			return vers, true
-		case tls13DraftVersion, tls13Draft22Version, tls13Draft21Version, tls13ExperimentVersion, tls13Experiment2Version, tls13Experiment3Version:
+		case tls13Draft22Version, tls13Experiment2Version:
 			return VersionTLS13, true
 		}
 	}
@@ -1645,40 +1641,16 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 	return 0, false
 }
 
-func isDraft21(vers uint16) bool {
-	return vers == tls13Draft21Version || vers == tls13Draft22Version
-}
-
 func isDraft22(vers uint16) bool {
 	return vers == tls13Draft22Version
-}
-
-func isResumptionExperiment(vers uint16) bool {
-	return vers == tls13ExperimentVersion || vers == tls13Experiment2Version || vers == tls13Experiment3Version || vers == tls13Draft22Version
-}
-
-func isResumptionClientCCSExperiment(vers uint16) bool {
-	return vers == tls13ExperimentVersion || vers == tls13Experiment2Version || vers == tls13Draft22Version
-}
-
-func isResumptionRecordVersionExperiment(vers uint16) bool {
-	return vers == tls13Experiment2Version || vers == tls13Experiment3Version || vers == tls13Draft22Version
-}
-
-func isResumptionRecordVersionVariant(variant int) bool {
-	return variant == TLS13Experiment2 || variant == TLS13Experiment3 || variant == TLS13Draft22
 }
 
 // isSupportedVersion checks if the specified wire version is acceptable. If so,
 // it returns true and the corresponding protocol version. Otherwise, it returns
 // false.
 func (c *Config) isSupportedVersion(wireVers uint16, isDTLS bool) (uint16, bool) {
-	if (c.TLS13Variant != TLS13Experiment && wireVers == tls13ExperimentVersion) ||
-		(c.TLS13Variant != TLS13Experiment2 && wireVers == tls13Experiment2Version) ||
-		(c.TLS13Variant != TLS13Experiment3 && wireVers == tls13Experiment3Version) ||
-		(c.TLS13Variant != TLS13Draft22 && wireVers == tls13Draft22Version) ||
-		(c.TLS13Variant != TLS13Draft21 && wireVers == tls13Draft21Version) ||
-		(c.TLS13Variant != TLS13Default && wireVers == tls13DraftVersion) {
+	if (c.TLS13Variant != TLS13Experiment2 && wireVers == tls13Experiment2Version) ||
+		(c.TLS13Variant != TLS13Draft22 && wireVers == tls13Draft22Version) {
 		return 0, false
 	}
 
@@ -1975,6 +1947,8 @@ var (
 	// See draft-ietf-tls-tls13-16, section 6.3.1.2.
 	downgradeTLS13 = []byte{0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x01}
 	downgradeTLS12 = []byte{0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x00}
+
+	downgradeTLS13Draft = []uint8{0x95, 0xb9, 0x9f, 0x87, 0x22, 0xfe, 0x9b, 0x64}
 )
 
 func containsGREASE(values []uint16) bool {

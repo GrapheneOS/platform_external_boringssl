@@ -1187,7 +1187,7 @@ int SSL_in_early_data(const SSL *ssl) {
 }
 
 int SSL_early_data_accepted(const SSL *ssl) {
-  return ssl->early_data_accepted;
+  return ssl->s3->early_data_accepted;
 }
 
 void SSL_reset_early_data_reject(SSL *ssl) {
@@ -2570,6 +2570,8 @@ int32_t SSL_get_ticket_age_skew(const SSL *ssl) {
 void SSL_CTX_set_false_start_allowed_without_alpn(SSL_CTX *ctx, int allowed) {
   ctx->false_start_allowed_without_alpn = !!allowed;
 }
+
+int SSL_is_draft_downgrade(const SSL *ssl) { return ssl->s3->draft_downgrade; }
 
 int SSL_clear(SSL *ssl) {
   // In OpenSSL, reusing a client |SSL| with |SSL_clear| causes the previously
