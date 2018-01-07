@@ -591,12 +591,8 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_VERSION 0xfeff
 #define DTLS1_2_VERSION 0xfefd
 
-#define TLS1_3_DRAFT_VERSION 0x7f12
-#define TLS1_3_DRAFT21_VERSION 0x7f15
 #define TLS1_3_DRAFT22_VERSION 0x7f16
-#define TLS1_3_EXPERIMENT_VERSION 0x7e01
 #define TLS1_3_EXPERIMENT2_VERSION 0x7e02
-#define TLS1_3_EXPERIMENT3_VERSION 0x7e03
 
 // SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
 // |version|. If |version| is zero, the default minimum version is used. It
@@ -2384,6 +2380,11 @@ OPENSSL_EXPORT int SSL_CTX_load_verify_locations(SSL_CTX *ctx,
 // either |X509_V_OK| or a |X509_V_ERR_*| value.
 OPENSSL_EXPORT long SSL_get_verify_result(const SSL *ssl);
 
+// SSL_alert_from_verify_result returns the SSL alert code, such as
+// |SSL_AD_CERTIFICATE_EXPIRED|, that corresponds to an |X509_V_ERR_*| value.
+// The return value is always an alert, even when |result| is |X509_V_OK|.
+OPENSSL_EXPORT int SSL_alert_from_verify_result(long result);
+
 // SSL_get_ex_data_X509_STORE_CTX_idx returns the ex_data index used to look up
 // the |SSL| associated with an |X509_STORE_CTX| in the verify callback.
 OPENSSL_EXPORT int SSL_get_ex_data_X509_STORE_CTX_idx(void);
@@ -3226,11 +3227,7 @@ OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
 enum tls13_variant_t {
   tls13_default = 0,
-  tls13_experiment = 1,
-  tls13_experiment2 = 2,
-  tls13_experiment3 = 3,
-  tls13_draft21 = 4,
-  tls13_draft22 = 5,
+  tls13_experiment2 = 1,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
@@ -3489,6 +3486,10 @@ OPENSSL_EXPORT int32_t SSL_get_ticket_age_skew(const SSL *ssl);
 // without negotiating ALPN.
 OPENSSL_EXPORT void SSL_CTX_set_false_start_allowed_without_alpn(SSL_CTX *ctx,
                                                                  int allowed);
+
+// SSL_is_draft_downgrade returns one if the TLS 1.3 anti-downgrade mechanism
+// would have aborted |ssl|'s handshake and zero otherwise.
+OPENSSL_EXPORT int SSL_is_draft_downgrade(const SSL *ssl);
 
 
 // Deprecated functions.

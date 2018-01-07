@@ -1810,7 +1810,7 @@ static bool ext_pre_shared_key_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   // selected cipher in HelloRetryRequest does not match. This avoids performing
   // the transcript hash transformation for multiple hashes.
   if (hs->received_hello_retry_request &&
-      ssl_is_draft21(ssl->version) &&
+      ssl_is_draft22(ssl->version) &&
       ssl->session->cipher->algorithm_prf != hs->new_cipher->algorithm_prf) {
     return true;
   }
@@ -2033,7 +2033,7 @@ static bool ext_early_data_parse_serverhello(SSL_HANDSHAKE *hs,
     return false;
   }
 
-  ssl->early_data_accepted = true;
+  ssl->s3->early_data_accepted = true;
   return true;
 }
 
@@ -2055,7 +2055,7 @@ static bool ext_early_data_parse_clienthello(SSL_HANDSHAKE *hs,
 }
 
 static bool ext_early_data_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
-  if (!hs->ssl->early_data_accepted) {
+  if (!hs->ssl->s3->early_data_accepted) {
     return true;
   }
 
@@ -3264,6 +3264,7 @@ int tls1_verify_channel_id(SSL_HANDSHAKE *hs, const SSLMessage &msg) {
   int sig_ok = ECDSA_do_verify(digest, digest_len, sig.get(), key.get());
 #if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
   sig_ok = 1;
+  ERR_clear_error();
 #endif
   if (!sig_ok) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_CHANNEL_ID_SIGNATURE_INVALID);
