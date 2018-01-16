@@ -1015,22 +1015,27 @@ static int ec_GFp_nistp224_point_get_affine_coordinates(const EC_GROUP *group,
   p224_felem_inv(z2, z1);
   p224_felem_square(tmp, z2);
   p224_felem_reduce(z1, tmp);
-  p224_felem_mul(tmp, x_in, z1);
-  p224_felem_reduce(x_in, tmp);
-  p224_felem_contract(x_out, x_in);
-  if (x != NULL && !p224_felem_to_BN(x, x_out)) {
-    OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-    return 0;
+
+  if (x != NULL) {
+    p224_felem_mul(tmp, x_in, z1);
+    p224_felem_reduce(x_in, tmp);
+    p224_felem_contract(x_out, x_in);
+    if (!p224_felem_to_BN(x, x_out)) {
+      OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
+      return 0;
+    }
   }
 
-  p224_felem_mul(tmp, z1, z2);
-  p224_felem_reduce(z1, tmp);
-  p224_felem_mul(tmp, y_in, z1);
-  p224_felem_reduce(y_in, tmp);
-  p224_felem_contract(y_out, y_in);
-  if (y != NULL && !p224_felem_to_BN(y, y_out)) {
-    OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-    return 0;
+  if (y != NULL) {
+    p224_felem_mul(tmp, z1, z2);
+    p224_felem_reduce(z1, tmp);
+    p224_felem_mul(tmp, y_in, z1);
+    p224_felem_reduce(y_in, tmp);
+    p224_felem_contract(y_out, y_in);
+    if (!p224_felem_to_BN(y, y_out)) {
+      OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
+      return 0;
+    }
   }
 
   return 1;
@@ -1040,27 +1045,8 @@ static int ec_GFp_nistp224_points_mul(const EC_GROUP *group, EC_POINT *r,
                                       const EC_SCALAR *g_scalar,
                                       const EC_POINT *p,
                                       const EC_SCALAR *p_scalar, BN_CTX *ctx) {
-  int ret = 0;
-  BN_CTX *new_ctx = NULL;
-  BIGNUM *x, *y, *z, *tmp_scalar;
   p224_felem p_pre_comp[17][3];
   p224_felem x_in, y_in, z_in, x_out, y_out, z_out;
-
-  if (ctx == NULL) {
-    ctx = BN_CTX_new();
-    new_ctx = ctx;
-    if (ctx == NULL) {
-      return 0;
-    }
-  }
-
-  BN_CTX_start(ctx);
-  if ((x = BN_CTX_get(ctx)) == NULL ||
-      (y = BN_CTX_get(ctx)) == NULL ||
-      (z = BN_CTX_get(ctx)) == NULL ||
-      (tmp_scalar = BN_CTX_get(ctx)) == NULL) {
-    goto err;
-  }
 
   if (p != NULL && p_scalar != NULL) {
     // We treat NULL scalars as 0, and NULL points as points at infinity, i.e.,
@@ -1070,7 +1056,7 @@ static int ec_GFp_nistp224_points_mul(const EC_GROUP *group, EC_POINT *r,
     if (!p224_BN_to_felem(x_out, &p->X) ||
         !p224_BN_to_felem(y_out, &p->Y) ||
         !p224_BN_to_felem(z_out, &p->Z)) {
-      goto err;
+      return 0;
     }
 
     p224_felem_assign(p_pre_comp[1][0], x_out);
@@ -1100,18 +1086,13 @@ static int ec_GFp_nistp224_points_mul(const EC_GROUP *group, EC_POINT *r,
   p224_felem_contract(x_in, x_out);
   p224_felem_contract(y_in, y_out);
   p224_felem_contract(z_in, z_out);
-  if (!p224_felem_to_BN(x, x_in) ||
-      !p224_felem_to_BN(y, y_in) ||
-      !p224_felem_to_BN(z, z_in)) {
+  if (!p224_felem_to_BN(&r->X, x_in) ||
+      !p224_felem_to_BN(&r->Y, y_in) ||
+      !p224_felem_to_BN(&r->Z, z_in)) {
     OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-    goto err;
+    return 0;
   }
-  ret = ec_point_set_Jprojective_coordinates_GFp(group, r, x, y, z, ctx);
-
-err:
-  BN_CTX_end(ctx);
-  BN_CTX_free(new_ctx);
-  return ret;
+  return 1;
 }
 
 DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp224_method) {

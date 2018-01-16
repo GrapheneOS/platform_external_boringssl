@@ -1069,10 +1069,10 @@ static void point_add(fe x3, fe y3, fe z3, const fe x1,
 
   fe u1, s1, two_z1z2;
   if (!mixed) {
-    // ftmp2 = z2z2 = z2**2
+    // z2z2 = z2**2
     fe z2z2; fe_sqr(z2z2, z2);
 
-    // u1 = ftmp3 = x1*z2z2
+    // u1 = x1*z2z2
     fe_mul(u1, x1, z2z2);
 
     // two_z1z2 = (z1 + z2)**2 - (z1z1 + z2z2) = 2z1z2
@@ -1081,24 +1081,24 @@ static void point_add(fe x3, fe y3, fe z3, const fe x1,
     fe_sub(two_z1z2, two_z1z2, z1z1);
     fe_sub(two_z1z2, two_z1z2, z2z2);
 
-    // s1 = ftmp2 = y1 * z2**3
+    // s1 = y1 * z2**3
     fe_mul(s1, z2, z2z2);
     fe_mul(s1, s1, y1);
   } else {
     // We'll assume z2 = 1 (special case z2 = 0 is handled later).
 
-    // u1 = ftmp3 = x1*z2z2
+    // u1 = x1*z2z2
     fe_copy(u1, x1);
     // two_z1z2 = 2z1z2
     fe_add(two_z1z2, z1, z1);
-    // s1 = ftmp2 = y1 * z2**3
+    // s1 = y1 * z2**3
     fe_copy(s1, y1);
   }
 
   // u2 = x2*z1z1
   fe u2; fe_mul(u2, x2, z1z1);
 
-  // h = ftmp4 = u2 - u1
+  // h = u2 - u1
   fe h; fe_sub(h, u2, u1);
 
   limb_t xneq = fe_nz(h);
@@ -1109,7 +1109,7 @@ static void point_add(fe x3, fe y3, fe z3, const fe x1,
   // z1z1z1 = z1 * z1z1
   fe z1z1z1; fe_mul(z1z1z1, z1, z1z1);
 
-  // s2 = tmp = y2 * z1**3
+  // s2 = y2 * z1**3
   fe s2; fe_mul(s2, y2, z1z1z1);
 
   // r = (s2 - s1)*2
@@ -1129,10 +1129,10 @@ static void point_add(fe x3, fe y3, fe z3, const fe x1,
   fe_add(i, h, h);
   fe_sqr(i, i);
 
-  // J = ftmp2 = h * I
+  // J = h * I
   fe j; fe_mul(j, h, i);
 
-  // V = ftmp4 = U1 * I
+  // V = U1 * I
   fe v; fe_mul(v, u1, i);
 
   // x_out = r**2 - J - 2V
@@ -1645,9 +1645,13 @@ static int ec_GFp_nistp256_point_get_affine_coordinates(const EC_GROUP *group,
   fe_inv(z2, z1);
   fe_sqr(z1, z2);
 
+  // Instead of using |fe_from_montgomery| to convert the |x| coordinate and
+  // then calling |fe_from_montgomery| again to convert the |y| coordinate
+  // below, convert the common factor |z1| once now, saving one reduction.
+  fe_from_montgomery(z1);
+
   if (x_out != NULL) {
     fe_mul(x, x, z1);
-    fe_from_montgomery(x);
     if (!fe_to_BN(x_out, x)) {
       OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
       return 0;
@@ -1657,7 +1661,6 @@ static int ec_GFp_nistp256_point_get_affine_coordinates(const EC_GROUP *group,
   if (y_out != NULL) {
     fe_mul(z1, z1, z2);
     fe_mul(y, y, z1);
-    fe_from_montgomery(y);
     if (!fe_to_BN(y_out, y)) {
       OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
       return 0;
