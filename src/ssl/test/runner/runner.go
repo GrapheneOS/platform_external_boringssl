@@ -909,6 +909,17 @@ func lldbOf(path string, args ...string) *exec.Cmd {
 	return exec.Command("xterm", xtermArgs...)
 }
 
+func removeFirstLineIfSuffix(s, suffix string) string {
+	idx := strings.IndexByte(s, '\n')
+	if idx < 0 {
+		return s
+	}
+	if strings.HasSuffix(s[:idx], suffix) {
+		return s[idx+1:]
+	}
+	return s
+}
+
 var (
 	errMoreMallocs   = errors.New("child process did not exhaust all allocation calls")
 	errUnimplemented = errors.New("child process does not implement needed flags")
@@ -1205,6 +1216,18 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 	// Account for Windows line endings.
 	stdout := strings.Replace(string(stdoutBuf.Bytes()), "\r\n", "\n", -1)
 	stderr := strings.Replace(string(stderrBuf.Bytes()), "\r\n", "\n", -1)
+
+	// Work around an NDK / Android bug. The NDK r16 sometimes generates
+	// binaries with the DF_1_PIE, which the runtime linker on Android N
+	// complains about. The next NDK revision should work around this but,
+	// in the meantime, strip its error out.
+	//
+	// https://github.com/android-ndk/ndk/issues/602
+	// https://android-review.googlesource.com/c/platform/bionic/+/259790
+	// https://android-review.googlesource.com/c/toolchain/binutils/+/571550
+	//
+	// Remove this after switching to the r17 NDK.
+	stderr = removeFirstLineIfSuffix(stderr, ": unsupported flags DT_FLAGS_1=0x8000001")
 
 	// Separate the errors from the shim and those from tools like
 	// AddressSanitizer.
@@ -5306,7 +5329,7 @@ func addVersionNegotiationTests() {
 				expectedClientVersion := expectedVersion
 				if expectedVersion == VersionTLS13 && runnerVers.tls13Variant != shimVers.tls13Variant {
 					expectedClientVersion = VersionTLS12
-					if shimVers.tls13Variant == TLS13Draft22 {
+					if shimVers.tls13Variant == TLS13Draft23 {
 						expectedServerVersion = VersionTLS12
 					}
 				}
@@ -5516,7 +5539,7 @@ func addVersionNegotiationTests() {
 		name:     "IgnoreClientVersionOrder",
 		config: Config{
 			Bugs: ProtocolBugs{
-				SendSupportedVersions: []uint16{VersionTLS12, tls13Draft22Version},
+				SendSupportedVersions: []uint16{VersionTLS12, tls13Draft23Version},
 			},
 		},
 		expectedVersion: VersionTLS13,
@@ -6750,6 +6773,32 @@ func addExtensionTests() {
 		shouldFail:    true,
 		expectedError: ":INVALID_SCT_LIST:",
 	})
+
+	for _, version := range allVersions(tls) {
+		if version.version < VersionTLS12 {
+			continue
+		}
+
+		for _, paddingLen := range []int{1, 9700} {
+			flags := []string{
+				"-max-version", version.shimFlag(tls),
+				"-dummy-pq-padding-len", strconv.Itoa(paddingLen),
+			}
+
+			testCases = append(testCases, testCase{
+				name:         fmt.Sprintf("DummyPQPadding-%d-%s", paddingLen, version.name),
+				testType:     clientTest,
+				tls13Variant: version.tls13Variant,
+				config: Config{
+					MaxVersion: version.version,
+					Bugs: ProtocolBugs{
+						ExpectDummyPQPaddingLength: paddingLen,
+					},
+				},
+				flags: flags,
+			})
+		}
+	}
 }
 
 func addResumptionVersionTests() {
