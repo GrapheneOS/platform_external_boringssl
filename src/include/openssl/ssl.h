@@ -592,6 +592,7 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_2_VERSION 0xfefd
 
 #define TLS1_3_DRAFT22_VERSION 0x7f16
+#define TLS1_3_DRAFT23_VERSION 0x7f17
 #define TLS1_3_EXPERIMENT2_VERSION 0x7e02
 
 // SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
@@ -2908,6 +2909,21 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity_hint(const SSL *ssl);
 OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
 
 
+// Dummy post-quantum padding.
+//
+// Dummy post-quantum padding invovles the client (and later server) sending
+// useless, random-looking bytes in an extension in their ClientHello or
+// ServerHello. These extensions are sized to simulate a post-quantum
+// key-exchange and so enable measurement of the latency impact of the
+// additional bandwidth.
+
+// SSL_set_dummy_pq_padding_size enables the sending of a dummy PQ padding
+// extension and configures its size. This is only effective for a client: a
+// server will echo an extension with one of equal length when we get to that
+// phase of the experiment. It returns one for success and zero otherwise.
+OPENSSL_EXPORT int SSL_set_dummy_pq_padding_size(SSL *ssl, size_t num_bytes);
+
+
 // Early data.
 //
 // WARNING: 0-RTT support in BoringSSL is currently experimental and not fully
@@ -3228,6 +3244,7 @@ OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 enum tls13_variant_t {
   tls13_default = 0,
   tls13_experiment2 = 1,
+  tls13_draft22 = 2,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the

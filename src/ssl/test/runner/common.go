@@ -35,14 +35,17 @@ const (
 const (
 	tls13Experiment2Version = 0x7e02
 	tls13Draft22Version     = 0x7f16
+	tls13Draft23Version     = 0x7f17
 )
 
 const (
-	TLS13Draft22     = 0
+	TLS13Draft23     = 0
 	TLS13Experiment2 = 1
+	TLS13Draft22     = 2
 )
 
 var allTLSWireVersions = []uint16{
+	tls13Draft23Version,
 	tls13Draft22Version,
 	tls13Experiment2Version,
 	VersionTLS12,
@@ -120,7 +123,7 @@ const (
 	extensionPadding                    uint16 = 21
 	extensionExtendedMasterSecret       uint16 = 23
 	extensionSessionTicket              uint16 = 35
-	extensionKeyShare                   uint16 = 40    // draft-ietf-tls-tls13-16
+	extensionOldKeyShare                uint16 = 40    // draft-ietf-tls-tls13-16
 	extensionPreSharedKey               uint16 = 41    // draft-ietf-tls-tls13-16
 	extensionEarlyData                  uint16 = 42    // draft-ietf-tls-tls13-16
 	extensionSupportedVersions          uint16 = 43    // draft-ietf-tls-tls13-16
@@ -128,10 +131,12 @@ const (
 	extensionPSKKeyExchangeModes        uint16 = 45    // draft-ietf-tls-tls13-18
 	extensionTicketEarlyDataInfo        uint16 = 46    // draft-ietf-tls-tls13-18
 	extensionCertificateAuthorities     uint16 = 47    // draft-ietf-tls-tls13-21
+	extensionNewKeyShare                uint16 = 51    // draft-ietf-tls-tls13-23
 	extensionCustom                     uint16 = 1234  // not IANA assigned
 	extensionNextProtoNeg               uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo          uint16 = 0xff01
 	extensionChannelID                  uint16 = 30032 // not IANA assigned
+	extensionDummyPQPadding             uint16 = 54537 // not IANA assigned
 )
 
 // TLS signaling cipher suite values
@@ -1521,6 +1526,11 @@ type ProtocolBugs struct {
 	// ExpectDraftTLS13DowngradeRandom, if true, causes the client to
 	// require the server send the draft TLS 1.3 anti-downgrade signal.
 	ExpectDraftTLS13DowngradeRandom bool
+
+	// ExpectDummyPQPaddingLength, if not zero, causes the server to
+	// require that the client sent a dummy PQ padding extension of this
+	// length.
+	ExpectDummyPQPaddingLength int
 }
 
 func (c *Config) serverInit() {
@@ -1633,7 +1643,7 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 		switch vers {
 		case VersionSSL30, VersionTLS10, VersionTLS11, VersionTLS12:
 			return vers, true
-		case tls13Draft22Version, tls13Experiment2Version:
+		case tls13Draft23Version, tls13Draft22Version, tls13Experiment2Version:
 			return VersionTLS13, true
 		}
 	}
@@ -1642,7 +1652,11 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 }
 
 func isDraft22(vers uint16) bool {
-	return vers == tls13Draft22Version
+	return vers == tls13Draft22Version || vers == tls13Draft23Version
+}
+
+func isDraft23(vers uint16) bool {
+	return vers == tls13Draft23Version
 }
 
 // isSupportedVersion checks if the specified wire version is acceptable. If so,
@@ -1650,6 +1664,7 @@ func isDraft22(vers uint16) bool {
 // false.
 func (c *Config) isSupportedVersion(wireVers uint16, isDTLS bool) (uint16, bool) {
 	if (c.TLS13Variant != TLS13Experiment2 && wireVers == tls13Experiment2Version) ||
+		(c.TLS13Variant != TLS13Draft23 && wireVers == tls13Draft23Version) ||
 		(c.TLS13Variant != TLS13Draft22 && wireVers == tls13Draft22Version) {
 		return 0, false
 	}
