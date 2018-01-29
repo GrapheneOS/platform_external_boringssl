@@ -192,7 +192,9 @@ OPENSSL_EXPORT const SSL_METHOD *TLS_method(void);
 OPENSSL_EXPORT const SSL_METHOD *DTLS_method(void);
 
 // TLS_with_buffers_method is like |TLS_method|, but avoids all use of
-// crypto/x509.
+// crypto/x509. All client connections created with |TLS_with_buffers_method|
+// will fail unless a certificate verifier is installed with
+// |SSL_set_custom_verify| or |SSL_CTX_set_custom_verify|.
 OPENSSL_EXPORT const SSL_METHOD *TLS_with_buffers_method(void);
 
 // DTLS_with_buffers_method is like |DTLS_method|, but avoids all use of
@@ -4616,6 +4618,7 @@ OPENSSL_EXPORT bool SealRecord(SSL *ssl, Span<uint8_t> out_prefix,
 #define SSL_R_EARLY_DATA_NOT_IN_USE 283
 #define SSL_R_HANDSHAKE_NOT_COMPLETE 284
 #define SSL_R_NEGOTIATED_TB_WITHOUT_EMS_OR_RI 285
+#define SSL_R_SERVER_ECHOED_INVALID_SESSION_ID 286
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020
