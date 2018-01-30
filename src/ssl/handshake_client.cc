@@ -223,7 +223,7 @@ static int ssl_write_client_cipher_list(SSL_HANDSHAKE *hs, CBB *out) {
 
   // Add a fake cipher suite. See draft-davidben-tls-grease-01.
   if (ssl->ctx->grease_enabled &&
-      !CBB_add_u16(&child, ssl_get_grease_value(ssl, ssl_grease_cipher))) {
+      !CBB_add_u16(&child, ssl_get_grease_value(hs, ssl_grease_cipher))) {
     return 0;
   }
 
@@ -653,6 +653,18 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
                     ssl->session->session_id_length)) {
     ssl->s3->session_reused = true;
   } else {
+    // The server may also have echoed back the TLS 1.3 compatibility mode
+    // session ID. As we know this is not a session the server knows about, any
+    // server resuming it is in error. Reject the first connection
+    // deterministicly, rather than installing an invalid session into the
+    // session cache. https://crbug.com/796910
+    if (hs->session_id_len != 0 &&
+        CBS_mem_equal(&session_id, hs->session_id, hs->session_id_len)) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_SERVER_ECHOED_INVALID_SESSION_ID);
+      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+      return ssl_hs_error;
+    }
+
     // The session wasn't resumed. Create a fresh SSL_SESSION to
     // fill out.
     ssl_set_session(ssl, NULL);
