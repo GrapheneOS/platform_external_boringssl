@@ -197,8 +197,12 @@ extern "C" {
 #define Hw(t) ((BN_ULONG)((t) >> BN_BITS2))
 #endif
 
-// bn_correct_top decrements |bn->top| until |bn->d[top-1]| is non-zero or
-// until |top| is zero. If |bn| is zero, |bn->neg| is set to zero.
+// bn_minimal_width returns the minimal value of |bn->top| which fits the
+// value of |bn|.
+int bn_minimal_width(const BIGNUM *bn);
+
+// bn_correct_top decrements |bn->top| to |bn_minimal_width|. If |bn| is zero,
+// |bn->neg| is set to zero.
 void bn_correct_top(BIGNUM *bn);
 
 // bn_wexpand ensures that |bn| has at least |words| works of space without
@@ -210,9 +214,25 @@ int bn_wexpand(BIGNUM *bn, size_t words);
 // than a number of words.
 int bn_expand(BIGNUM *bn, size_t bits);
 
+// bn_resize_words adjusts |bn->top| to be |words|. It returns one on success
+// and zero on allocation error or if |bn|'s value is too large.
+//
+// Do not call this function outside of unit tests. Most functions currently
+// require |BIGNUM|s be minimal. This function breaks that invariant. It is
+// introduced early so the invariant may be relaxed incrementally.
+int bn_resize_words(BIGNUM *bn, size_t words);
+
 // bn_set_words sets |bn| to the value encoded in the |num| words in |words|,
 // least significant word first.
 int bn_set_words(BIGNUM *bn, const BN_ULONG *words, size_t num);
+
+// bn_fits_in_words returns one if |bn| may be represented in |num| words, plus
+// a sign bit, and zero otherwise.
+int bn_fits_in_words(const BIGNUM *bn, size_t num);
+
+// bn_copy_words copies the value of |bn| to |out| and returns one if the value
+// is representable in |num| words. Otherwise, it returns zero.
+int bn_copy_words(BN_ULONG *out, size_t num, const BIGNUM *bn);
 
 // bn_mul_add_words multiples |ap| by |w|, adds the result to |rp|, and places
 // the result in |rp|. |ap| and |rp| must both be |num| words long. It returns
@@ -326,6 +346,15 @@ int bn_jacobi(const BIGNUM *a, const BIGNUM *b, BN_CTX *ctx);
 // otherwise.
 int bn_is_bit_set_words(const BN_ULONG *a, size_t num, unsigned bit);
 
+// bn_one_to_montgomery sets |r| to one in Montgomery form. It returns one on
+// success and zero on error. This function treats the bit width of the modulus
+// as public.
+int bn_one_to_montgomery(BIGNUM *r, const BN_MONT_CTX *mont, BN_CTX *ctx);
+
+// bn_less_than_montgomery_R returns one if |bn| is less than the Montgomery R
+// value for |mont| and zero otherwise.
+int bn_less_than_montgomery_R(const BIGNUM *bn, const BN_MONT_CTX *mont);
+
 
 // Low-level operations for small numbers.
 //
@@ -371,6 +400,13 @@ int bn_to_montgomery_small(BN_ULONG *r, size_t num_r, const BN_ULONG *a,
 // inconsistent. |r| and |a| may alias.
 int bn_from_montgomery_small(BN_ULONG *r, size_t num_r, const BN_ULONG *a,
                              size_t num_a, const BN_MONT_CTX *mont);
+
+// bn_one_to_montgomery_small sets |r| to one in Montgomery form. It returns one
+// on success and zero on error. |num_r| must be the length of the modulus,
+// which is |mont->N.top|. This function treats the bit width of the modulus as
+// public.
+int bn_one_to_montgomery_small(BN_ULONG *r, size_t num_r,
+                               const BN_MONT_CTX *mont);
 
 // bn_mod_mul_montgomery_small sets |r| to |a| * |b| mod |mont->N|. Both inputs
 // and outputs are in the Montgomery domain. |num_r| must be the length of the
