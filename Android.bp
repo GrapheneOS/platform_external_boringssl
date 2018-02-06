@@ -179,6 +179,38 @@ cc_binary {
     },
 }
 
+cc_binary {
+    name: "cavp",
+    host_supported: true,
+    srcs: [
+        "src/fipstools/cavp_aes_gcm_test.cc",
+        "src/fipstools/cavp_aes_test.cc",
+        "src/fipstools/cavp_ctr_drbg_test.cc",
+        "src/fipstools/cavp_ecdsa2_keypair_test.cc",
+        "src/fipstools/cavp_ecdsa2_pkv_test.cc",
+        "src/fipstools/cavp_ecdsa2_siggen_test.cc",
+        "src/fipstools/cavp_ecdsa2_sigver_test.cc",
+        "src/fipstools/cavp_hmac_test.cc",
+        "src/fipstools/cavp_kas_test.cc",
+        "src/fipstools/cavp_keywrap_test.cc",
+        "src/fipstools/cavp_main.cc",
+        "src/fipstools/cavp_rsa2_keygen_test.cc",
+        "src/fipstools/cavp_rsa2_siggen_test.cc",
+        "src/fipstools/cavp_rsa2_sigver_test.cc",
+        "src/fipstools/cavp_sha_monte_test.cc",
+        "src/fipstools/cavp_sha_test.cc",
+        "src/fipstools/cavp_tdes_test.cc",
+        "src/fipstools/cavp_test_util.cc",
+        "src/fipstools/cavp_tlskdf_test.cc",
+    ],
+
+    shared_libs: [
+        "libcrypto",
+    ],
+
+    defaults: ["boringssl_test_support_sources", "boringssl_flags"],
+}
+
 // Test support library
 cc_library_static {
     name: "boringssl_test_support",
