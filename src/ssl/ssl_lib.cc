@@ -465,6 +465,10 @@ void ssl_ctx_get_current_time(const SSL_CTX *ctx,
 #endif
 }
 
+void SSL_CTX_set_handoff_mode(SSL_CTX *ctx, bool on) {
+  ctx->handoff = on;
+}
+
 }  // namespace bssl
 
 using namespace bssl;
@@ -736,6 +740,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
 
   ssl->signed_cert_timestamps_enabled = ctx->signed_cert_timestamps_enabled;
   ssl->ocsp_stapling_enabled = ctx->ocsp_stapling_enabled;
+  ssl->handoff = ctx->handoff;
 
   return ssl;
 
@@ -772,6 +777,7 @@ void SSL_free(SSL *ssl) {
   OPENSSL_free(ssl->supported_group_list);
   OPENSSL_free(ssl->alpn_client_proto_list);
   OPENSSL_free(ssl->token_binding_params);
+  OPENSSL_free(ssl->quic_transport_params);
   EVP_PKEY_free(ssl->tlsext_channel_id_private);
   OPENSSL_free(ssl->psk_identity_hint);
   sk_CRYPTO_BUFFER_pop_free(ssl->client_CA, CRYPTO_BUFFER_free);
@@ -1164,6 +1170,23 @@ int SSL_send_fatal_alert(SSL *ssl, uint8_t alert) {
   return ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
 }
 
+int SSL_set_quic_transport_params(SSL *ssl, const uint8_t *params,
+                                  size_t params_len) {
+  ssl->quic_transport_params = (uint8_t *)BUF_memdup(params, params_len);
+  if (!ssl->quic_transport_params) {
+    return 0;
+  }
+  ssl->quic_transport_params_len = params_len;
+  return 1;
+}
+
+void SSL_get_peer_quic_transport_params(const SSL *ssl,
+                                        const uint8_t **out_params,
+                                        size_t *out_params_len) {
+  *out_params = ssl->s3->peer_quic_transport_params.data();
+  *out_params_len = ssl->s3->peer_quic_transport_params.size();
+}
+
 void SSL_CTX_set_early_data_enabled(SSL_CTX *ctx, int enabled) {
   ctx->cert->enable_early_data = !!enabled;
 }
@@ -1250,6 +1273,9 @@ int SSL_get_error(const SSL *ssl, int ret_code) {
 
     case SSL_CERTIFICATE_SELECTION_PENDING:
       return SSL_ERROR_PENDING_CERTIFICATE;
+
+    case SSL_HANDOFF:
+      return SSL_ERROR_HANDOFF;
 
     case SSL_READING: {
       BIO *bio = SSL_get_rbio(ssl);

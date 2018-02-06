@@ -551,10 +551,6 @@ static bool forbid_parse_serverhello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
   return true;
 }
 
-static bool dont_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
-  return true;
-}
-
 static bool ignore_parse_clienthello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
                                     CBS *contents) {
   // This extension from the client is handled elsewhere.
@@ -1821,7 +1817,6 @@ static bool ext_pre_shared_key_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   // selected cipher in HelloRetryRequest does not match. This avoids performing
   // the transcript hash transformation for multiple hashes.
   if (hs->received_hello_retry_request &&
-      ssl_is_draft22(ssl->version) &&
       ssl->session->cipher->algorithm_prf != hs->new_cipher->algorithm_prf) {
     return true;
   }
@@ -2091,9 +2086,7 @@ static bool ext_key_share_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   }
 
   CBB contents, kse_bytes;
-  if (!CBB_add_u16(out, ssl_is_draft23_variant(ssl->tls13_variant)
-                            ? TLSEXT_TYPE_new_key_share
-                            : TLSEXT_TYPE_old_key_share) ||
+  if (!CBB_add_u16(out, TLSEXT_TYPE_key_share) ||
       !CBB_add_u16_length_prefixed(out, &contents) ||
       !CBB_add_u16_length_prefixed(&contents, &kse_bytes)) {
     return false;
@@ -2250,9 +2243,7 @@ bool ssl_ext_key_share_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
   uint16_t group_id;
   CBB kse_bytes, public_key;
   if (!tls1_get_shared_group(hs, &group_id) ||
-      !CBB_add_u16(out, ssl_is_draft23(hs->ssl->version)
-                            ? TLSEXT_TYPE_new_key_share
-                            : TLSEXT_TYPE_old_key_share) ||
+      !CBB_add_u16(out, TLSEXT_TYPE_key_share) ||
       !CBB_add_u16_length_prefixed(out, &kse_bytes) ||
       !CBB_add_u16(&kse_bytes, group_id) ||
       !CBB_add_u16_length_prefixed(&kse_bytes, &public_key) ||
@@ -2588,6 +2579,77 @@ static bool ext_token_binding_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
   return true;
 }
 
+// QUIC Transport Parameters
+
+static bool ext_quic_transport_params_add_clienthello(SSL_HANDSHAKE *hs,
+                                                      CBB *out) {
+  SSL *const ssl = hs->ssl;
+  if (!ssl->quic_transport_params || hs->max_version <= TLS1_2_VERSION) {
+    return true;
+  }
+
+  CBB contents;
+  if (!CBB_add_u16(out, TLSEXT_TYPE_quic_transport_parameters) ||
+      !CBB_add_u16_length_prefixed(out, &contents) ||
+      !CBB_add_bytes(&contents, ssl->quic_transport_params,
+                     ssl->quic_transport_params_len) ||
+      !CBB_flush(out)) {
+    return false;
+  }
+  return true;
+}
+
+static bool ext_quic_transport_params_parse_serverhello(SSL_HANDSHAKE *hs,
+                                                        uint8_t *out_alert,
+                                                        CBS *contents) {
+  SSL *const ssl = hs->ssl;
+  if (contents == nullptr) {
+    return true;
+  }
+  // QUIC requires TLS 1.3.
+  if (ssl_protocol_version(ssl) < TLS1_3_VERSION) {
+    *out_alert = SSL_AD_UNSUPPORTED_EXTENSION;
+    return false;
+  }
+
+  return ssl->s3->peer_quic_transport_params.CopyFrom(*contents);
+}
+
+static bool ext_quic_transport_params_parse_clienthello(SSL_HANDSHAKE *hs,
+                                                        uint8_t *out_alert,
+                                                        CBS *contents) {
+  SSL *const ssl = hs->ssl;
+  if (!contents || !ssl->quic_transport_params) {
+    return true;
+  }
+  // Ignore the extension before TLS 1.3.
+  if (ssl_protocol_version(ssl) < TLS1_3_VERSION) {
+    return true;
+  }
+
+  return ssl->s3->peer_quic_transport_params.CopyFrom(*contents);
+}
+
+static bool ext_quic_transport_params_add_serverhello(SSL_HANDSHAKE *hs,
+                                                      CBB *out) {
+  SSL *const ssl = hs->ssl;
+  if (!ssl->quic_transport_params) {
+    return true;
+  }
+
+  CBB contents;
+  if (!CBB_add_u16(out, TLSEXT_TYPE_quic_transport_parameters) ||
+      !CBB_add_u16_length_prefixed(out, &contents) ||
+      !CBB_add_bytes(&contents, ssl->quic_transport_params,
+                     ssl->quic_transport_params_len) ||
+      !CBB_flush(out)) {
+    return false;
+  }
+
+  return true;
+}
+
+
 // kExtensions contains all the supported extensions.
 static const struct tls_extension kExtensions[] = {
   {
@@ -2689,16 +2751,7 @@ static const struct tls_extension kExtensions[] = {
     ext_ec_point_add_serverhello,
   },
   {
-    TLSEXT_TYPE_old_key_share,
-    // This is added by TLSEXT_TYPE_new_key_share's callback.
-    NULL,
-    dont_add_clienthello,
-    forbid_parse_serverhello,
-    ignore_parse_clienthello,
-    dont_add_serverhello,
-  },
-  {
-    TLSEXT_TYPE_new_key_share,
+    TLSEXT_TYPE_key_share,
     NULL,
     ext_key_share_add_clienthello,
     forbid_parse_serverhello,
@@ -2744,6 +2797,14 @@ static const struct tls_extension kExtensions[] = {
     ignore_parse_serverhello,
     ignore_parse_clienthello,
     dont_add_serverhello,
+  },
+  {
+    TLSEXT_TYPE_quic_transport_parameters,
+    NULL,
+    ext_quic_transport_params_add_clienthello,
+    ext_quic_transport_params_parse_serverhello,
+    ext_quic_transport_params_parse_clienthello,
+    ext_quic_transport_params_add_serverhello,
   },
   // The final extension must be non-empty. WebSphere Application Server 7.0 is
   // intolerant to the last extension being zero-length. See

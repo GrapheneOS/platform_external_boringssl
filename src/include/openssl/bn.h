@@ -440,6 +440,11 @@ OPENSSL_EXPORT int BN_ucmp(const BIGNUM *a, const BIGNUM *b);
 // independent of the contents (including the signs) of |a| and |b|.
 OPENSSL_EXPORT int BN_equal_consttime(const BIGNUM *a, const BIGNUM *b);
 
+// BN_less_than_consttime returns one if |a| is less than |b|, and zero
+// otherwise. It takes an amount of time dependent on the sizes and signs of |a|
+// and |b|, but independent of the contents of |a| and |b|.
+OPENSSL_EXPORT int BN_less_than_consttime(const BIGNUM *a, const BIGNUM *b);
+
 // BN_abs_is_word returns one if the absolute value of |bn| equals |w| and zero
 // otherwise.
 OPENSSL_EXPORT int BN_abs_is_word(const BIGNUM *bn, BN_ULONG w);
@@ -788,8 +793,10 @@ int BN_mod_inverse_odd(BIGNUM *out, int *out_no_inverse, const BIGNUM *a,
 // BN_MONT_CTX contains the precomputed values needed to work in a specific
 // Montgomery domain.
 
-// BN_MONT_CTX_new returns a fresh BN_MONT_CTX or NULL on allocation failure.
-OPENSSL_EXPORT BN_MONT_CTX *BN_MONT_CTX_new(void);
+// BN_MONT_CTX_new_for_modulus returns a fresh |BN_MONT_CTX| given the modulus,
+// |mod| or NULL on error.
+OPENSSL_EXPORT BN_MONT_CTX *BN_MONT_CTX_new_for_modulus(const BIGNUM *mod,
+                                                        BN_CTX *ctx);
 
 // BN_MONT_CTX_free frees memory associated with |mont|.
 OPENSSL_EXPORT void BN_MONT_CTX_free(BN_MONT_CTX *mont);
@@ -798,11 +805,6 @@ OPENSSL_EXPORT void BN_MONT_CTX_free(BN_MONT_CTX *mont);
 // NULL on error.
 OPENSSL_EXPORT BN_MONT_CTX *BN_MONT_CTX_copy(BN_MONT_CTX *to,
                                              const BN_MONT_CTX *from);
-
-// BN_MONT_CTX_set sets up a Montgomery context given the modulus, |mod|. It
-// returns one on success and zero on error.
-OPENSSL_EXPORT int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod,
-                                   BN_CTX *ctx);
 
 // BN_MONT_CTX_set_locked takes |lock| and checks whether |*pmont| is NULL. If
 // so, it creates a new |BN_MONT_CTX| and sets the modulus for it to |mod|. It
@@ -891,6 +893,16 @@ OPENSSL_EXPORT int BN_mod_exp2_mont(BIGNUM *r, const BIGNUM *a1,
                                     const BIGNUM *p2, const BIGNUM *m,
                                     BN_CTX *ctx, const BN_MONT_CTX *mont);
 
+// BN_MONT_CTX_new returns a fresh |BN_MONT_CTX| or NULL on allocation failure.
+// Use |BN_MONT_CTX_new_for_modulus| instead.
+OPENSSL_EXPORT BN_MONT_CTX *BN_MONT_CTX_new(void);
+
+// BN_MONT_CTX_set sets up a Montgomery context given the modulus, |mod|. It
+// returns one on success and zero on error. Use |BN_MONT_CTX_new_for_modulus|
+// instead.
+OPENSSL_EXPORT int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod,
+                                   BN_CTX *ctx);
+
 
 // Private functions
 
@@ -904,8 +916,11 @@ struct bignum_st {
 };
 
 struct bn_mont_ctx_st {
-  BIGNUM RR;  // used to convert to montgomery form
-  BIGNUM N;   // The modulus
+  // RR is R^2, reduced modulo |N|. It is used to convert to Montgomery form.
+  BIGNUM RR;
+  // N is the modulus. It is always stored in minimal form, so |N.top|
+  // determines R.
+  BIGNUM N;
   BN_ULONG n0[2];  // least significant words of (R*Ri-1)/N
 };
 

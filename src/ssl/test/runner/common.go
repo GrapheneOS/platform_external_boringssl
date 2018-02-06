@@ -33,21 +33,15 @@ const (
 
 // A draft version of TLS 1.3 that is sent over the wire for the current draft.
 const (
-	tls13Experiment2Version = 0x7e02
-	tls13Draft22Version     = 0x7f16
-	tls13Draft23Version     = 0x7f17
+	tls13Draft23Version = 0x7f17
 )
 
 const (
-	TLS13Draft23     = 0
-	TLS13Experiment2 = 1
-	TLS13Draft22     = 2
+	TLS13Draft23 = 0
 )
 
 var allTLSWireVersions = []uint16{
 	tls13Draft23Version,
-	tls13Draft22Version,
-	tls13Experiment2Version,
 	VersionTLS12,
 	VersionTLS11,
 	VersionTLS10,
@@ -123,8 +117,8 @@ const (
 	extensionPadding                    uint16 = 21
 	extensionExtendedMasterSecret       uint16 = 23
 	extensionTokenBinding               uint16 = 24
+	extensionQUICTransportParams        uint16 = 26
 	extensionSessionTicket              uint16 = 35
-	extensionOldKeyShare                uint16 = 40    // draft-ietf-tls-tls13-16
 	extensionPreSharedKey               uint16 = 41    // draft-ietf-tls-tls13-16
 	extensionEarlyData                  uint16 = 42    // draft-ietf-tls-tls13-16
 	extensionSupportedVersions          uint16 = 43    // draft-ietf-tls-tls13-16
@@ -132,7 +126,7 @@ const (
 	extensionPSKKeyExchangeModes        uint16 = 45    // draft-ietf-tls-tls13-18
 	extensionTicketEarlyDataInfo        uint16 = 46    // draft-ietf-tls-tls13-18
 	extensionCertificateAuthorities     uint16 = 47    // draft-ietf-tls-tls13-21
-	extensionNewKeyShare                uint16 = 51    // draft-ietf-tls-tls13-23
+	extensionKeyShare                   uint16 = 51    // draft-ietf-tls-tls13-23
 	extensionCustom                     uint16 = 1234  // not IANA assigned
 	extensionNextProtoNeg               uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo          uint16 = 0xff01
@@ -269,6 +263,7 @@ type ConnectionState struct {
 	SCTList                    []byte                // signed certificate timestamp list
 	PeerSignatureAlgorithm     signatureAlgorithm    // algorithm used by the peer in the handshake
 	CurveID                    CurveID               // the curve used in ECDHE
+	QUICTransportParams        []byte                // the QUIC transport params received from the peer
 }
 
 // ClientAuthType declares the policy the server will follow for
@@ -495,6 +490,10 @@ type Config struct {
 	// VerifySignatureAlgorithms, if not nil, overrides the default set of
 	// supported signature algorithms that are accepted.
 	VerifySignatureAlgorithms []signatureAlgorithm
+
+	// QUICTransportParams, if not empty, will be sent in the QUIC
+	// transport parameters extension.
+	QUICTransportParams []byte
 
 	// Bugs specifies optional misbehaviour to be used for testing other
 	// implementations.
@@ -1664,7 +1663,7 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 		switch vers {
 		case VersionSSL30, VersionTLS10, VersionTLS11, VersionTLS12:
 			return vers, true
-		case tls13Draft23Version, tls13Draft22Version, tls13Experiment2Version:
+		case tls13Draft23Version:
 			return VersionTLS13, true
 		}
 	}
@@ -1672,21 +1671,11 @@ func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 	return 0, false
 }
 
-func isDraft22(vers uint16) bool {
-	return vers == tls13Draft22Version || vers == tls13Draft23Version
-}
-
-func isDraft23(vers uint16) bool {
-	return vers == tls13Draft23Version
-}
-
 // isSupportedVersion checks if the specified wire version is acceptable. If so,
 // it returns true and the corresponding protocol version. Otherwise, it returns
 // false.
 func (c *Config) isSupportedVersion(wireVers uint16, isDTLS bool) (uint16, bool) {
-	if (c.TLS13Variant != TLS13Experiment2 && wireVers == tls13Experiment2Version) ||
-		(c.TLS13Variant != TLS13Draft23 && wireVers == tls13Draft23Version) ||
-		(c.TLS13Variant != TLS13Draft22 && wireVers == tls13Draft22Version) {
+	if c.TLS13Variant != TLS13Draft23 && wireVers == tls13Draft23Version {
 		return 0, false
 	}
 

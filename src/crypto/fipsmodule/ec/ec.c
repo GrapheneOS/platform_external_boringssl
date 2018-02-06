@@ -389,9 +389,8 @@ int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
   }
 
   BN_MONT_CTX_free(group->order_mont);
-  group->order_mont = BN_MONT_CTX_new();
-  if (group->order_mont == NULL ||
-      !BN_MONT_CTX_set(group->order_mont, &group->order, NULL)) {
+  group->order_mont = BN_MONT_CTX_new_for_modulus(&group->order, NULL);
+  if (group->order_mont == NULL) {
     return 0;
   }
 
@@ -448,9 +447,8 @@ static EC_GROUP *ec_group_new_from_data(const struct built_in_curve *curve) {
     goto err;
   }
 
-  group->order_mont = BN_MONT_CTX_new();
-  if (group->order_mont == NULL ||
-      !BN_MONT_CTX_set(group->order_mont, &group->order, ctx)) {
+  group->order_mont = BN_MONT_CTX_new_for_modulus(&group->order, ctx);
+  if (group->order_mont == NULL) {
     OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
     goto err;
   }
@@ -768,6 +766,9 @@ int EC_POINT_set_affine_coordinates_GFp(const EC_GROUP *group, EC_POINT *point,
   }
 
   if (!EC_POINT_is_on_curve(group, point, ctx)) {
+    // In the event of an error, defend against the caller not checking the
+    // return value by setting a known safe value: the base point.
+    EC_POINT_copy(point, EC_GROUP_get0_generator(group));
     OPENSSL_PUT_ERROR(EC, EC_R_POINT_IS_NOT_ON_CURVE);
     return 0;
   }
@@ -952,12 +953,10 @@ int ec_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
 
 int ec_bignum_to_scalar_unchecked(const EC_GROUP *group, EC_SCALAR *out,
                                   const BIGNUM *in) {
-  if (BN_is_negative(in) || in->top > group->order.top) {
+  if (!bn_copy_words(out->words, group->order.top, in)) {
     OPENSSL_PUT_ERROR(EC, EC_R_INVALID_SCALAR);
     return 0;
   }
-  OPENSSL_memset(out->words, 0, group->order.top * sizeof(BN_ULONG));
-  OPENSSL_memcpy(out->words, in->d, in->top * sizeof(BN_ULONG));
   return 1;
 }
 
