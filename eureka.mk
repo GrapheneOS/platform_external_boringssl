@@ -85,7 +85,6 @@ crypto_sources := \
   src/crypto/cpu-ppc64le.c\
   src/crypto/crypto.c\
   src/crypto/curve25519/spake25519.c\
-  src/crypto/curve25519/x25519-x86_64.c\
   src/crypto/dh/check.c\
   src/crypto/dh/dh.c\
   src/crypto/dh/dh_asn1.c\
@@ -244,6 +243,7 @@ ssl_sources := \
   src/ssl/d1_srtp.cc\
   src/ssl/dtls_method.cc\
   src/ssl/dtls_record.cc\
+  src/ssl/handoff.cc\
   src/ssl/handshake.cc\
   src/ssl/handshake_client.cc\
   src/ssl/handshake_server.cc\
@@ -350,5 +350,4 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/fipsmodule/vpaes-x86_64.S\
   linux-x86_64/crypto/fipsmodule/x86_64-mont.S\
   linux-x86_64/crypto/fipsmodule/x86_64-mont5.S\
-  src/crypto/curve25519/asm/x25519-asm-x86_64.S\
 

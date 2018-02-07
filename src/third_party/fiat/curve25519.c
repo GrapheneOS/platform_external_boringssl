@@ -512,8 +512,6 @@ static void fe_sq_tt(fe *h, const fe *f) {
   fe_sqr_impl(h->v, f->v);
 }
 
-#if !defined(BORINGSSL_X25519_X86_64)
-
 // Replace (f,g) with (g,f) if b == 1;
 // replace (f,g) with (f,g) if b == 0.
 //
@@ -588,8 +586,6 @@ static void fe_mul121666(fe *h, const fe_loose *f) {
   fe_mul_121666_impl(h->v, f->v);
   assert_fe(h->v);
 }
-
-#endif  // !BORINGSSL_X25519_X86_64
 
 // Adapted from Fiat-synthesized |fe_sub_impl| with |out| = 0.
 static void fe_neg_impl(uint64_t out[5], const uint64_t in2[5]) {
@@ -1201,8 +1197,6 @@ static void fe_sq_tt(fe *h, const fe *f) {
   fe_sqr_impl(h->v, f->v);
 }
 
-#if !defined(BORINGSSL_X25519_X86_64)
-
 // Replace (f,g) with (g,f) if b == 1;
 // replace (f,g) with (f,g) if b == 0.
 //
@@ -1341,8 +1335,6 @@ static void fe_mul121666(fe *h, const fe_loose *f) {
   fe_mul_121666_impl(h->v, f->v);
   assert_fe(h->v);
 }
-
-#endif  // !BORINGSSL_X25519_X86_64
 
 // Adapted from Fiat-synthesized |fe_sub_impl| with |out| = 0.
 static void fe_neg_impl(uint32_t out[10], const uint32_t in2[10]) {
@@ -3022,8 +3014,31 @@ int ED25519_verify(const uint8_t *message, size_t message_len,
   OPENSSL_memcpy(pkcopy, public_key, 32);
   uint8_t rcopy[32];
   OPENSSL_memcpy(rcopy, signature, 32);
-  uint8_t scopy[32];
-  OPENSSL_memcpy(scopy, signature + 32, 32);
+  union {
+    uint64_t u64[4];
+    uint8_t u8[32];
+  } scopy;
+  OPENSSL_memcpy(&scopy.u8[0], signature + 32, 32);
+
+  // https://tools.ietf.org/html/rfc8032#section-5.1.7 requires that s be in
+  // the range [0, order) in order to prevent signature malleability.
+
+  // kOrder is the order of Curve25519 in little-endian form.
+  static const uint64_t kOrder[4] = {
+    UINT64_C(0x5812631a5cf5d3ed),
+    UINT64_C(0x14def9dea2f79cd6),
+    0,
+    UINT64_C(0x1000000000000000),
+  };
+  for (size_t i = 3;; i--) {
+    if (scopy.u64[i] > kOrder[i]) {
+      return 0;
+    } else if (scopy.u64[i] < kOrder[i]) {
+      break;
+    } else if (i == 0) {
+      return 0;
+    }
+  }
 
   SHA512_CTX hash_ctx;
   SHA512_Init(&hash_ctx);
@@ -3036,7 +3051,7 @@ int ED25519_verify(const uint8_t *message, size_t message_len,
   x25519_sc_reduce(h);
 
   ge_p2 R;
-  ge_double_scalarmult_vartime(&R, h, &A, scopy);
+  ge_double_scalarmult_vartime(&R, h, &A, scopy.u8);
 
   uint8_t rcheck[32];
   x25519_ge_tobytes(rcheck, &R);
@@ -3062,15 +3077,6 @@ void ED25519_keypair_from_seed(uint8_t out_public_key[32],
   OPENSSL_memcpy(out_private_key + 32, out_public_key, 32);
 }
 
-
-#if defined(BORINGSSL_X25519_X86_64)
-
-static void x25519_scalar_mult(uint8_t out[32], const uint8_t scalar[32],
-                               const uint8_t point[32]) {
-  x25519_x86_64(out, scalar, point);
-}
-
-#else
 
 static void x25519_scalar_mult_generic(uint8_t out[32],
                                        const uint8_t scalar[32],
@@ -3166,9 +3172,6 @@ static void x25519_scalar_mult(uint8_t out[32], const uint8_t scalar[32],
   x25519_scalar_mult_generic(out, scalar, point);
 }
 
-#endif  // BORINGSSL_X25519_X86_64
-
-
 void X25519_keypair(uint8_t out_public_value[32], uint8_t out_private_key[32]) {
   RAND_bytes(out_private_key, 32);
 
@@ -3200,20 +3203,6 @@ int X25519(uint8_t out_shared_key[32], const uint8_t private_key[32],
   return CRYPTO_memcmp(kZeros, out_shared_key, 32) != 0;
 }
 
-#if defined(BORINGSSL_X25519_X86_64)
-
-// When |BORINGSSL_X25519_X86_64| is set, base point multiplication is done with
-// the Montgomery ladder because it's faster. Otherwise it's done using the
-// Ed25519 tables.
-
-void X25519_public_from_private(uint8_t out_public_value[32],
-                                const uint8_t private_key[32]) {
-  static const uint8_t kMongomeryBasePoint[32] = {9};
-  x25519_scalar_mult(out_public_value, private_key, kMongomeryBasePoint);
-}
-
-#else
-
 void X25519_public_from_private(uint8_t out_public_value[32],
                                 const uint8_t private_key[32]) {
 #if defined(BORINGSSL_X25519_NEON)
@@ -3243,5 +3232,3 @@ void X25519_public_from_private(uint8_t out_public_value[32],
   fe_mul_tlt(&zminusy_inv, &zplusy, &zminusy_inv);
   fe_tobytes(out_public_value, &zminusy_inv);
 }
-
-#endif  // BORINGSSL_X25519_X86_64

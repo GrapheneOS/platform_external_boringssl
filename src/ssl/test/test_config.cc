@@ -131,6 +131,7 @@ const Flag<bool> kBoolFlags[] = {
   { "-allow-false-start-without-alpn",
     &TestConfig::allow_false_start_without_alpn },
   { "-expect-draft-downgrade", &TestConfig::expect_draft_downgrade },
+  { "-handoff", &TestConfig::handoff },
 };
 
 const Flag<std::string> kStringFlags[] = {
@@ -170,6 +171,9 @@ const Flag<std::string> kBase64Flags[] = {
   { "-ocsp-response", &TestConfig::ocsp_response },
   { "-signed-cert-timestamps", &TestConfig::signed_cert_timestamps },
   { "-ticket-key", &TestConfig::ticket_key },
+  { "-quic-transport-params", &TestConfig::quic_transport_params },
+  { "-expected-quic-transport-params",
+    &TestConfig::expected_quic_transport_params },
 };
 
 const Flag<int> kIntFlags[] = {
