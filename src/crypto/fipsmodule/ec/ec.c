@@ -387,6 +387,8 @@ int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
     EC_POINT_free(copy);
     return 0;
   }
+  // Store the order in minimal form, so it can be used with |BN_ULONG| arrays.
+  bn_set_minimal_width(&group->order);
 
   BN_MONT_CTX_free(group->order_mont);
   group->order_mont = BN_MONT_CTX_new_for_modulus(&group->order, NULL);
@@ -821,8 +823,7 @@ static int arbitrary_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
 
   ERR_clear_error();
 
-  // This is an unusual input, so we do not guarantee constant-time
-  // processing, even ignoring |bn_correct_top|.
+  // This is an unusual input, so we do not guarantee constant-time processing.
   const BIGNUM *order = &group->order;
   BN_CTX_start(ctx);
   BIGNUM *tmp = BN_CTX_get(ctx);
@@ -950,7 +951,7 @@ int ec_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
   if (!ec_bignum_to_scalar_unchecked(group, out, in)) {
     return 0;
   }
-  if (!bn_less_than_words(out->words, group->order.d, group->order.top)) {
+  if (!bn_less_than_words(out->words, group->order.d, group->order.width)) {
     OPENSSL_PUT_ERROR(EC, EC_R_INVALID_SCALAR);
     return 0;
   }
@@ -959,7 +960,7 @@ int ec_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
 
 int ec_bignum_to_scalar_unchecked(const EC_GROUP *group, EC_SCALAR *out,
                                   const BIGNUM *in) {
-  if (!bn_copy_words(out->words, group->order.top, in)) {
+  if (!bn_copy_words(out->words, group->order.width, in)) {
     OPENSSL_PUT_ERROR(EC, EC_R_INVALID_SCALAR);
     return 0;
   }
@@ -968,6 +969,6 @@ int ec_bignum_to_scalar_unchecked(const EC_GROUP *group, EC_SCALAR *out,
 
 int ec_random_nonzero_scalar(const EC_GROUP *group, EC_SCALAR *out,
                              const uint8_t additional_data[32]) {
-  return bn_rand_range_words(out->words, 1, group->order.d, group->order.top,
+  return bn_rand_range_words(out->words, 1, group->order.d, group->order.width,
                              additional_data);
 }

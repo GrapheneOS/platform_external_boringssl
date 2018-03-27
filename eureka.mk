@@ -67,6 +67,7 @@ crypto_sources := \
   src/crypto/chacha/chacha.c\
   src/crypto/cipher_extra/cipher_extra.c\
   src/crypto/cipher_extra/derive_key.c\
+  src/crypto/cipher_extra/e_aesccm.c\
   src/crypto/cipher_extra/e_aesctrhmac.c\
   src/crypto/cipher_extra/e_aesgcmsiv.c\
   src/crypto/cipher_extra/e_chacha20poly1305.c\
@@ -78,6 +79,7 @@ crypto_sources := \
   src/crypto/cipher_extra/tls_cbc.c\
   src/crypto/cmac/cmac.c\
   src/crypto/conf/conf.c\
+  src/crypto/cpu-aarch64-fuchsia.c\
   src/crypto/cpu-aarch64-linux.c\
   src/crypto/cpu-arm-linux.c\
   src/crypto/cpu-arm.c\
