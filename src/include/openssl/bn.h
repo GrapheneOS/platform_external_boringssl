@@ -237,7 +237,8 @@ OPENSSL_EXPORT BIGNUM *BN_bin2bn(const uint8_t *in, size_t len, BIGNUM *ret);
 
 // BN_bn2bin serialises the absolute value of |in| to |out| as a big-endian
 // integer, which must have |BN_num_bytes| of space available. It returns the
-// number of bytes written.
+// number of bytes written. Note this function leaks the magnitude of |in|. If
+// |in| is secret, use |BN_bn2bin_padded| instead.
 OPENSSL_EXPORT size_t BN_bn2bin(const BIGNUM *in, uint8_t *out);
 
 // BN_le2bn sets |*ret| to the value of |len| bytes from |in|, interpreted as
@@ -440,11 +441,6 @@ OPENSSL_EXPORT int BN_ucmp(const BIGNUM *a, const BIGNUM *b);
 // independent of the contents (including the signs) of |a| and |b|.
 OPENSSL_EXPORT int BN_equal_consttime(const BIGNUM *a, const BIGNUM *b);
 
-// BN_less_than_consttime returns one if |a| is less than |b|, and zero
-// otherwise. It takes an amount of time dependent on the sizes and signs of |a|
-// and |b|, but independent of the contents of |a| and |b|.
-OPENSSL_EXPORT int BN_less_than_consttime(const BIGNUM *a, const BIGNUM *b);
-
 // BN_abs_is_word returns one if the absolute value of |bn| equals |w| and zero
 // otherwise.
 OPENSSL_EXPORT int BN_abs_is_word(const BIGNUM *bn, BN_ULONG w);
@@ -463,6 +459,7 @@ OPENSSL_EXPORT int BN_is_odd(const BIGNUM *bn);
 
 // BN_is_pow2 returns 1 if |a| is a power of two, and 0 otherwise.
 OPENSSL_EXPORT int BN_is_pow2(const BIGNUM *a);
+
 
 // Bitwise operations.
 
@@ -497,8 +494,18 @@ OPENSSL_EXPORT int BN_clear_bit(BIGNUM *a, int n);
 OPENSSL_EXPORT int BN_is_bit_set(const BIGNUM *a, int n);
 
 // BN_mask_bits truncates |a| so that it is only |n| bits long. It returns one
-// on success or zero if |n| is greater than the length of |a| already.
+// on success or zero if |n| is negative.
+//
+// This differs from OpenSSL which additionally returns zero if |a|'s word
+// length is less than or equal to |n|, rounded down to a number of words. Note
+// word size is platform-dependent, so this behavior is also difficult to rely
+// on in OpenSSL and not very useful.
 OPENSSL_EXPORT int BN_mask_bits(BIGNUM *a, int n);
+
+// BN_count_low_zero_bits returns the number of low-order zero bits in |bn|, or
+// the number of factors of two which divide it. It returns zero if |bn| is
+// zero.
+OPENSSL_EXPORT int BN_count_low_zero_bits(const BIGNUM *bn);
 
 
 // Modulo arithmetic.
@@ -772,6 +779,10 @@ OPENSSL_EXPORT BIGNUM *BN_mod_inverse(BIGNUM *out, const BIGNUM *a,
 // value) to protect it against side-channel attacks. On failure, if the failure
 // was caused by |a| having no inverse mod |n| then |*out_no_inverse| will be
 // set to one; otherwise it will be set to zero.
+//
+// Note this function may incorrectly report |a| has no inverse if the random
+// blinding value has no inverse. It should only be used when |n| has few
+// non-invertible elements, such as an RSA modulus.
 int BN_mod_inverse_blinded(BIGNUM *out, int *out_no_inverse, const BIGNUM *a,
                            const BN_MONT_CTX *mont, BN_CTX *ctx);
 
@@ -907,12 +918,30 @@ OPENSSL_EXPORT int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod,
 // Private functions
 
 struct bignum_st {
-  BN_ULONG *d; /* Pointer to an array of 'BN_BITS2' bit chunks in little-endian
-                  order. */
-  int top;    // Index of last used element in |d|, plus one.
-  int dmax;   // Size of |d|, in words.
-  int neg;    // one if the number is negative
-  int flags;  // bitmask of BN_FLG_* values
+  // d is a pointer to an array of |width| |BN_BITS2|-bit chunks in
+  // little-endian order. This stores the absolute value of the number.
+  BN_ULONG *d;
+  // width is the number of elements of |d| which are valid. This value is not
+  // necessarily minimal; the most-significant words of |d| may be zero.
+  // |width| determines a potentially loose upper-bound on the absolute value
+  // of the |BIGNUM|.
+  //
+  // Functions taking |BIGNUM| inputs must compute the same answer for all
+  // possible widths. |bn_minimal_width|, |bn_set_minimal_width|, and other
+  // helpers may be used to recover the minimal width, provided it is not
+  // secret. If it is secret, use a different algorithm. Functions may output
+  // minimal or non-minimal |BIGNUM|s depending on secrecy requirements, but
+  // those which cause widths to unboundedly grow beyond the minimal value
+  // should be documented such.
+  //
+  // Note this is different from historical |BIGNUM| semantics.
+  int width;
+  // dmax is number of elements of |d| which are allocated.
+  int dmax;
+  // neg is one if the number if negative and zero otherwise.
+  int neg;
+  // flags is a bitmask of |BN_FLG_*| values
+  int flags;
 };
 
 struct bn_mont_ctx_st {
