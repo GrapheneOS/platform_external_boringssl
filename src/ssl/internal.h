@@ -1514,6 +1514,11 @@ struct SSL_HANDSHAKE {
   // grease_seed is the entropy for GREASE values. It is valid if
   // |grease_seeded| is true.
   uint8_t grease_seed[ssl_grease_last_index + 1] = {0};
+
+  // dummy_pq_padding_len, in a server, is the length of the extension that
+  // should be echoed in a ServerHello, or zero if no extension should be
+  // echoed.
+  uint16_t dummy_pq_padding_len = 0;
 };
 
 UniquePtr<SSL_HANDSHAKE> ssl_handshake_new(SSL *ssl);
@@ -2670,6 +2675,11 @@ struct SSLConnection {
   // returns |SSL_HANDOFF|. This is copied in |SSL_new| from the |SSL_CTX|
   // element of the same name and may be cleared if the handoff is declined.
   bool handoff:1;
+
+  // did_dummy_pq_padding is only valid for a client. In that context, it is
+  // true iff the client observed the server echoing a dummy PQ padding
+  // extension.
+  bool did_dummy_pq_padding:1;
 };
 
 // From draft-ietf-tls-tls13-18, used in determining PSK modes.

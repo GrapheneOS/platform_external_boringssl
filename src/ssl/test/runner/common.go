@@ -1551,6 +1551,14 @@ type ProtocolBugs struct {
 	// require that the client sent a dummy PQ padding extension of this
 	// length.
 	ExpectDummyPQPaddingLength int
+
+	// SendDummyPQPaddingLength causes a client to send a dummy PQ padding
+	// extension of the given length in the ClientHello.
+	SendDummyPQPaddingLength int
+
+	// SendCompressedCoordinates, if true, causes ECDH key shares over NIST
+	// curves to use compressed coordinates.
+	SendCompressedCoordinates bool
 }
 
 func (c *Config) serverInit() {
