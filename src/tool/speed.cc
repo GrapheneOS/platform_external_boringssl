@@ -12,11 +12,13 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
+#include <algorithm>
 #include <string>
 #include <functional>
 #include <memory>
 #include <vector>
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -190,6 +192,59 @@ static bool SpeedRSA(const std::string &key_name, RSA *key,
     return false;
   }
   results.Print(key_name + " verify");
+
+  return true;
+}
+
+static bool SpeedRSAKeyGen(const std::string &selected) {
+  // Don't run this by default because it's so slow.
+  if (selected != "RSAKeyGen") {
+    return true;
+  }
+
+  bssl::UniquePtr<BIGNUM> e(BN_new());
+  if (!BN_set_word(e.get(), 65537)) {
+    return false;
+  }
+
+  const std::vector<int> kSizes = {2048, 3072, 4096};
+  for (int size : kSizes) {
+    const uint64_t start = time_now();
+    unsigned num_calls = 0;
+    unsigned us;
+    std::vector<unsigned> durations;
+
+    for (;;) {
+      bssl::UniquePtr<RSA> rsa(RSA_new());
+
+      const uint64_t iteration_start = time_now();
+      if (!RSA_generate_key_ex(rsa.get(), size, e.get(), nullptr)) {
+        fprintf(stderr, "RSA_generate_key_ex failed.\n");
+        ERR_print_errors_fp(stderr);
+        return false;
+      }
+      const uint64_t iteration_end = time_now();
+
+      num_calls++;
+      durations.push_back(iteration_end - iteration_start);
+
+      us = iteration_end - start;
+      if (us > 30 * 1000000 /* 30 secs */) {
+        break;
+      }
+    }
+
+    std::sort(durations.begin(), durations.end());
+    printf("Did %u RSA %d key-gen operations in %uus (%.1f ops/sec)\n",
+           num_calls, size, us,
+           (static_cast<double>(num_calls) / us) * 1000000);
+    const size_t n = durations.size();
+    assert(n > 0);
+    unsigned median = n & 1 ? durations[n / 2]
+                            : (durations[n / 2 - 1] + durations[n / 2]) / 2;
+    printf("  min: %uus, median: %uus, max: %uus\n", durations[0], median,
+           durations[n - 1]);
+  }
 
   return true;
 }
@@ -387,8 +442,28 @@ static bool SpeedECDHCurve(const std::string &name, int nid,
     return true;
   }
 
+  bssl::UniquePtr<EC_KEY> peer_key(EC_KEY_new_by_curve_name(nid));
+  if (!peer_key ||
+      !EC_KEY_generate_key(peer_key.get())) {
+    return false;
+  }
+
+  size_t peer_value_len = EC_POINT_point2oct(
+      EC_KEY_get0_group(peer_key.get()), EC_KEY_get0_public_key(peer_key.get()),
+      POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, nullptr);
+  if (peer_value_len == 0) {
+    return false;
+  }
+  std::unique_ptr<uint8_t[]> peer_value(new uint8_t[peer_value_len]);
+  peer_value_len = EC_POINT_point2oct(
+      EC_KEY_get0_group(peer_key.get()), EC_KEY_get0_public_key(peer_key.get()),
+      POINT_CONVERSION_UNCOMPRESSED, peer_value.get(), peer_value_len, nullptr);
+  if (peer_value_len == 0) {
+    return false;
+  }
+
   TimeResults results;
-  if (!TimeFunction(&results, [nid]() -> bool {
+  if (!TimeFunction(&results, [nid, peer_value_len, &peer_value]() -> bool {
         bssl::UniquePtr<EC_KEY> key(EC_KEY_new_by_curve_name(nid));
         if (!key ||
             !EC_KEY_generate_key(key.get())) {
@@ -396,14 +471,16 @@ static bool SpeedECDHCurve(const std::string &name, int nid,
         }
         const EC_GROUP *const group = EC_KEY_get0_group(key.get());
         bssl::UniquePtr<EC_POINT> point(EC_POINT_new(group));
+        bssl::UniquePtr<EC_POINT> peer_point(EC_POINT_new(group));
         bssl::UniquePtr<BN_CTX> ctx(BN_CTX_new());
 
         bssl::UniquePtr<BIGNUM> x(BN_new());
         bssl::UniquePtr<BIGNUM> y(BN_new());
 
-        if (!point || !ctx || !x || !y ||
-            !EC_POINT_mul(group, point.get(), NULL,
-                          EC_KEY_get0_public_key(key.get()),
+        if (!point || !peer_point || !ctx || !x || !y ||
+            !EC_POINT_oct2point(group, peer_point.get(), peer_value.get(),
+                                peer_value_len, ctx.get()) ||
+            !EC_POINT_mul(group, point.get(), NULL, peer_point.get(),
                           EC_KEY_get0_private_key(key.get()), ctx.get()) ||
             !EC_POINT_get_affine_coordinates_GFp(group, point.get(), x.get(),
                                                  y.get(), ctx.get())) {
@@ -719,7 +796,8 @@ bool Speed(const std::vector<std::string> &args) {
       !SpeedECDSA(selected) ||
       !Speed25519(selected) ||
       !SpeedSPAKE2(selected) ||
-      !SpeedScrypt(selected)) {
+      !SpeedScrypt(selected) ||
+      !SpeedRSAKeyGen(selected)) {
     return false;
   }
 
