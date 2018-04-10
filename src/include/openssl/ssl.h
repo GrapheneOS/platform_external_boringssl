@@ -535,6 +535,7 @@ OPENSSL_EXPORT int SSL_get_error(const SSL *ssl, int ret_code);
 #define SSL_ERROR_WANT_CERTIFICATE_VERIFY 16
 
 #define SSL_ERROR_HANDOFF 17
+#define SSL_ERROR_HANDBACK 18
 
 // SSL_set_mtu sets the |ssl|'s MTU in DTLS to |mtu|. It returns one on success
 // and zero on failure.
@@ -596,6 +597,7 @@ OPENSSL_EXPORT int DTLSv1_handle_timeout(SSL *ssl);
 #define DTLS1_2_VERSION 0xfefd
 
 #define TLS1_3_DRAFT23_VERSION 0x7f17
+#define TLS1_3_DRAFT28_VERSION 0x7f1c
 
 // SSL_CTX_set_min_proto_version sets the minimum protocol version for |ctx| to
 // |version|. If |version| is zero, the default minimum version is used. It
@@ -3309,6 +3311,7 @@ OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
 enum tls13_variant_t {
   tls13_default = 0,
+  tls13_draft28 = 1,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
@@ -3926,6 +3929,7 @@ OPENSSL_EXPORT void SSL_CTX_set_client_cert_cb(
 #define SSL_EARLY_DATA_REJECTED 11
 #define SSL_CERTIFICATE_VERIFY 12
 #define SSL_HANDOFF 13
+#define SSL_HANDBACK 14
 
 // SSL_want returns one of the above values to determine what the most recent
 // operation on |ssl| was blocked on. Use |SSL_get_error| instead.
@@ -4478,10 +4482,10 @@ OPENSSL_EXPORT bool SealRecord(SSL *ssl, Span<uint8_t> out_prefix,
 // state of the connection.
 //
 // Elsewhere, a fresh |SSL| can be used with |SSL_apply_handoff| to continue
-// the connection. The connection from the client is fed into this |SSL| until
-// the handshake completes normally. At this point (and only at this point),
-// |SSL_serialize_handback| can be called to serialize the result of the
-// handshake.
+// the connection. The connection from the client is fed into this |SSL|, and
+// the handshake resumed. When the handshake stops again and |SSL_get_error|
+// indicates |SSL_ERROR_HANDBACK|, |SSL_serialize_handback| should be called to
+// serialize the state of the handshake again.
 //
 // Back at the first location, a fresh |SSL| can be used with
 // |SSL_apply_handback|. Then the client's connection can be processed mostly
@@ -4489,7 +4493,7 @@ OPENSSL_EXPORT bool SealRecord(SSL *ssl, Span<uint8_t> out_prefix,
 //
 // Lastly, when a connection is in the handoff state, whether or not
 // |SSL_serialize_handoff| is called, |SSL_decline_handoff| will move it back
-// into a normal state where the connection can procede without impact.
+// into a normal state where the connection can proceed without impact.
 //
 // WARNING: Currently only works with TLS 1.0–1.2.
 // WARNING: The serialisation formats are not yet stable: version skew may be
