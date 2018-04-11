@@ -392,6 +392,10 @@ bool ssl_negotiate_version(SSL_HANDSHAKE *hs, uint8_t *out_alert,
 // call this function before the version is determined.
 uint16_t ssl_protocol_version(const SSL *ssl);
 
+// ssl_is_draft28 returns whether the version corresponds to a draft28 TLS 1.3
+// variant.
+bool ssl_is_draft28(uint16_t version);
+
 // Cipher suites.
 
 }  // namespace bssl
@@ -694,7 +698,7 @@ class SSLAEADContext {
   // number of bytes written.
   size_t GetAdditionalData(uint8_t out[13], uint8_t type,
                            uint16_t record_version, const uint8_t seqnum[8],
-                           size_t plaintext_len);
+                           size_t plaintext_len, size_t ciphertext_len);
 
   const SSL_CIPHER *cipher_;
   ScopedEVP_AEAD_CTX ctx_;
@@ -721,6 +725,9 @@ class SSLAEADContext {
   bool omit_version_in_ad_ : 1;
   // omit_ad_ is true if the AEAD's ad parameter should be omitted.
   bool omit_ad_ : 1;
+  // tls13_ad_ is true if the AEAD's ad parameter should be based on the
+  // TLS 1.3 format.
+  bool tls13_ad_ : 1;
   // xor_fixed_nonce_ is true if the fixed nonce should be XOR'd into the
   // variable nonce rather than prepended.
   bool xor_fixed_nonce_ : 1;
@@ -929,6 +936,10 @@ class SSLKeyShare {
   // nullptr on error.
   static UniquePtr<SSLKeyShare> Create(uint16_t group_id);
 
+  // Create deserializes an SSLKeyShare instance previously serialized by
+  // |Serialize|.
+  static UniquePtr<SSLKeyShare> Create(CBS *in);
+
   // GroupID returns the group ID.
   virtual uint16_t GroupID() const PURE_VIRTUAL;
 
@@ -952,6 +963,14 @@ class SSLKeyShare {
   // send to the peer.
   virtual bool Finish(Array<uint8_t> *out_secret, uint8_t *out_alert,
                       Span<const uint8_t> peer_key) PURE_VIRTUAL;
+
+  // Serialize writes the state of the key exchange to |out|, returning true if
+  // successful and false otherwise.
+  virtual bool Serialize(CBB *out) { return false; }
+
+  // Deserialize initializes the state of the key exchange from |in|, returning
+  // true if successful and false otherwise.  It is called by |Create|.
+  virtual bool Deserialize(CBS *in) { return false; }
 };
 
 // ssl_nid_to_group_id looks up the group corresponding to |nid|. On success, it
@@ -1258,6 +1277,7 @@ enum ssl_hs_wait_t {
   ssl_hs_flush,
   ssl_hs_certificate_selection_pending,
   ssl_hs_handoff,
+  ssl_hs_handback,
   ssl_hs_x509_lookup,
   ssl_hs_channel_id_lookup,
   ssl_hs_private_key_operation,
@@ -1278,6 +1298,30 @@ enum ssl_grease_index_t {
   ssl_grease_version,
   ssl_grease_ticket_extension,
   ssl_grease_last_index = ssl_grease_ticket_extension,
+};
+
+enum tls12_server_hs_state_t {
+  state12_start_accept = 0,
+  state12_read_client_hello,
+  state12_select_certificate,
+  state12_tls13,
+  state12_select_parameters,
+  state12_send_server_hello,
+  state12_send_server_certificate,
+  state12_send_server_key_exchange,
+  state12_send_server_hello_done,
+  state12_read_client_certificate,
+  state12_verify_client_certificate,
+  state12_read_client_key_exchange,
+  state12_read_client_certificate_verify,
+  state12_read_change_cipher_spec,
+  state12_process_change_cipher_spec,
+  state12_read_next_proto,
+  state12_read_channel_id,
+  state12_read_client_finished,
+  state12_send_server_finished,
+  state12_finish_server_handshake,
+  state12_done,
 };
 
 struct SSL_HANDSHAKE {
@@ -2675,6 +2719,11 @@ struct SSLConnection {
   // returns |SSL_HANDOFF|. This is copied in |SSL_new| from the |SSL_CTX|
   // element of the same name and may be cleared if the handoff is declined.
   bool handoff:1;
+
+  // handback indicates that a server should pause the handshake after
+  // finishing operations that require private key material, in such a way that
+  // |SSL_get_error| returns |SSL_HANDBACK|.  It is set by |SSL_apply_handoff|.
+  bool handback : 1;
 
   // did_dummy_pq_padding is only valid for a client. In that context, it is
   // true iff the client observed the server echoing a dummy PQ padding
