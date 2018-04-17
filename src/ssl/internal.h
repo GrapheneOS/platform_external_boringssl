@@ -657,19 +657,26 @@ class SSLAEADContext {
   bool SuffixLen(size_t *out_suffix_len, size_t in_len,
                  size_t extra_in_len) const;
 
+  // CiphertextLen calculates the total ciphertext length written by
+  // |SealScatter| and writes it to |*out_len|. It returns true on success and
+  // false on error. |in_len| and |extra_in_len| should equal the argument of
+  // the same names passed to |SealScatter|.
+  bool CiphertextLen(size_t *out_len, size_t in_len, size_t extra_in_len) const;
+
   // Open authenticates and decrypts |in| in-place. On success, it sets |*out|
   // to the plaintext in |in| and returns true.  Otherwise, it returns
   // false. The output will always be |ExplicitNonceLen| bytes ahead of |in|.
   bool Open(Span<uint8_t> *out, uint8_t type, uint16_t record_version,
-            const uint8_t seqnum[8], Span<uint8_t> in);
+            const uint8_t seqnum[8], Span<const uint8_t> header,
+            Span<uint8_t> in);
 
   // Seal encrypts and authenticates |in_len| bytes from |in| and writes the
   // result to |out|. It returns true on success and false on error.
   //
   // If |in| and |out| alias then |out| + |ExplicitNonceLen| must be == |in|.
   bool Seal(uint8_t *out, size_t *out_len, size_t max_out, uint8_t type,
-            uint16_t record_version, const uint8_t seqnum[8], const uint8_t *in,
-            size_t in_len);
+            uint16_t record_version, const uint8_t seqnum[8],
+            Span<const uint8_t> header, const uint8_t *in, size_t in_len);
 
   // SealScatter encrypts and authenticates |in_len| bytes from |in| and splits
   // the result between |out_prefix|, |out| and |out_suffix|. It returns one on
@@ -688,17 +695,20 @@ class SSLAEADContext {
   // alias anything.
   bool SealScatter(uint8_t *out_prefix, uint8_t *out, uint8_t *out_suffix,
                    uint8_t type, uint16_t record_version,
-                   const uint8_t seqnum[8], const uint8_t *in, size_t in_len,
-                   const uint8_t *extra_in, size_t extra_in_len);
+                   const uint8_t seqnum[8], Span<const uint8_t> header,
+                   const uint8_t *in, size_t in_len, const uint8_t *extra_in,
+                   size_t extra_in_len);
 
   bool GetIV(const uint8_t **out_iv, size_t *out_iv_len) const;
 
  private:
-  // GetAdditionalData writes the additional data into |out| and returns the
-  // number of bytes written.
-  size_t GetAdditionalData(uint8_t out[13], uint8_t type,
-                           uint16_t record_version, const uint8_t seqnum[8],
-                           size_t plaintext_len, size_t ciphertext_len);
+  // GetAdditionalData returns the additional data, writing into |storage| if
+  // necessary.
+  Span<const uint8_t> GetAdditionalData(uint8_t storage[13], uint8_t type,
+                                        uint16_t record_version,
+                                        const uint8_t seqnum[8],
+                                        size_t plaintext_len,
+                                        Span<const uint8_t> header);
 
   const SSL_CIPHER *cipher_;
   ScopedEVP_AEAD_CTX ctx_;
@@ -717,6 +727,9 @@ class SSLAEADContext {
   // randomly generated, rather than derived from the sequence
   // number.
   bool random_variable_nonce_ : 1;
+  // xor_fixed_nonce_ is true if the fixed nonce should be XOR'd into the
+  // variable nonce rather than prepended.
+  bool xor_fixed_nonce_ : 1;
   // omit_length_in_ad_ is true if the length should be omitted in the
   // AEAD's ad parameter.
   bool omit_length_in_ad_ : 1;
@@ -725,12 +738,8 @@ class SSLAEADContext {
   bool omit_version_in_ad_ : 1;
   // omit_ad_ is true if the AEAD's ad parameter should be omitted.
   bool omit_ad_ : 1;
-  // tls13_ad_ is true if the AEAD's ad parameter should be based on the
-  // TLS 1.3 format.
-  bool tls13_ad_ : 1;
-  // xor_fixed_nonce_ is true if the fixed nonce should be XOR'd into the
-  // variable nonce rather than prepended.
-  bool xor_fixed_nonce_ : 1;
+  // ad_is_header_ is true if the AEAD's ad parameter is the record header.
+  bool ad_is_header_ : 1;
 };
 
 
@@ -2299,6 +2308,10 @@ struct SSL3_STATE {
   // key_update_count is the number of consecutive KeyUpdates received.
   uint8_t key_update_count = 0;
 
+  // The negotiated Token Binding key parameter. Only valid if
+  // |token_binding_negotiated| is set.
+  uint8_t negotiated_token_binding_param = 0;
+
   // skip_early_data instructs the record layer to skip unexpected early data
   // messages when 0RTT is rejected.
   bool skip_early_data:1;
@@ -2347,6 +2360,9 @@ struct SSL3_STATE {
   // draft_downgrade is whether the TLS 1.3 anti-downgrade logic would have
   // fired, were it not a draft.
   bool draft_downgrade:1;
+
+  // token_binding_negotiated is set if Token Binding was negotiated.
+  bool token_binding_negotiated:1;
 
   // hs_buf is the buffer of handshake data to process.
   UniquePtr<BUF_MEM> hs_buf;
@@ -2671,10 +2687,6 @@ struct SSLConnection {
   uint8_t *token_binding_params;
   size_t token_binding_params_len;
 
-  // The negotiated Token Binding key parameter. Only valid if
-  // |token_binding_negotiated| is set.
-  uint8_t negotiated_token_binding_param;
-
   // Contains the QUIC transport params that this endpoint will send.
   uint8_t *quic_transport_params;
   size_t quic_transport_params_len;
@@ -2705,9 +2717,6 @@ struct SSLConnection {
   // means that we'll accept Channel IDs from clients. For a client, means that
   // we'll advertise support.
   bool tlsext_channel_id_enabled:1;
-
-  // token_binding_negotiated is set if Token Binding was negotiated.
-  bool token_binding_negotiated:1;
 
   // retain_only_sha256_of_client_certs is true if we should compute the SHA256
   // hash of the peer's certificate and then discard it to save memory and
