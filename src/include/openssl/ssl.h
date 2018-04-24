@@ -970,9 +970,9 @@ OPENSSL_EXPORT int SSL_set_ocsp_response(SSL *ssl,
 #define SSL_SIGN_ECDSA_SECP256R1_SHA256 0x0403
 #define SSL_SIGN_ECDSA_SECP384R1_SHA384 0x0503
 #define SSL_SIGN_ECDSA_SECP521R1_SHA512 0x0603
-#define SSL_SIGN_RSA_PSS_SHA256 0x0804
-#define SSL_SIGN_RSA_PSS_SHA384 0x0805
-#define SSL_SIGN_RSA_PSS_SHA512 0x0806
+#define SSL_SIGN_RSA_PSS_RSAE_SHA256 0x0804
+#define SSL_SIGN_RSA_PSS_RSAE_SHA384 0x0805
+#define SSL_SIGN_RSA_PSS_RSAE_SHA512 0x0806
 #define SSL_SIGN_ED25519 0x0807
 
 // SSL_SIGN_RSA_PKCS1_MD5_SHA1 is an internal signature algorithm used to
@@ -2467,10 +2467,19 @@ OPENSSL_EXPORT int SSL_set0_verify_cert_store(SSL *ssl, X509_STORE *store);
 OPENSSL_EXPORT int SSL_set1_verify_cert_store(SSL *ssl, X509_STORE *store);
 
 // SSL_CTX_set_ed25519_enabled configures whether |ctx| advertises support for
-// the Ed25519 signature algorithm when using the default preference list.
+// the Ed25519 signature algorithm when using the default preference list. It is
+// disabled by default and may be enabled if the certificate verifier supports
+// Ed25519.
 OPENSSL_EXPORT void SSL_CTX_set_ed25519_enabled(SSL_CTX *ctx, int enabled);
 
-// SSL_CTX_set_verify_algorithm_prefs confingures |ctx| to use |prefs| as the
+// SSL_CTX_set_rsa_pss_rsae_certs_enabled configures whether |ctx| advertises
+// support for rsa_pss_rsae_* signatures within the certificate chain. It is
+// enabled by default but should be disabled if using a custom certificate
+// verifier which does not support RSA-PSS signatures.
+OPENSSL_EXPORT void SSL_CTX_set_rsa_pss_rsae_certs_enabled(SSL_CTX *ctx,
+                                                           int enabled);
+
+// SSL_CTX_set_verify_algorithm_prefs configures |ctx| to use |prefs| as the
 // preference list when verifying signature's from the peer's long-term key. It
 // returns one on zero on error. |prefs| should not include the internal-only
 // value |SSL_SIGN_RSA_PKCS1_MD5_SHA1|.
@@ -4116,15 +4125,11 @@ OPENSSL_EXPORT SSL_SESSION *SSL_get1_session(SSL *ssl);
 OPENSSL_EXPORT int OPENSSL_init_ssl(uint64_t opts,
                                     const OPENSSL_INIT_SETTINGS *settings);
 
-#if !defined(BORINGSSL_NO_CXX)
-// SSL_CTX_sess_set_get_cb is a legacy C++ overload of |SSL_CTX_sess_set_get_cb|
-// which supports the old callback signature.
-//
-// TODO(davidben): Remove this once Node is compatible with OpenSSL 1.1.0.
-extern "C++" OPENSSL_EXPORT void SSL_CTX_sess_set_get_cb(
-    SSL_CTX *ctx, SSL_SESSION *(*get_session_cb)(SSL *ssl, uint8_t *id,
-                                                 int id_len, int *out_copy));
-#endif
+// The following constants are legacy aliases for RSA-PSS with rsaEncryption
+// keys. Use the new names instead.
+#define SSL_SIGN_RSA_PSS_SHA256 SSL_SIGN_RSA_PSS_RSAE_SHA256
+#define SSL_SIGN_RSA_PSS_SHA384 SSL_SIGN_RSA_PSS_RSAE_SHA384
+#define SSL_SIGN_RSA_PSS_SHA512 SSL_SIGN_RSA_PSS_RSAE_SHA512
 
 
 // Private structures.
