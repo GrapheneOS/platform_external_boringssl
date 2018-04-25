@@ -133,6 +133,12 @@ struct ec_method_st {
                       BN_CTX *);  // e.g. to Montgomery
   int (*field_decode)(const EC_GROUP *, BIGNUM *r, const BIGNUM *a,
                       BN_CTX *);  // e.g. from Montgomery
+
+  // scalar_inv_mont sets |out| to |in|^-1, where both input and output are in
+  // Montgomery form.
+  void (*scalar_inv_montgomery)(const EC_GROUP *group, EC_SCALAR *out,
+                                const EC_SCALAR *in);
+
 } /* EC_METHOD */;
 
 const EC_METHOD *EC_GFp_mont_method(void);
@@ -183,15 +189,32 @@ EC_GROUP *ec_group_new(const EC_METHOD *meth);
 OPENSSL_EXPORT int ec_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
                                        const BIGNUM *in);
 
-// ec_bignum_to_scalar_unchecked behaves like |ec_bignum_to_scalar| but does not
-// check |in| is fully reduced.
-int ec_bignum_to_scalar_unchecked(const EC_GROUP *group, EC_SCALAR *out,
-                                  const BIGNUM *in);
-
 // ec_random_nonzero_scalar sets |out| to a uniformly selected random value from
 // 1 to |group->order| - 1. It returns one on success and zero on error.
 int ec_random_nonzero_scalar(const EC_GROUP *group, EC_SCALAR *out,
                              const uint8_t additional_data[32]);
+
+// ec_scalar_add sets |r| to |a| + |b|.
+void ec_scalar_add(const EC_GROUP *group, EC_SCALAR *r, const EC_SCALAR *a,
+                   const EC_SCALAR *b);
+
+// ec_scalar_to_montgomery sets |r| to |a| in Montgomery form.
+void ec_scalar_to_montgomery(const EC_GROUP *group, EC_SCALAR *r,
+                             const EC_SCALAR *a);
+
+// ec_scalar_to_montgomery sets |r| to |a| converted from Montgomery form.
+void ec_scalar_from_montgomery(const EC_GROUP *group, EC_SCALAR *r,
+                               const EC_SCALAR *a);
+
+// ec_scalar_mul_montgomery sets |r| to |a| * |b| where inputs and outputs are
+// in Montgomery form.
+void ec_scalar_mul_montgomery(const EC_GROUP *group, EC_SCALAR *r,
+                              const EC_SCALAR *a, const EC_SCALAR *b);
+
+// ec_scalar_mul_montgomery sets |r| to |a|^-1 where inputs and outputs are in
+// Montgomery form.
+void ec_scalar_inv_montgomery(const EC_GROUP *group, EC_SCALAR *r,
+                              const EC_SCALAR *a);
 
 // ec_point_add_mixed behaves like |EC_POINT_add|, but |&b->Z| must be zero or
 // one.
@@ -254,6 +277,8 @@ int ec_GFp_simple_cmp(const EC_GROUP *, const EC_POINT *a, const EC_POINT *b,
 int ec_GFp_simple_make_affine(const EC_GROUP *, EC_POINT *, BN_CTX *);
 int ec_GFp_simple_points_make_affine(const EC_GROUP *, size_t num,
                                      EC_POINT * [], BN_CTX *);
+void ec_simple_scalar_inv_montgomery(const EC_GROUP *group, EC_SCALAR *r,
+                                     const EC_SCALAR *a);
 
 // method functions in montgomery.c
 int ec_GFp_mont_group_init(EC_GROUP *);

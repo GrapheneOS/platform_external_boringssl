@@ -66,22 +66,6 @@
 #include "../../internal.h"
 
 
-static void scalar_add(const EC_GROUP *group, EC_SCALAR *r, const EC_SCALAR *a,
-                       const EC_SCALAR *b) {
-  const BIGNUM *order = &group->order;
-  BN_ULONG tmp[EC_MAX_SCALAR_WORDS];
-  bn_mod_add_words(r->words, a->words, b->words, order->d, tmp, order->width);
-  OPENSSL_cleanse(tmp, sizeof(tmp));
-}
-
-static int scalar_mul_montgomery(const EC_GROUP *group, EC_SCALAR *r,
-                                 const EC_SCALAR *a, const EC_SCALAR *b) {
-  const BIGNUM *order = &group->order;
-  return bn_mod_mul_montgomery_small(r->words, order->width, a->words,
-                                     order->width, b->words, order->width,
-                                     group->order_mont);
-}
-
 // digest_to_scalar interprets |digest_len| bytes from |digest| as a scalar for
 // ECDSA. Note this value is not fully reduced modulo the order, only the
 // correct number of bits.
@@ -217,7 +201,6 @@ int ECDSA_do_verify(const uint8_t *digest, size_t digest_len,
   }
 
   EC_SCALAR r, s, u1, u2, s_inv_mont, m;
-  const BIGNUM *order = EC_GROUP_get0_order(group);
   if (BN_is_zero(sig->r) ||
       !ec_bignum_to_scalar(group, &r, sig->r) ||
       BN_is_zero(sig->s) ||
@@ -225,27 +208,22 @@ int ECDSA_do_verify(const uint8_t *digest, size_t digest_len,
     OPENSSL_PUT_ERROR(ECDSA, ECDSA_R_BAD_SIGNATURE);
     goto err;
   }
-  // s_inv_mont = s^-1 mod order. We convert the result to Montgomery form for
-  // the products below.
-  int no_inverse;
-  if (!BN_mod_inverse_odd(X, &no_inverse, sig->s, order, ctx) ||
-      // TODO(davidben): Add a words version of |BN_mod_inverse_odd| and write
-      // into |s_inv_mont| directly.
-      !ec_bignum_to_scalar_unchecked(group, &s_inv_mont, X) ||
-      !bn_to_montgomery_small(s_inv_mont.words, order->width, s_inv_mont.words,
-                              order->width, group->order_mont)) {
-    goto err;
-  }
+
+  // s_inv_mont = s^-1 in the Montgomery domain. This is
+  // |ec_scalar_to_montgomery| followed by |ec_scalar_inv_montgomery|, but
+  // |ec_scalar_inv_montgomery| followed by |ec_scalar_from_montgomery| is
+  // equivalent and slightly more efficient.
+  ec_scalar_inv_montgomery(group, &s_inv_mont, &s);
+  ec_scalar_from_montgomery(group, &s_inv_mont, &s_inv_mont);
+
   // u1 = m * s^-1 mod order
   // u2 = r * s^-1 mod order
   //
   // |s_inv_mont| is in Montgomery form while |m| and |r| are not, so |u1| and
   // |u2| will be taken out of Montgomery form, as desired.
   digest_to_scalar(group, &m, digest, digest_len);
-  if (!scalar_mul_montgomery(group, &u1, &m, &s_inv_mont) ||
-      !scalar_mul_montgomery(group, &u2, &r, &s_inv_mont)) {
-    goto err;
-  }
+  ec_scalar_mul_montgomery(group, &u1, &m, &s_inv_mont);
+  ec_scalar_mul_montgomery(group, &u2, &r, &s_inv_mont);
 
   point = EC_POINT_new(group);
   if (point == NULL) {
@@ -328,15 +306,12 @@ static int ecdsa_sign_setup(const EC_KEY *eckey, BN_CTX *ctx,
       }
     }
 
-    // Compute k^-1. We leave it in the Montgomery domain as an optimization for
-    // later operations.
-    if (!bn_to_montgomery_small(out_kinv_mont->words, order->width, k.words,
-                                order->width, group->order_mont) ||
-        !bn_mod_inverse_prime_mont_small(out_kinv_mont->words, order->width,
-                                         out_kinv_mont->words, order->width,
-                                         group->order_mont)) {
-      goto err;
-    }
+    // Compute k^-1 in the Montgomery domain. This is |ec_scalar_to_montgomery|
+    // followed by |ec_scalar_inv_montgomery|, but |ec_scalar_inv_montgomery|
+    // followed by |ec_scalar_from_montgomery| is equivalent and slightly more
+    // efficient.
+    ec_scalar_inv_montgomery(group, out_kinv_mont, &k);
+    ec_scalar_from_montgomery(group, out_kinv_mont, out_kinv_mont);
 
     // Compute r, the x-coordinate of generator * k.
     if (!ec_point_mul_scalar(group, tmp_point, &k, NULL, NULL, ctx) ||
@@ -396,20 +371,19 @@ ECDSA_SIG *ECDSA_do_sign(const uint8_t *digest, size_t digest_len,
     // Compute priv_key * r (mod order). Note if only one parameter is in the
     // Montgomery domain, |scalar_mod_mul_montgomery| will compute the answer in
     // the normal domain.
-    if (!ec_bignum_to_scalar(group, &r_mont, ret->r) ||
-        !bn_to_montgomery_small(r_mont.words, order->width, r_mont.words,
-                                order->width, group->order_mont) ||
-        !scalar_mul_montgomery(group, &s, priv_key, &r_mont)) {
+    if (!ec_bignum_to_scalar(group, &r_mont, ret->r)) {
       goto err;
     }
+    ec_scalar_to_montgomery(group, &r_mont, &r_mont);
+    ec_scalar_mul_montgomery(group, &s, priv_key, &r_mont);
 
     // Compute tmp = m + priv_key * r.
-    scalar_add(group, &tmp, &m, &s);
+    ec_scalar_add(group, &tmp, &m, &s);
 
     // Finally, multiply s by k^-1. That was retained in Montgomery form, so the
     // same technique as the previous multiplication works.
-    if (!scalar_mul_montgomery(group, &s, &tmp, &kinv_mont) ||
-        !bn_set_words(ret->s, s.words, order->width)) {
+    ec_scalar_mul_montgomery(group, &s, &tmp, &kinv_mont);
+    if (!bn_set_words(ret->s, s.words, order->width)) {
       goto err;
     }
     if (!BN_is_zero(ret->s)) {

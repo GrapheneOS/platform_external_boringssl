@@ -328,11 +328,11 @@ class Array {
 
   // CopyFrom replaces the array with a newly-allocated copy of |in|. It returns
   // true on success and false on error.
-  bool CopyFrom(Span<const uint8_t> in) {
+  bool CopyFrom(Span<const T> in) {
     if (!Init(in.size())) {
       return false;
     }
-    OPENSSL_memcpy(data_, in.data(), in.size());
+    OPENSSL_memcpy(data_, in.data(), sizeof(T) * in.size());
     return true;
   }
 
@@ -1739,14 +1739,21 @@ bool tls1_get_legacy_signature_algorithm(uint16_t *out, const EVP_PKEY *pkey);
 bool tls1_choose_signature_algorithm(SSL_HANDSHAKE *hs, uint16_t *out);
 
 // tls12_add_verify_sigalgs adds the signature algorithms acceptable for the
-// peer signature to |out|. It returns true on success and false on error.
-bool tls12_add_verify_sigalgs(const SSL *ssl, CBB *out);
+// peer signature to |out|. It returns true on success and false on error. If
+// |for_certs| is true, the potentially more restrictive list of algorithms for
+// certificates is used. Otherwise, the online signature one is used.
+bool tls12_add_verify_sigalgs(const SSL *ssl, CBB *out, bool for_certs);
 
 // tls12_check_peer_sigalg checks if |sigalg| is acceptable for the peer
 // signature. It returns true on success and false on error, setting
 // |*out_alert| to an alert to send.
 bool tls12_check_peer_sigalg(const SSL *ssl, uint8_t *out_alert,
                              uint16_t sigalg);
+
+// tls12_has_different_verify_sigalgs_for_certs returns whether |ssl| has a
+// different, more restrictive, list of signature algorithms acceptable for the
+// certificate than the online signature.
+bool tls12_has_different_verify_sigalgs_for_certs(const SSL *ssl);
 
 
 // Underdocumented functions.
@@ -1759,7 +1766,12 @@ bool tls12_check_peer_sigalg(const SSL *ssl, uint8_t *out_alert,
 #define NAMED_CURVE_TYPE 3
 
 struct CERT {
-  EVP_PKEY *privatekey;
+  static constexpr bool kAllowUniquePtr = true;
+
+  explicit CERT(const SSL_X509_METHOD *x509_method);
+  ~CERT();
+
+  UniquePtr<EVP_PKEY> privatekey;
 
   // chain contains the certificate chain, with the leaf at the beginning. The
   // first element of |chain| may be NULL to indicate that the leaf certificate
@@ -1767,35 +1779,34 @@ struct CERT {
   //   If |chain| != NULL -> len(chain) >= 1
   //   If |chain[0]| == NULL -> len(chain) >= 2.
   //   |chain[1..]| != NULL
-  STACK_OF(CRYPTO_BUFFER) *chain;
+  UniquePtr<STACK_OF(CRYPTO_BUFFER)> chain;
 
   // x509_chain may contain a parsed copy of |chain[1..]|. This is only used as
   // a cache in order to implement “get0” functions that return a non-owning
   // pointer to the certificate chain.
-  STACK_OF(X509) *x509_chain;
+  STACK_OF(X509) *x509_chain = nullptr;
 
   // x509_leaf may contain a parsed copy of the first element of |chain|. This
   // is only used as a cache in order to implement “get0” functions that return
   // a non-owning pointer to the certificate chain.
-  X509 *x509_leaf;
+  X509 *x509_leaf = nullptr;
 
   // x509_stash contains the last |X509| object append to the chain. This is a
   // workaround for some third-party code that continue to use an |X509| object
   // even after passing ownership with an “add0” function.
-  X509 *x509_stash;
+  X509 *x509_stash = nullptr;
 
   // key_method, if non-NULL, is a set of callbacks to call for private key
   // operations.
-  const SSL_PRIVATE_KEY_METHOD *key_method;
+  const SSL_PRIVATE_KEY_METHOD *key_method = nullptr;
 
   // x509_method contains pointers to functions that might deal with |X509|
   // compatibility, or might be a no-op, depending on the application.
-  const SSL_X509_METHOD *x509_method;
+  const SSL_X509_METHOD *x509_method = nullptr;
 
-  // sigalgs, if non-NULL, is the set of signature algorithms supported by
+  // sigalgs, if non-empty, is the set of signature algorithms supported by
   // |privatekey| in decreasing order of preference.
-  uint16_t *sigalgs;
-  size_t num_sigalgs;
+  Array<uint16_t> sigalgs;
 
   // Certificate setup callback: if set is called whenever a
   // certificate may be required (client or server). the callback
@@ -1803,23 +1814,23 @@ struct CERT {
   // certificates required. This allows advanced applications
   // to select certificates on the fly: for example based on
   // supported signature algorithms or curves.
-  int (*cert_cb)(SSL *ssl, void *arg);
-  void *cert_cb_arg;
+  int (*cert_cb)(SSL *ssl, void *arg) = nullptr;
+  void *cert_cb_arg = nullptr;
 
   // Optional X509_STORE for certificate validation. If NULL the parent SSL_CTX
   // store is used instead.
-  X509_STORE *verify_store;
+  X509_STORE *verify_store = nullptr;
 
   // Signed certificate timestamp list to be sent to the client, if requested
-  CRYPTO_BUFFER *signed_cert_timestamp_list;
+  UniquePtr<CRYPTO_BUFFER> signed_cert_timestamp_list;
 
   // OCSP response to be sent to the client, if requested.
-  CRYPTO_BUFFER *ocsp_response;
+  UniquePtr<CRYPTO_BUFFER> ocsp_response;
 
   // sid_ctx partitions the session space within a shared session cache or
   // ticket key. Only sessions with a matching value will be accepted.
-  uint8_t sid_ctx_length;
-  uint8_t sid_ctx[SSL_MAX_SID_CTX_LENGTH];
+  uint8_t sid_ctx_length = 0;
+  uint8_t sid_ctx[SSL_MAX_SID_CTX_LENGTH] = {0};
 
   // If enable_early_data is true, early data can be sent and accepted.
   bool enable_early_data:1;
@@ -2027,8 +2038,6 @@ struct SSLContext {
   void (*remove_session_cb)(SSL_CTX *ctx, SSL_SESSION *sess);
   SSL_SESSION *(*get_session_cb)(SSL *ssl, const uint8_t *data, int len,
                                  int *copy);
-  SSL_SESSION *(*get_session_cb_legacy)(SSL *ssl, uint8_t *data, int len,
-                                        int *copy);
 
   CRYPTO_refcount_t references;
 
@@ -2228,6 +2237,10 @@ struct SSLContext {
 
   // ed25519_enabled is whether Ed25519 is advertised in the handshake.
   bool ed25519_enabled:1;
+
+  // rsa_pss_rsae_certs_enabled is whether rsa_pss_rsae_* are supported by the
+  // certificate verifier.
+  bool rsa_pss_rsae_certs_enabled:1;
 
   // false_start_allowed_without_alpn is whether False Start (if
   // |SSL_MODE_ENABLE_FALSE_START| is enabled) is allowed without ALPN.
@@ -2440,6 +2453,10 @@ struct SSL3_STATE {
 
   // Contains the QUIC transport params received by the peer.
   Array<uint8_t> peer_quic_transport_params;
+
+  // srtp_profile is the selected SRTP protection profile for
+  // DTLS-SRTP.
+  const SRTP_PROTECTION_PROFILE *srtp_profile = nullptr;
 };
 
 // lengths of messages
@@ -2671,10 +2688,6 @@ struct SSLConnection {
   // DTLS-SRTP.
   STACK_OF(SRTP_PROTECTION_PROFILE) *srtp_profiles;
 
-  // srtp_profile is the selected SRTP protection profile for
-  // DTLS-SRTP.
-  const SRTP_PROTECTION_PROFILE *srtp_profile;
-
   // The client's Channel ID private key.
   EVP_PKEY *tlsext_channel_id_private;
 
@@ -2753,10 +2766,8 @@ struct SSLConnection {
 // kMaxEarlyDataSkipped in tls_record.c, which is measured in ciphertext.
 static const size_t kMaxEarlyDataAccepted = 14336;
 
-CERT *ssl_cert_new(const SSL_X509_METHOD *x509_method);
-CERT *ssl_cert_dup(CERT *cert);
+UniquePtr<CERT> ssl_cert_dup(CERT *cert);
 void ssl_cert_clear_certs(CERT *cert);
-void ssl_cert_free(CERT *cert);
 int ssl_set_cert(CERT *cert, UniquePtr<CRYPTO_BUFFER> buffer);
 int ssl_is_key_type_supported(int key_type);
 // ssl_compare_public_and_private_key returns one if |pubkey| is the public
