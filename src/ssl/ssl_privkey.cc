@@ -82,16 +82,15 @@ static int ssl_set_pkey(CERT *cert, EVP_PKEY *pkey) {
     return 0;
   }
 
-  if (cert->chain != NULL &&
-      sk_CRYPTO_BUFFER_value(cert->chain, 0) != NULL &&
+  if (cert->chain != nullptr &&
+      sk_CRYPTO_BUFFER_value(cert->chain.get(), 0) != nullptr &&
       // Sanity-check that the private key and the certificate match.
       !ssl_cert_check_private_key(cert, pkey)) {
     return 0;
   }
 
-  EVP_PKEY_free(cert->privatekey);
   EVP_PKEY_up_ref(pkey);
-  cert->privatekey = pkey;
+  cert->privatekey.reset(pkey);
 
   return 1;
 }
@@ -111,9 +110,9 @@ static const SSL_SIGNATURE_ALGORITHM kSignatureAlgorithms[] = {
     {SSL_SIGN_RSA_PKCS1_SHA384, EVP_PKEY_RSA, NID_undef, &EVP_sha384, 0},
     {SSL_SIGN_RSA_PKCS1_SHA512, EVP_PKEY_RSA, NID_undef, &EVP_sha512, 0},
 
-    {SSL_SIGN_RSA_PSS_SHA256, EVP_PKEY_RSA, NID_undef, &EVP_sha256, 1},
-    {SSL_SIGN_RSA_PSS_SHA384, EVP_PKEY_RSA, NID_undef, &EVP_sha384, 1},
-    {SSL_SIGN_RSA_PSS_SHA512, EVP_PKEY_RSA, NID_undef, &EVP_sha512, 1},
+    {SSL_SIGN_RSA_PSS_RSAE_SHA256, EVP_PKEY_RSA, NID_undef, &EVP_sha256, 1},
+    {SSL_SIGN_RSA_PSS_RSAE_SHA384, EVP_PKEY_RSA, NID_undef, &EVP_sha384, 1},
+    {SSL_SIGN_RSA_PSS_RSAE_SHA512, EVP_PKEY_RSA, NID_undef, &EVP_sha512, 1},
 
     {SSL_SIGN_ECDSA_SHA1, EVP_PKEY_EC, NID_undef, &EVP_sha1, 0},
     {SSL_SIGN_ECDSA_SECP256R1_SHA256, EVP_PKEY_EC, NID_X9_62_prime256v1,
@@ -136,7 +135,7 @@ static const SSL_SIGNATURE_ALGORITHM *get_signature_algorithm(uint16_t sigalg) {
 }
 
 int ssl_has_private_key(const SSL *ssl) {
-  return ssl->cert->privatekey != NULL || ssl->cert->key_method != NULL;
+  return ssl->cert->privatekey != nullptr || ssl->cert->key_method != nullptr;
 }
 
 static int pkey_supports_algorithm(const SSL *ssl, EVP_PKEY *pkey,
@@ -214,7 +213,8 @@ enum ssl_private_key_result_t ssl_private_key_sign(
 
   *out_len = max_out;
   ScopedEVP_MD_CTX ctx;
-  if (!setup_ctx(ssl, ctx.get(), ssl->cert->privatekey, sigalg, 0 /* sign */) ||
+  if (!setup_ctx(ssl, ctx.get(), ssl->cert->privatekey.get(), sigalg,
+                 0 /* sign */) ||
       !EVP_DigestSign(ctx.get(), out, out_len, in.data(), in.size())) {
     return ssl_private_key_failure;
   }
@@ -251,7 +251,7 @@ enum ssl_private_key_result_t ssl_private_key_decrypt(SSL_HANDSHAKE *hs,
     return ret;
   }
 
-  RSA *rsa = EVP_PKEY_get0_RSA(ssl->cert->privatekey);
+  RSA *rsa = EVP_PKEY_get0_RSA(ssl->cert->privatekey.get());
   if (rsa == NULL) {
     // Decrypt operations are only supported for RSA keys.
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
@@ -429,12 +429,12 @@ const char *SSL_get_signature_algorithm_name(uint16_t sigalg,
       return include_curve ? "ecdsa_secp384r1_sha384" : "ecdsa_sha384";
     case SSL_SIGN_ECDSA_SECP521R1_SHA512:
       return include_curve ? "ecdsa_secp521r1_sha512" : "ecdsa_sha512";
-    case SSL_SIGN_RSA_PSS_SHA256:
-      return "rsa_pss_sha256";
-    case SSL_SIGN_RSA_PSS_SHA384:
-      return "rsa_pss_sha384";
-    case SSL_SIGN_RSA_PSS_SHA512:
-      return "rsa_pss_sha512";
+    case SSL_SIGN_RSA_PSS_RSAE_SHA256:
+      return "rsa_pss_rsae_sha256";
+    case SSL_SIGN_RSA_PSS_RSAE_SHA384:
+      return "rsa_pss_rsae_sha384";
+    case SSL_SIGN_RSA_PSS_RSAE_SHA512:
+      return "rsa_pss_rsae_sha512";
     case SSL_SIGN_ED25519:
       return "ed25519";
     default:
@@ -477,14 +477,12 @@ static int set_algorithm_prefs(uint16_t **out_prefs, size_t *out_num_prefs,
 
 int SSL_CTX_set_signing_algorithm_prefs(SSL_CTX *ctx, const uint16_t *prefs,
                                         size_t num_prefs) {
-  return set_algorithm_prefs(&ctx->cert->sigalgs, &ctx->cert->num_sigalgs,
-                             prefs, num_prefs);
+  return ctx->cert->sigalgs.CopyFrom(MakeConstSpan(prefs, num_prefs));
 }
 
 int SSL_set_signing_algorithm_prefs(SSL *ssl, const uint16_t *prefs,
                                     size_t num_prefs) {
-  return set_algorithm_prefs(&ssl->cert->sigalgs, &ssl->cert->num_sigalgs,
-                             prefs, num_prefs);
+  return ssl->cert->sigalgs.CopyFrom(MakeConstSpan(prefs, num_prefs));
 }
 
 int SSL_CTX_set_verify_algorithm_prefs(SSL_CTX *ctx, const uint16_t *prefs,
