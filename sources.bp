@@ -377,6 +377,7 @@ cc_defaults {
         "src/crypto/test/file_test.cc",
         "src/crypto/test/malloc.cc",
         "src/crypto/test/test_util.cc",
+        "src/crypto/test/wycheproof_util.cc",
     ],
 }
 
