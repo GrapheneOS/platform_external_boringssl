@@ -91,6 +91,7 @@ cc_library {
     vndk: {
         enabled: true,
     },
+    recovery_available: true,
     defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
     unique_host_soname: true,
 }
@@ -101,6 +102,7 @@ cc_library_static {
     name: "libcrypto_no_clang",
     defaults: ["boringssl_defaults", "boringssl_flags"],
     host_supported: true,
+    recovery_available: true,
 
     target: {
         windows: {
