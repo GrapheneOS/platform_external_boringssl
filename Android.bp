@@ -13,7 +13,7 @@ cc_defaults {
     cflags: [
         "-fvisibility=hidden",
         "-DBORINGSSL_SHARED_LIBRARY",
-        "-DBORINGSSL_IMPLEMENTATION",
+        "-DBORINGSSL_ANDROID_SYSTEM",
         "-DOPENSSL_SMALL",
         "-D_XOPEN_SOURCE=700",
         "-Werror",
@@ -26,6 +26,14 @@ cc_defaults {
     ],
 
     conlyflags: ["-std=c99"],
+
+    // Build BoringSSL and its tests against the same STL.
+    sdk_version: "9",
+    target: {
+        android: {
+            stl: "libc++_static",
+        },
+    },
 }
 
 // Used by libcrypto + libssl
@@ -34,14 +42,7 @@ cc_defaults {
 
     local_include_dirs: ["src/include"],
     export_include_dirs: ["src/include"],
-    sdk_version: "9",
-    target: {
-        android: {
-            stl: "libc++_static",
-        },
-    },
-
-    cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
+    cflags: ["-DBORINGSSL_IMPLEMENTATION"],
 }
 
 //// libcrypto
@@ -233,7 +234,6 @@ cc_test {
   defaults: ["boringssl_crypto_test_sources", "boringssl_flags"],
   whole_static_libs: ["boringssl_test_support"],
 
-  cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
   shared_libs: ["libcrypto"],
 }
 
@@ -244,6 +244,5 @@ cc_test {
   defaults: ["boringssl_ssl_test_sources", "boringssl_flags"],
   whole_static_libs: ["boringssl_test_support"],
 
-  cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
   shared_libs: ["libcrypto", "libssl"],
 }
