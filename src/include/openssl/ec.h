@@ -154,6 +154,11 @@ OPENSSL_EXPORT int EC_GROUP_get_curve_name(const EC_GROUP *group);
 // element of the field underlying |group|.
 OPENSSL_EXPORT unsigned EC_GROUP_get_degree(const EC_GROUP *group);
 
+// EC_curve_nid2nist returns the NIST name of the elliptic curve specified by
+// |nid|, or NULL if |nid| is not a NIST curve. For example, it returns "P-256"
+// for |NID_X9_62_prime256v1|.
+OPENSSL_EXPORT const char *EC_curve_nid2nist(int nid);
+
 
 // Points on elliptic curves.
 
@@ -315,7 +320,7 @@ OPENSSL_EXPORT void EC_GROUP_set_asn1_flag(EC_GROUP *group, int flag);
 
 typedef struct ec_method_st EC_METHOD;
 
-// EC_GROUP_method_of returns NULL.
+// EC_GROUP_method_of returns a dummy non-NULL pointer.
 OPENSSL_EXPORT const EC_METHOD *EC_GROUP_method_of(const EC_GROUP *group);
 
 // EC_METHOD_get_field_type returns NID_X9_62_prime_field.

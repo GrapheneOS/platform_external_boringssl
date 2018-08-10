@@ -6,7 +6,7 @@
  * are met:
  *
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer. 
+ *    notice, this list of conditions and the following disclaimer.
  *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in
@@ -139,6 +139,10 @@ extern "C" {
 #define OPENSSL_NO_THREADS
 #endif
 
+#if defined(__ANDROID_API__)
+#define OPENSSL_ANDROID
+#endif
+
 #if !defined(OPENSSL_NO_THREADS)
 #define OPENSSL_THREADS
 #endif
@@ -155,7 +159,7 @@ extern "C" {
 // A consumer may use this symbol in the preprocessor to temporarily build
 // against multiple revisions of BoringSSL at the same time. It is not
 // recommended to do so for longer than is necessary.
-#define BORINGSSL_API_VERSION 8
+#define BORINGSSL_API_VERSION 9
 
 #if defined(BORINGSSL_SHARED_LIBRARY)
 
@@ -221,6 +225,9 @@ extern "C" {
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define OPENSSL_ASAN
+#endif
+#if __has_feature(thread_sanitizer)
+#define OPENSSL_TSAN
 #endif
 #if __has_feature(memory_sanitizer)
 #define OPENSSL_MSAN
@@ -378,6 +385,7 @@ extern "C++" {
 #if defined(BORINGSSL_NO_CXX)
 
 #define BORINGSSL_MAKE_DELETER(type, deleter)
+#define BORINGSSL_MAKE_UP_REF(type, up_ref_func)
 
 #else
 
@@ -447,6 +455,18 @@ class StackAllocated {
 //   bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
 template <typename T>
 using UniquePtr = std::unique_ptr<T, internal::Deleter<T>>;
+
+#define BORINGSSL_MAKE_UP_REF(type, up_ref_func)                    \
+  static inline UniquePtr<type> UpRef(type *v) {                    \
+    if (v != nullptr) {                                             \
+      up_ref_func(v);                                               \
+    }                                                               \
+    return UniquePtr<type>(v);                                      \
+  }                                                                 \
+                                                                    \
+  static inline UniquePtr<type> UpRef(const UniquePtr<type> &ptr) { \
+    return UpRef(ptr.get());                                        \
+  }
 
 }  // namespace bssl
 

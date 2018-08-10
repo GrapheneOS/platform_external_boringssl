@@ -13,6 +13,8 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
 #include <openssl/ec.h>
+#include <openssl/err.h>
+#include <openssl/mem.h>
 
 #include "internal.h"
 #include "../bn/internal.h"

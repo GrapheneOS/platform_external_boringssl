@@ -157,7 +157,7 @@
 namespace bssl {
 
 // kCiphers is an array of all supported ciphers, sorted by id.
-static const SSL_CIPHER kCiphers[] = {
+static constexpr SSL_CIPHER kCiphers[] = {
     // The RSA ciphers
     // Cipher 02
     {
@@ -208,33 +208,6 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_AES256,
      SSL_SHA1,
      SSL_HANDSHAKE_MAC_DEFAULT,
-    },
-
-
-    // TLS v1.2 ciphersuites
-
-    // Cipher 3C
-    {
-     TLS1_TXT_RSA_WITH_AES_128_SHA256,
-     "TLS_RSA_WITH_AES_128_CBC_SHA256",
-     TLS1_CK_RSA_WITH_AES_128_SHA256,
-     SSL_kRSA,
-     SSL_aRSA,
-     SSL_AES128,
-     SSL_SHA256,
-     SSL_HANDSHAKE_MAC_SHA256,
-    },
-
-    // Cipher 3D
-    {
-     TLS1_TXT_RSA_WITH_AES_256_SHA256,
-     "TLS_RSA_WITH_AES_256_CBC_SHA256",
-     TLS1_CK_RSA_WITH_AES_256_SHA256,
-     SSL_kRSA,
-     SSL_aRSA,
-     SSL_AES256,
-     SSL_SHA256,
-     SSL_HANDSHAKE_MAC_SHA256,
     },
 
     // PSK cipher suites.
@@ -374,58 +347,6 @@ static const SSL_CIPHER kCiphers[] = {
      SSL_SHA1,
      SSL_HANDSHAKE_MAC_DEFAULT,
     },
-
-
-    // HMAC based TLS v1.2 ciphersuites from RFC5289
-
-    // Cipher C023
-    {
-     TLS1_TXT_ECDHE_ECDSA_WITH_AES_128_SHA256,
-     "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256",
-     TLS1_CK_ECDHE_ECDSA_WITH_AES_128_SHA256,
-     SSL_kECDHE,
-     SSL_aECDSA,
-     SSL_AES128,
-     SSL_SHA256,
-     SSL_HANDSHAKE_MAC_SHA256,
-    },
-
-    // Cipher C024
-    {
-     TLS1_TXT_ECDHE_ECDSA_WITH_AES_256_SHA384,
-     "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384",
-     TLS1_CK_ECDHE_ECDSA_WITH_AES_256_SHA384,
-     SSL_kECDHE,
-     SSL_aECDSA,
-     SSL_AES256,
-     SSL_SHA384,
-     SSL_HANDSHAKE_MAC_SHA384,
-    },
-
-    // Cipher C027
-    {
-     TLS1_TXT_ECDHE_RSA_WITH_AES_128_SHA256,
-     "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256",
-     TLS1_CK_ECDHE_RSA_WITH_AES_128_SHA256,
-     SSL_kECDHE,
-     SSL_aRSA,
-     SSL_AES128,
-     SSL_SHA256,
-     SSL_HANDSHAKE_MAC_SHA256,
-    },
-
-    // Cipher C028
-    {
-     TLS1_TXT_ECDHE_RSA_WITH_AES_256_SHA384,
-     "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384",
-     TLS1_CK_ECDHE_RSA_WITH_AES_256_SHA384,
-     SSL_kECDHE,
-     SSL_aRSA,
-     SSL_AES256,
-     SSL_SHA384,
-     SSL_HANDSHAKE_MAC_SHA384,
-    },
-
 
     // GCM based TLS v1.2 ciphersuites from RFC5289
 
@@ -616,8 +537,6 @@ static const CIPHER_ALIAS kCipherAliases[] = {
     // MAC aliases
     {"SHA1", ~0u, ~0u, ~0u, SSL_SHA1, 0},
     {"SHA", ~0u, ~0u, ~0u, SSL_SHA1, 0},
-    {"SHA256", ~0u, ~0u, ~0u, SSL_SHA256, 0},
-    {"SHA384", ~0u, ~0u, ~0u, SSL_SHA384, 0},
 
     // Legacy protocol minimum version aliases. "TLSv1" is intentionally the
     // same as "SSLv3".
@@ -628,22 +547,14 @@ static const CIPHER_ALIAS kCipherAliases[] = {
     // Legacy strength classes.
     {"HIGH", ~0u, ~0u, ~0u, ~0u, 0},
     {"FIPS", ~0u, ~0u, ~0u, ~0u, 0},
+
+    // Temporary no-op aliases corresponding to removed SHA-2 legacy CBC
+    // ciphers. These should be removed after 2018-05-14.
+    {"SHA256", 0, 0, 0, 0, 0},
+    {"SHA384", 0, 0, 0, 0, 0},
 };
 
 static const size_t kCipherAliasesLen = OPENSSL_ARRAY_SIZE(kCipherAliases);
-
-static int ssl_cipher_id_cmp(const void *in_a, const void *in_b) {
-  const SSL_CIPHER *a = reinterpret_cast<const SSL_CIPHER *>(in_a);
-  const SSL_CIPHER *b = reinterpret_cast<const SSL_CIPHER *>(in_b);
-
-  if (a->id > b->id) {
-    return 1;
-  } else if (a->id < b->id) {
-    return -1;
-  } else {
-    return 0;
-  }
-}
 
 bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
                              size_t *out_mac_secret_len,
@@ -654,15 +565,26 @@ bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
   *out_fixed_iv_len = 0;
 
   const int is_tls12 = version == TLS1_2_VERSION && !is_dtls;
+  const int is_tls13 = version == TLS1_3_VERSION && !is_dtls;
 
   if (cipher->algorithm_mac == SSL_AEAD) {
     if (cipher->algorithm_enc == SSL_AES128GCM) {
-      *out_aead =
-          is_tls12 ? EVP_aead_aes_128_gcm_tls12() : EVP_aead_aes_128_gcm();
+      if (is_tls12) {
+        *out_aead = EVP_aead_aes_128_gcm_tls12();
+      } else if (is_tls13) {
+        *out_aead = EVP_aead_aes_128_gcm_tls13();
+      } else {
+        *out_aead = EVP_aead_aes_128_gcm();
+      }
       *out_fixed_iv_len = 4;
     } else if (cipher->algorithm_enc == SSL_AES256GCM) {
-      *out_aead =
-          is_tls12 ? EVP_aead_aes_256_gcm_tls12() : EVP_aead_aes_256_gcm();
+      if (is_tls12) {
+        *out_aead = EVP_aead_aes_256_gcm_tls12();
+      } else if (is_tls13) {
+        *out_aead = EVP_aead_aes_256_gcm_tls13();
+      } else {
+        *out_aead = EVP_aead_aes_256_gcm();
+      }
       *out_fixed_iv_len = 4;
     } else if (cipher->algorithm_enc == SSL_CHACHA20POLY1305) {
       *out_aead = EVP_aead_chacha20_poly1305();
@@ -678,36 +600,23 @@ bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
     }
   } else if (cipher->algorithm_mac == SSL_SHA1) {
     if (cipher->algorithm_enc == SSL_eNULL) {
-      if (version == SSL3_VERSION) {
-        *out_aead = EVP_aead_null_sha1_ssl3();
-      } else {
-        *out_aead = EVP_aead_null_sha1_tls();
-      }
+      *out_aead = EVP_aead_null_sha1_tls();
     } else if (cipher->algorithm_enc == SSL_3DES) {
-      if (version == SSL3_VERSION) {
-        *out_aead = EVP_aead_des_ede3_cbc_sha1_ssl3();
-        *out_fixed_iv_len = 8;
-      } else if (version == TLS1_VERSION) {
+      if (version == TLS1_VERSION) {
         *out_aead = EVP_aead_des_ede3_cbc_sha1_tls_implicit_iv();
         *out_fixed_iv_len = 8;
       } else {
         *out_aead = EVP_aead_des_ede3_cbc_sha1_tls();
       }
     } else if (cipher->algorithm_enc == SSL_AES128) {
-      if (version == SSL3_VERSION) {
-        *out_aead = EVP_aead_aes_128_cbc_sha1_ssl3();
-        *out_fixed_iv_len = 16;
-      } else if (version == TLS1_VERSION) {
+      if (version == TLS1_VERSION) {
         *out_aead = EVP_aead_aes_128_cbc_sha1_tls_implicit_iv();
         *out_fixed_iv_len = 16;
       } else {
         *out_aead = EVP_aead_aes_128_cbc_sha1_tls();
       }
     } else if (cipher->algorithm_enc == SSL_AES256) {
-      if (version == SSL3_VERSION) {
-        *out_aead = EVP_aead_aes_256_cbc_sha1_ssl3();
-        *out_fixed_iv_len = 16;
-      } else if (version == TLS1_VERSION) {
+      if (version == TLS1_VERSION) {
         *out_aead = EVP_aead_aes_256_cbc_sha1_tls_implicit_iv();
         *out_fixed_iv_len = 16;
       } else {
@@ -718,23 +627,6 @@ bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
     }
 
     *out_mac_secret_len = SHA_DIGEST_LENGTH;
-  } else if (cipher->algorithm_mac == SSL_SHA256) {
-    if (cipher->algorithm_enc == SSL_AES128) {
-      *out_aead = EVP_aead_aes_128_cbc_sha256_tls();
-    } else if (cipher->algorithm_enc == SSL_AES256) {
-      *out_aead = EVP_aead_aes_256_cbc_sha256_tls();
-    } else {
-      return false;
-    }
-
-    *out_mac_secret_len = SHA256_DIGEST_LENGTH;
-  } else if (cipher->algorithm_mac == SSL_SHA384) {
-      if (cipher->algorithm_enc != SSL_AES256) {
-        return false;
-      }
-
-      *out_aead = EVP_aead_aes_256_cbc_sha384_tls();
-      *out_mac_secret_len = SHA384_DIGEST_LENGTH;
   } else {
     return false;
   }
@@ -1232,7 +1124,7 @@ static bool ssl_cipher_process_rulestr(const char *rule_str,
   return true;
 }
 
-bool ssl_create_cipher_list(SSLCipherPreferenceList **out_cipher_list,
+bool ssl_create_cipher_list(UniquePtr<SSLCipherPreferenceList> *out_cipher_list,
                             const char *rule_str, bool strict) {
   // Return with error if nothing to do.
   if (rule_str == NULL || out_cipher_list == NULL) {
@@ -1350,10 +1242,7 @@ bool ssl_create_cipher_list(SSLCipherPreferenceList **out_cipher_list,
     return false;
   }
 
-  if (*out_cipher_list) {
-    Delete(*out_cipher_list);
-  }
-  *out_cipher_list = pref_list.release();
+  *out_cipher_list = std::move(pref_list);
 
   // Configuring an empty cipher list is an error but still updates the
   // output.
@@ -1367,7 +1256,8 @@ bool ssl_create_cipher_list(SSLCipherPreferenceList **out_cipher_list,
 
 uint16_t ssl_cipher_get_value(const SSL_CIPHER *cipher) {
   uint32_t id = cipher->id;
-  // All ciphers are SSLv3.
+  // All OpenSSL cipher IDs are prefaced with 0x03. Historically this referred
+  // to SSLv2 vs SSLv3.
   assert((id & 0xff000000) == 0x03000000);
   return id & 0xffff;
 }
@@ -1420,6 +1310,36 @@ size_t ssl_cipher_get_record_split_len(const SSL_CIPHER *cipher) {
 
 using namespace bssl;
 
+static constexpr int ssl_cipher_id_cmp_inner(const SSL_CIPHER *a,
+                                             const SSL_CIPHER *b) {
+  // C++11's constexpr functions must have a body consisting of just a
+  // return-statement.
+  return (a->id > b->id) ? 1 : ((a->id < b->id) ? -1 : 0);
+}
+
+static int ssl_cipher_id_cmp(const void *in_a, const void *in_b) {
+  return ssl_cipher_id_cmp_inner(reinterpret_cast<const SSL_CIPHER *>(in_a),
+                                 reinterpret_cast<const SSL_CIPHER *>(in_b));
+}
+
+template <typename T, size_t N>
+static constexpr size_t countof(T const (&)[N]) {
+  return N;
+}
+
+template <typename T, size_t I>
+static constexpr int check_order(const T (&arr)[I], size_t N) {
+  // C++11's constexpr functions must have a body consisting of just a
+  // return-statement.
+  return N > 1 ? ((ssl_cipher_id_cmp_inner(&arr[N - 2], &arr[N - 1]) < 0)
+                      ? check_order(arr, N - 1)
+                      : 0)
+               : 1;
+}
+
+static_assert(check_order(kCiphers, countof(kCiphers)) == 1,
+              "Ciphers are not sorted, bsearch won't work");
+
 const SSL_CIPHER *SSL_get_cipher_by_value(uint16_t value) {
   SSL_CIPHER c;
 
@@ -1461,10 +1381,6 @@ int SSL_CIPHER_get_digest_nid(const SSL_CIPHER *cipher) {
       return NID_undef;
     case SSL_SHA1:
       return NID_sha1;
-    case SSL_SHA256:
-      return NID_sha256;
-    case SSL_SHA384:
-      return NID_sha384;
   }
   assert(0);
   return NID_undef;
@@ -1729,14 +1645,6 @@ const char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf,
   switch (alg_mac) {
     case SSL_SHA1:
       mac = "SHA1";
-      break;
-
-    case SSL_SHA256:
-      mac = "SHA256";
-      break;
-
-    case SSL_SHA384:
-      mac = "SHA384";
       break;
 
     case SSL_AEAD:

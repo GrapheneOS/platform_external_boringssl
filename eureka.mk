@@ -64,6 +64,7 @@ crypto_sources := \
   src/crypto/bytestring/ber.c\
   src/crypto/bytestring/cbb.c\
   src/crypto/bytestring/cbs.c\
+  src/crypto/bytestring/unicode.c\
   src/crypto/chacha/chacha.c\
   src/crypto/cipher_extra/cipher_extra.c\
   src/crypto/cipher_extra/derive_key.c\
@@ -74,7 +75,6 @@ crypto_sources := \
   src/crypto/cipher_extra/e_null.c\
   src/crypto/cipher_extra/e_rc2.c\
   src/crypto/cipher_extra/e_rc4.c\
-  src/crypto/cipher_extra/e_ssl3.c\
   src/crypto/cipher_extra/e_tls.c\
   src/crypto/cipher_extra/tls_cbc.c\
   src/crypto/cmac/cmac.c\
@@ -95,7 +95,7 @@ crypto_sources := \
   src/crypto/dsa/dsa.c\
   src/crypto/dsa/dsa_asn1.c\
   src/crypto/ec_extra/ec_asn1.c\
-  src/crypto/ecdh/ecdh.c\
+  src/crypto/ecdh_extra/ecdh_extra.c\
   src/crypto/ecdsa_extra/ecdsa_asn1.c\
   src/crypto/engine/engine.c\
   src/crypto/err/err.c\
@@ -148,6 +148,7 @@ crypto_sources := \
   src/crypto/refcount_c11.c\
   src/crypto/refcount_lock.c\
   src/crypto/rsa_extra/rsa_asn1.c\
+  src/crypto/rsa_extra/rsa_print.c\
   src/crypto/stack/stack.c\
   src/crypto/thread.c\
   src/crypto/thread_none.c\
@@ -224,6 +225,7 @@ crypto_sources := \
   src/crypto/x509v3/v3_int.c\
   src/crypto/x509v3/v3_lib.c\
   src/crypto/x509v3/v3_ncons.c\
+  src/crypto/x509v3/v3_ocsp.c\
   src/crypto/x509v3/v3_pci.c\
   src/crypto/x509v3/v3_pcia.c\
   src/crypto/x509v3/v3_pcons.c\
@@ -238,7 +240,6 @@ crypto_sources := \
 
 ssl_sources := \
   src/ssl/bio_ssl.cc\
-  src/ssl/custom_extensions.cc\
   src/ssl/d1_both.cc\
   src/ssl/d1_lib.cc\
   src/ssl/d1_pkt.cc\

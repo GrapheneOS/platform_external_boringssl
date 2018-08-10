@@ -622,6 +622,20 @@ unsigned EC_GROUP_get_degree(const EC_GROUP *group) {
   return ec_GFp_simple_group_get_degree(group);
 }
 
+const char *EC_curve_nid2nist(int nid) {
+  switch (nid) {
+    case NID_secp224r1:
+      return "P-224";
+    case NID_X9_62_prime256v1:
+      return "P-256";
+    case NID_secp384r1:
+      return "P-384";
+    case NID_secp521r1:
+      return "P-521";
+  }
+  return NULL;
+}
+
 EC_POINT *EC_POINT_new(const EC_GROUP *group) {
   if (group == NULL) {
     OPENSSL_PUT_ERROR(EC, ERR_R_PASSED_NULL_PARAMETER);
@@ -900,7 +914,10 @@ int ec_point_mul_scalar(const EC_GROUP *group, EC_POINT *r,
 void EC_GROUP_set_asn1_flag(EC_GROUP *group, int flag) {}
 
 const EC_METHOD *EC_GROUP_method_of(const EC_GROUP *group) {
-  return NULL;
+  // This function exists purely to give callers a way to call
+  // |EC_METHOD_get_field_type|. cryptography.io crashes if |EC_GROUP_method_of|
+  // returns NULL, so return some other garbage pointer.
+  return (const EC_METHOD *)0x12340000;
 }
 
 int EC_METHOD_get_field_type(const EC_METHOD *meth) {
