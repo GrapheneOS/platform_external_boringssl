@@ -375,7 +375,8 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		sessionId:             hs.clientHello.sessionId,
 		compressionMethod:     config.Bugs.SendCompressionMethod,
 		versOverride:          config.Bugs.SendServerHelloVersion,
-		supportedVersOverride: config.Bugs.SendServerSupportedExtensionVersion,
+		supportedVersOverride: config.Bugs.SendServerSupportedVersionExtension,
+		omitSupportedVers:     config.Bugs.OmitServerSupportedVersionExtension,
 		customExtension:       config.Bugs.CustomUnencryptedExtension,
 		unencryptedALPN:       config.Bugs.SendUnencryptedALPN,
 	}
@@ -833,7 +834,7 @@ ResendHelloRetryRequest:
 		if config.ClientAuth >= RequestClientCert {
 			// Request a client certificate
 			certReq := &certificateRequestMsg{
-				vers: c.wireVersion,
+				vers:                  c.wireVersion,
 				hasSignatureAlgorithm: !config.Bugs.OmitCertificateRequestAlgorithms,
 				hasRequestContext:     true,
 				requestContext:        config.Bugs.SendRequestContext,
@@ -884,8 +885,47 @@ ResendHelloRetryRequest:
 			}
 		}
 		certMsgBytes := certMsg.marshal()
-		hs.writeServerHash(certMsgBytes)
-		c.writeRecord(recordTypeHandshake, certMsgBytes)
+		sentCompressedCertMsg := false
+
+	FindCertCompressionAlg:
+		for candidate, alg := range c.config.CertCompressionAlgs {
+			for _, id := range hs.clientHello.compressedCertAlgs {
+				if id == candidate {
+					if expected := config.Bugs.ExpectedCompressedCert; expected != 0 && expected != id {
+						return fmt.Errorf("expected to send compressed cert with alg %d, but picked %d", expected, id)
+					}
+
+					if override := config.Bugs.SendCertCompressionAlgId; override != 0 {
+						id = override
+					}
+
+					uncompressed := certMsgBytes[4:]
+					uncompressedLen := uint32(len(uncompressed))
+					if override := config.Bugs.SendCertUncompressedLength; override != 0 {
+						uncompressedLen = override
+					}
+
+					compressedCertMsgBytes := (&compressedCertificateMsg{
+						algID:              id,
+						uncompressedLength: uncompressedLen,
+						compressed:         alg.Compress(uncompressed),
+					}).marshal()
+
+					hs.writeServerHash(compressedCertMsgBytes)
+					c.writeRecord(recordTypeHandshake, compressedCertMsgBytes)
+					sentCompressedCertMsg = true
+					break FindCertCompressionAlg
+				}
+			}
+		}
+
+		if !sentCompressedCertMsg {
+			if config.Bugs.ExpectedCompressedCert != 0 {
+				return errors.New("unexpectedly sent uncompressed certificate")
+			}
+			hs.writeServerHash(certMsgBytes)
+			c.writeRecord(recordTypeHandshake, certMsgBytes)
+		}
 
 		certVerify := &certificateVerifyMsg{
 			hasSignatureAlgorithm: true,
@@ -1122,7 +1162,7 @@ func (hs *serverHandshakeState) processClientHello() (isResume bool, err error) 
 		versOverride:      config.Bugs.SendServerHelloVersion,
 		compressionMethod: config.Bugs.SendCompressionMethod,
 		extensions: serverExtensions{
-			supportedVersion: config.Bugs.SendServerSupportedExtensionVersion,
+			supportedVersion: config.Bugs.SendServerSupportedVersionExtension,
 		},
 		omitExtensions:  config.Bugs.OmitExtensions,
 		emptyExtensions: config.Bugs.EmptyExtensions,
