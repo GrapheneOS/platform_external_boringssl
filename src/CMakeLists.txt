@@ -38,6 +38,9 @@ if (NOT GO_EXECUTABLE)
   message(FATAL_ERROR "Could not find Go")
 endif()
 
+if (USE_CUSTOM_LIBCXX)
+  set(BORINGSSL_ALLOW_CXX_RUNTIME 1)
+endif()
 if (BORINGSSL_ALLOW_CXX_RUNTIME)
   add_definitions(-DBORINGSSL_ALLOW_CXX_RUNTIME)
 endif()
@@ -151,6 +154,8 @@ elseif(MSVC)
       "C4820" # 'bytes' bytes padding added after construct 'member_name'
       "C5026" # move constructor was implicitly defined as deleted
       "C5027" # move assignment operator was implicitly defined as deleted
+      "C5045" # Compiler will insert Spectre mitigation for memory load if
+              # /Qspectre switch specified
       )
   set(MSVC_LEVEL4_WARNINGS_LIST
       # See https://connect.microsoft.com/VisualStudio/feedback/details/1217660/warning-c4265-when-using-functional-header
@@ -170,8 +175,11 @@ if(WIN32)
   add_definitions(-DNOMINMAX)
   # Allow use of fopen.
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-  # VS 2017 and higher supports STL-only warning suppressions.
-  add_definitions("-D_STL_EXTRA_DISABLED_WARNINGS=4774 4987")
+  # VS 2017 and higher supports STL-only warning suppressions. Manually add to
+  # C++ only to work around a CMake quoting bug when using NASM with the Visual
+  # Studio generator. This will be fixed in CMake 3.13.0. See
+  # https://gitlab.kitware.com/cmake/cmake/merge_requests/2179
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-D_STL_EXTRA_DISABLED_WARNINGS=4774\ 4987>)
 endif()
 
 if((CMAKE_COMPILER_IS_GNUCXX AND CMAKE_C_COMPILER_VERSION VERSION_GREATER "4.7.99") OR
@@ -208,7 +216,7 @@ if(FUZZ)
 
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize-coverage=edge,indirect-calls,trace-pc-guard")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize-coverage=edge,indirect-calls,trace-pc-guard")
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
   link_directories(.)
 endif()
 
@@ -261,6 +269,16 @@ if(CFI)
   # -flto causes object files to contain LLVM bitcode. Mixing those with
   # assembly output in the same static library breaks the linker.
   set(OPENSSL_NO_ASM "1")
+endif()
+
+if(TSAN)
+  if(NOT CLANG)
+    message(FATAL_ERROR "Cannot enable TSAN unless using Clang")
+  endif()
+
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
 endif()
 
 if (GCOV)
@@ -346,6 +364,61 @@ if (${ARCH} STREQUAL "x86" AND APPLE AND ${CMAKE_VERSION} VERSION_LESS "3.0")
   set(ARCH "x86_64")
 endif()
 
+if (USE_CUSTOM_LIBCXX)
+  if (NOT CLANG)
+    message(FATAL_ERROR "USE_CUSTOM_LIBCXX only supported with Clang")
+  endif()
+
+  # CMAKE_CXX_FLAGS ends up in the linker flags as well, so use
+  # add_compile_options. There does not appear to be a way to set
+  # language-specific compile-only flags.
+  add_compile_options("-nostdinc++")
+  set(CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} -nostdlib++")
+  include_directories(
+    SYSTEM
+    util/bot/libcxx/include
+    util/bot/libcxxabi/include
+  )
+
+  # This is patterned after buildtools/third_party/libc++/BUILD.gn and
+  # buildtools/third_party/libc++abi/BUILD.gn in Chromium.
+
+  file(GLOB LIBCXX_SOURCES "util/bot/libcxx/src/*.cpp")
+  file(GLOB LIBCXXABI_SOURCES "util/bot/libcxxabi/src/*.cpp")
+
+  # This file is meant for exception-less builds.
+  list(REMOVE_ITEM LIBCXXABI_SOURCES "trunk/src/cxa_noexception.cpp")
+  # libc++ also defines new and delete.
+  list(REMOVE_ITEM LIBCXXABI_SOURCES "trunk/src/stdlib_new_delete.cpp")
+  if (TSAN)
+    # ThreadSanitizer tries to intercept these symbols. Skip them to avoid
+    # symbol conflicts.
+    list(REMOVE_ITEM LIBCXXABI_SOURCES "trunk/src/cxa_guard.cpp")
+  endif()
+
+  add_library(libcxxabi ${LIBCXXABI_SOURCES})
+  target_compile_definitions(
+    libcxxabi PRIVATE
+    -D_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS
+  )
+  set_target_properties(libcxxabi PROPERTIES COMPILE_FLAGS "-Wno-missing-prototypes -Wno-implicit-fallthrough")
+
+  add_library(libcxx ${LIBCXX_SOURCES})
+  if (ASAN OR MSAN OR TSAN)
+    # Sanitizers try to intercept new and delete.
+    target_compile_definitions(
+      libcxx PRIVATE
+      -D_LIBCPP_DISABLE_NEW_DELETE_DEFINITIONS
+    )
+  endif()
+  target_compile_definitions(
+    libcxx PRIVATE
+    -D_LIBCPP_BUILDING_LIBRARY
+    -DLIBCXX_BUILDING_LIBCXXABI
+  )
+  target_link_libraries(libcxx libcxxabi)
+endif()
+
 # Add minimal googletest targets. The provided one has many side-effects, and
 # googletest has a very straightforward build.
 add_library(boringssl_gtest third_party/googletest/src/gtest-all.cc)
@@ -399,5 +472,5 @@ add_custom_target(
             ${GO_EXECUTABLE} test -shim-path $<TARGET_FILE:bssl_shim>
               ${RUNNER_ARGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    DEPENDS all_tests bssl_shim
+    DEPENDS all_tests bssl_shim handshaker
     ${MAYBE_USES_TERMINAL})

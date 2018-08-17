@@ -109,7 +109,7 @@ add_subdirectory(dh)
 add_subdirectory(dsa)
 add_subdirectory(rsa_extra)
 add_subdirectory(ec_extra)
-add_subdirectory(ecdh)
+add_subdirectory(ecdh_extra)
 add_subdirectory(ecdsa_extra)
 
 # Level 3
@@ -192,7 +192,7 @@ add_library(
   $<TARGET_OBJECTS:dsa>
   $<TARGET_OBJECTS:rsa_extra>
   $<TARGET_OBJECTS:ec_extra>
-  $<TARGET_OBJECTS:ecdh>
+  $<TARGET_OBJECTS:ecdh_extra>
   $<TARGET_OBJECTS:ecdsa_extra>
   $<TARGET_OBJECTS:cmac>
   $<TARGET_OBJECTS:evp>
@@ -216,6 +216,12 @@ if(NOT MSVC AND NOT ANDROID)
   target_link_libraries(crypto pthread)
 endif()
 
+# Every target depends on crypto, so we add libcxx as a dependency here to
+# simplify injecting it everywhere.
+if(USE_CUSTOM_LIBCXX)
+  target_link_libraries(crypto libcxx)
+endif()
+
 # TODO(davidben): Convert the remaining tests to GTest.
 add_executable(
   crypto_test
@@ -234,7 +240,7 @@ add_executable(
   curve25519/ed25519_test.cc
   curve25519/spake25519_test.cc
   curve25519/x25519_test.cc
-  ecdh/ecdh_test.cc
+  ecdh_extra/ecdh_test.cc
   dh/dh_test.cc
   digest_extra/digest_test.cc
   dsa/dsa_test.cc
@@ -265,6 +271,7 @@ add_executable(
   test/file_test_gtest.cc
   thread_test.cc
   x509/x509_test.cc
+  x509/x509_time_test.cc
   x509v3/tab_test.cc
   x509v3/v3name_test.cc
 
