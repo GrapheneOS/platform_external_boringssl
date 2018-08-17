@@ -169,6 +169,7 @@ OPENSSL_EXPORT EVP_PKEY *EVP_PKEY_new_ed25519_private(
 
 #define EVP_PKEY_NONE NID_undef
 #define EVP_PKEY_RSA NID_rsaEncryption
+#define EVP_PKEY_RSA_PSS NID_rsassaPss
 #define EVP_PKEY_DSA NID_dsa
 #define EVP_PKEY_EC NID_X9_62_id_ecPublicKey
 #define EVP_PKEY_ED25519 NID_ED25519
@@ -796,6 +797,19 @@ OPENSSL_EXPORT EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **out, const uint8_t **inp,
 // EVP_PKEY_get0_DH returns NULL.
 OPENSSL_EXPORT DH *EVP_PKEY_get0_DH(EVP_PKEY *pkey);
 
+// EVP_PKEY_get1_DH returns NULL.
+OPENSSL_EXPORT DH *EVP_PKEY_get1_DH(EVP_PKEY *pkey);
+
+
+// Preprocessor compatibility section (hidden).
+//
+// Historically, a number of APIs were implemented in OpenSSL as macros and
+// constants to 'ctrl' functions. To avoid breaking #ifdefs in consumers, this
+// section defines a number of legacy macros.
+
+#define EVP_PKEY_CTX_set_rsa_oaep_md EVP_PKEY_CTX_set_rsa_oaep_md
+#define EVP_PKEY_CTX_set0_rsa_oaep_label EVP_PKEY_CTX_set0_rsa_oaep_label
+
 
 // Private structures.
 
@@ -827,6 +841,7 @@ extern "C++" {
 namespace bssl {
 
 BORINGSSL_MAKE_DELETER(EVP_PKEY, EVP_PKEY_free)
+BORINGSSL_MAKE_UP_REF(EVP_PKEY, EVP_PKEY_up_ref)
 BORINGSSL_MAKE_DELETER(EVP_PKEY_CTX, EVP_PKEY_CTX_free)
 
 }  // namespace bssl
