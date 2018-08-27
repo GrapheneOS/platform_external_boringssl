@@ -100,7 +100,6 @@ func (c *Conn) clientHandshake() error {
 		pskBinderFirst:          c.config.Bugs.PSKBinderFirst,
 		omitExtensions:          c.config.Bugs.OmitExtensions,
 		emptyExtensions:         c.config.Bugs.EmptyExtensions,
-		dummyPQPaddingLen:       c.config.Bugs.SendDummyPQPaddingLength,
 	}
 
 	if maxVersion >= VersionTLS13 {
@@ -603,22 +602,21 @@ NextCipherSuite:
 		return fmt.Errorf("tls: server sent non-matching version %x vs %x", serverWireVersion, serverHello.vers)
 	}
 
-	// Check for downgrade signals in the server random, per
-	// draft-ietf-tls-tls13-16, section 4.1.3.
-	if c.vers <= VersionTLS12 && c.config.maxVersion(c.isDTLS) >= VersionTLS13 {
-		if bytes.Equal(serverHello.random[len(serverHello.random)-8:], downgradeTLS13) {
-			c.sendAlert(alertProtocolVersion)
-			return errors.New("tls: downgrade from TLS 1.3 detected")
+	_, supportsTLS13 := c.config.isSupportedVersion(VersionTLS13, false)
+	// Check for downgrade signals in the server random, per RFC 8446, section 4.1.3.
+	if (supportsTLS13 || c.config.Bugs.CheckTLS13DowngradeRandom) && !c.config.Bugs.IgnoreTLS13DowngradeRandom {
+		if c.vers <= VersionTLS12 && c.config.maxVersion(c.isDTLS) >= VersionTLS13 {
+			if bytes.Equal(serverHello.random[len(serverHello.random)-8:], downgradeTLS13) {
+				c.sendAlert(alertProtocolVersion)
+				return errors.New("tls: downgrade from TLS 1.3 detected")
+			}
 		}
-	}
-	if c.vers <= VersionTLS11 && c.config.maxVersion(c.isDTLS) >= VersionTLS12 {
-		if bytes.Equal(serverHello.random[len(serverHello.random)-8:], downgradeTLS12) {
-			c.sendAlert(alertProtocolVersion)
-			return errors.New("tls: downgrade from TLS 1.2 detected")
+		if c.vers <= VersionTLS11 && c.config.maxVersion(c.isDTLS) >= VersionTLS12 {
+			if bytes.Equal(serverHello.random[len(serverHello.random)-8:], downgradeTLS12) {
+				c.sendAlert(alertProtocolVersion)
+				return errors.New("tls: downgrade from TLS 1.2 detected")
+			}
 		}
-	}
-	if c.config.Bugs.ExpectDraftTLS13DowngradeRandom && !bytes.Equal(serverHello.random[len(serverHello.random)-8:], downgradeTLS13Draft) {
-		return errors.New("tls: server did not send draft TLS 1.3 anti-downgrade signal")
 	}
 
 	suite := mutualCipherSuite(hello.cipherSuites, serverHello.cipherSuite)
@@ -1557,10 +1555,6 @@ func (hs *clientHandshakeState) processServerExtensions(serverExtensions *server
 			return errors.New("tls: server sent QUIC transport params for TLS version less than 1.3")
 		}
 		c.quicTransportParams = serverExtensions.quicTransportParams
-	}
-
-	if l := c.config.Bugs.ExpectDummyPQPaddingLength; l != 0 && serverExtensions.dummyPQPaddingLen != l {
-		return fmt.Errorf("tls: expected %d-byte dummy PQ padding extension, but got %d bytes", l, serverExtensions.dummyPQPaddingLen)
 	}
 
 	return nil

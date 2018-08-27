@@ -1049,7 +1049,7 @@ static bool ext_sigalgs_parse_clienthello(SSL_HANDSHAKE *hs, uint8_t *out_alert,
 
 // Signature Algorithms for Certificates.
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-23#section-4.2.3
+// https://tools.ietf.org/html/rfc8446#section-4.2.3
 
 static bool ext_sigalgs_cert_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
@@ -1846,7 +1846,7 @@ static bool ext_ec_point_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
 
 // Pre Shared Key
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6
+// https://tools.ietf.org/html/rfc8446#section-4.2.11
 
 static size_t ext_pre_shared_key_clienthello_length(SSL_HANDSHAKE *hs) {
   SSL *const ssl = hs->ssl;
@@ -1867,9 +1867,9 @@ static bool ext_pre_shared_key_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
     return true;
   }
 
-  // Per draft-ietf-tls-tls13-21 section 4.1.4, skip offering the session if the
-  // selected cipher in HelloRetryRequest does not match. This avoids performing
-  // the transcript hash transformation for multiple hashes.
+  // Per RFC 8446 section 4.1.4, skip offering the session if the selected
+  // cipher in HelloRetryRequest does not match. This avoids performing the
+  // transcript hash transformation for multiple hashes.
   if (hs->received_hello_retry_request &&
       ssl->session->cipher->algorithm_prf != hs->new_cipher->algorithm_prf) {
     return true;
@@ -2000,7 +2000,7 @@ bool ssl_ext_pre_shared_key_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
 
 // Pre-Shared Key Exchange Modes
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.7
+// https://tools.ietf.org/html/rfc8446#section-4.2.9
 
 static bool ext_psk_key_exchange_modes_add_clienthello(SSL_HANDSHAKE *hs,
                                                        CBB *out) {
@@ -2044,7 +2044,7 @@ static bool ext_psk_key_exchange_modes_parse_clienthello(SSL_HANDSHAKE *hs,
 
 // Early Data Indication
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
+// https://tools.ietf.org/html/rfc8446#section-4.2.10
 
 static bool ext_early_data_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
@@ -2129,7 +2129,7 @@ static bool ext_early_data_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
 
 // Key Share
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.5
+// https://tools.ietf.org/html/rfc8446#section-4.2.8
 
 static bool ext_key_share_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
@@ -2314,7 +2314,7 @@ bool ssl_ext_key_share_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
 
 // Supported Versions
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.1
+// https://tools.ietf.org/html/rfc8446#section-4.2.1
 
 static bool ext_supported_versions_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
@@ -2346,7 +2346,7 @@ static bool ext_supported_versions_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) 
 
 // Cookie
 //
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.2
+// https://tools.ietf.org/html/rfc8446#section-4.2.2
 
 static bool ext_cookie_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   if (hs->cookie.empty()) {
@@ -2368,83 +2368,10 @@ static bool ext_cookie_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
 }
 
 
-// Dummy PQ Padding extension
+// Supported Groups
 //
-// Dummy post-quantum padding invovles the client (and later server) sending
-// useless, random-looking bytes in an extension in their ClientHello or
-// ServerHello. These extensions are sized to simulate a post-quantum
-// key-exchange and so enable measurement of the latency impact of the
-// additional bandwidth.
-
-static bool ext_dummy_pq_padding_add(CBB *out, size_t len) {
-  CBB contents;
-  uint8_t *buffer;
-  if (!CBB_add_u16(out, TLSEXT_TYPE_dummy_pq_padding) ||
-      !CBB_add_u16_length_prefixed(out, &contents) ||
-      !CBB_add_space(&contents, &buffer, len)) {
-    return false;
-  }
-
-  // The length is used as the nonce so that different length extensions have
-  // different contents. There's no reason this has to be the case, it just
-  // makes things a little more obvious in a packet dump.
-  uint8_t nonce[12] = {0};
-  memcpy(nonce, &len, sizeof(len));
-
-  memset(buffer, 0, len);
-  static const uint8_t kZeroKey[32] = {0};
-  CRYPTO_chacha_20(buffer, buffer, len, kZeroKey, nonce, 0);
-
-  return CBB_flush(out);
-}
-
-static bool ext_dummy_pq_padding_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
-  const size_t len = hs->config->dummy_pq_padding_len;
-  if (len == 0) {
-    return true;
-  }
-
-  return ext_dummy_pq_padding_add(out, len);
-}
-
-static bool ext_dummy_pq_padding_parse_serverhello(SSL_HANDSHAKE *hs,
-                                                   uint8_t *out_alert,
-                                                   CBS *contents) {
-  if (contents == nullptr) {
-    return true;
-  }
-
-  if (CBS_len(contents) != hs->config->dummy_pq_padding_len) {
-    return false;
-  }
-
-  hs->ssl->did_dummy_pq_padding = true;
-  return true;
-}
-
-static bool ext_dummy_pq_padding_parse_clienthello(SSL_HANDSHAKE *hs,
-                                                   uint8_t *out_alert,
-                                                   CBS *contents) {
-  if (contents != nullptr &&
-      0 < CBS_len(contents) && CBS_len(contents) < (1 << 12)) {
-    hs->dummy_pq_padding_len = CBS_len(contents);
-  }
-
-  return true;
-}
-
-static bool ext_dummy_pq_padding_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
-  if (!hs->dummy_pq_padding_len) {
-    return true;
-  }
-
-  return ext_dummy_pq_padding_add(out, hs->dummy_pq_padding_len);
-}
-
-// Negotiated Groups
-//
-// https://tools.ietf.org/html/rfc4492#section-5.1.2
-// https://tools.ietf.org/html/draft-ietf-tls-tls13-16#section-4.2.4
+// https://tools.ietf.org/html/rfc4492#section-5.1.1
+// https://tools.ietf.org/html/rfc8446#section-4.2.7
 
 static bool ext_supported_groups_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
   SSL *const ssl = hs->ssl;
@@ -2994,14 +2921,6 @@ static const struct tls_extension kExtensions[] = {
     dont_add_serverhello,
   },
   {
-    TLSEXT_TYPE_dummy_pq_padding,
-    NULL,
-    ext_dummy_pq_padding_add_clienthello,
-    ext_dummy_pq_padding_parse_serverhello,
-    ext_dummy_pq_padding_parse_clienthello,
-    ext_dummy_pq_padding_add_serverhello,
-  },
-  {
     TLSEXT_TYPE_quic_transport_parameters,
     NULL,
     ext_quic_transport_params_add_clienthello,
@@ -3009,9 +2928,6 @@ static const struct tls_extension kExtensions[] = {
     ext_quic_transport_params_parse_clienthello,
     ext_quic_transport_params_add_serverhello,
   },
-  // The final extension must be non-empty. WebSphere Application Server 7.0 is
-  // intolerant to the last extension being zero-length. See
-  // https://crbug.com/363583.
   {
     TLSEXT_TYPE_supported_groups,
     NULL,
@@ -3088,6 +3004,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out,
     }
   }
 
+  bool last_was_empty = false;
   for (size_t i = 0; i < kNumExtensions; i++) {
     const size_t len_before = CBB_len(&extensions);
     if (!kExtensions[i].add_clienthello(hs, &extensions)) {
@@ -3096,9 +3013,13 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out,
       return false;
     }
 
-    if (CBB_len(&extensions) != len_before) {
+    const size_t bytes_written = CBB_len(&extensions) - len_before;
+    if (bytes_written != 0) {
       hs->extensions.sent |= (1u << i);
     }
+    // If the difference in lengths is only four bytes then the extension had
+    // an empty body.
+    last_was_empty = (bytes_written == 4);
   }
 
   if (ssl->ctx->grease_enabled) {
@@ -3118,17 +3039,35 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out,
       OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
       return false;
     }
+
+    last_was_empty = false;
   }
 
   if (!SSL_is_dtls(ssl)) {
     size_t psk_extension_len = ext_pre_shared_key_clienthello_length(hs);
     header_len += 2 + CBB_len(&extensions) + psk_extension_len;
+    size_t padding_len = 0;
+
+    // The final extension must be non-empty. WebSphere Application
+    // Server 7.0 is intolerant to the last extension being zero-length. See
+    // https://crbug.com/363583.
+    if (last_was_empty && psk_extension_len == 0) {
+      padding_len = 1;
+      // The addition of the padding extension may push us into the F5 bug.
+      header_len += 4 + padding_len;
+    }
+
+    // Add padding to workaround bugs in F5 terminators. See RFC 7685.
+    //
+    // NB: because this code works out the length of all existing extensions
+    // it MUST always appear last (save for any PSK extension).
     if (header_len > 0xff && header_len < 0x200) {
-      // Add padding to workaround bugs in F5 terminators. See RFC 7685.
-      //
-      // NB: because this code works out the length of all existing extensions
-      // it MUST always appear last.
-      size_t padding_len = 0x200 - header_len;
+      // If our calculations already included a padding extension, remove that
+      // factor because we're about to change its length.
+      if (padding_len != 0) {
+        header_len -= 4 + padding_len;
+      }
+      padding_len = 0x200 - header_len;
       // Extensions take at least four bytes to encode. Always include at least
       // one byte of data if including the extension. WebSphere Application
       // Server 7.0 is intolerant to the last extension being zero-length. See
@@ -3138,7 +3077,9 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out,
       } else {
         padding_len = 1;
       }
+    }
 
+    if (padding_len != 0) {
       uint8_t *padding_bytes;
       if (!CBB_add_u16(&extensions, TLSEXT_TYPE_padding) ||
           !CBB_add_u16(&extensions, padding_len) ||
@@ -3412,21 +3353,24 @@ bool ssl_parse_serverhello_tlsext(SSL_HANDSHAKE *hs, CBS *cbs) {
 }
 
 static enum ssl_ticket_aead_result_t decrypt_ticket_with_cipher_ctx(
-    uint8_t **out, size_t *out_len, EVP_CIPHER_CTX *cipher_ctx,
-    HMAC_CTX *hmac_ctx, const uint8_t *ticket, size_t ticket_len) {
+    Array<uint8_t> *out, EVP_CIPHER_CTX *cipher_ctx, HMAC_CTX *hmac_ctx,
+    Span<const uint8_t> ticket) {
   size_t iv_len = EVP_CIPHER_CTX_iv_length(cipher_ctx);
 
   // Check the MAC at the end of the ticket.
   uint8_t mac[EVP_MAX_MD_SIZE];
   size_t mac_len = HMAC_size(hmac_ctx);
-  if (ticket_len < SSL_TICKET_KEY_NAME_LEN + iv_len + 1 + mac_len) {
+  if (ticket.size() < SSL_TICKET_KEY_NAME_LEN + iv_len + 1 + mac_len) {
     // The ticket must be large enough for key name, IV, data, and MAC.
     return ssl_ticket_aead_ignore_ticket;
   }
-  HMAC_Update(hmac_ctx, ticket, ticket_len - mac_len);
+  // Split the ticket into the ticket and the MAC.
+  auto ticket_mac = ticket.subspan(ticket.size() - mac_len);
+  ticket = ticket.subspan(0, ticket.size() - mac_len);
+  HMAC_Update(hmac_ctx, ticket.data(), ticket.size());
   HMAC_Final(hmac_ctx, mac, NULL);
-  bool mac_ok =
-      CRYPTO_memcmp(mac, ticket + (ticket_len - mac_len), mac_len) == 0;
+  assert(mac_len == ticket_mac.size());
+  bool mac_ok = CRYPTO_memcmp(mac, ticket_mac.data(), mac_len) == 0;
 #if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
   mac_ok = true;
 #endif
@@ -3435,46 +3379,48 @@ static enum ssl_ticket_aead_result_t decrypt_ticket_with_cipher_ctx(
   }
 
   // Decrypt the session data.
-  const uint8_t *ciphertext = ticket + SSL_TICKET_KEY_NAME_LEN + iv_len;
-  size_t ciphertext_len = ticket_len - SSL_TICKET_KEY_NAME_LEN - iv_len -
-                          mac_len;
-  UniquePtr<uint8_t> plaintext((uint8_t *)OPENSSL_malloc(ciphertext_len));
-  if (!plaintext) {
+  auto ciphertext = ticket.subspan(SSL_TICKET_KEY_NAME_LEN + iv_len);
+  Array<uint8_t> plaintext;
+#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
+  if (!plaintext.CopyFrom(ciphertext)) {
     return ssl_ticket_aead_error;
   }
-  size_t plaintext_len;
-#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
-  OPENSSL_memcpy(plaintext.get(), ciphertext, ciphertext_len);
-  plaintext_len = ciphertext_len;
 #else
-  if (ciphertext_len >= INT_MAX) {
+  if (ciphertext.size() >= INT_MAX) {
     return ssl_ticket_aead_ignore_ticket;
   }
+  if (!plaintext.Init(ciphertext.size())) {
+    return ssl_ticket_aead_error;
+  }
   int len1, len2;
-  if (!EVP_DecryptUpdate(cipher_ctx, plaintext.get(), &len1, ciphertext,
-                         (int)ciphertext_len) ||
-      !EVP_DecryptFinal_ex(cipher_ctx, plaintext.get() + len1, &len2)) {
+  if (!EVP_DecryptUpdate(cipher_ctx, plaintext.data(), &len1, ciphertext.data(),
+                         (int)ciphertext.size()) ||
+      !EVP_DecryptFinal_ex(cipher_ctx, plaintext.data() + len1, &len2)) {
     ERR_clear_error();
     return ssl_ticket_aead_ignore_ticket;
   }
-  plaintext_len = (size_t)(len1) + len2;
+  plaintext.Shrink(static_cast<size_t>(len1) + len2);
 #endif
 
-  *out = plaintext.release();
-  *out_len = plaintext_len;
+  *out = std::move(plaintext);
   return ssl_ticket_aead_success;
 }
 
 static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_cb(
-    SSL_HANDSHAKE *hs, uint8_t **out, size_t *out_len, bool *out_renew_ticket,
-    const uint8_t *ticket, size_t ticket_len) {
-  assert(ticket_len >= SSL_TICKET_KEY_NAME_LEN + EVP_MAX_IV_LENGTH);
+    SSL_HANDSHAKE *hs, Array<uint8_t> *out, bool *out_renew_ticket,
+    Span<const uint8_t> ticket) {
+  assert(ticket.size() >= SSL_TICKET_KEY_NAME_LEN + EVP_MAX_IV_LENGTH);
   ScopedEVP_CIPHER_CTX cipher_ctx;
   ScopedHMAC_CTX hmac_ctx;
-  const uint8_t *iv = ticket + SSL_TICKET_KEY_NAME_LEN;
+  auto name = ticket.subspan(0, SSL_TICKET_KEY_NAME_LEN);
+  // The actual IV is shorter, but the length is determined by the callback's
+  // chosen cipher. Instead we pass in |EVP_MAX_IV_LENGTH| worth of IV to ensure
+  // the callback has enough.
+  auto iv = ticket.subspan(SSL_TICKET_KEY_NAME_LEN, EVP_MAX_IV_LENGTH);
   int cb_ret = hs->ssl->session_ctx->ticket_key_cb(
-      hs->ssl, (uint8_t *)ticket /* name */, (uint8_t *)iv, cipher_ctx.get(),
-      hmac_ctx.get(), 0 /* decrypt */);
+      hs->ssl, const_cast<uint8_t *>(name.data()),
+      const_cast<uint8_t *>(iv.data()), cipher_ctx.get(), hmac_ctx.get(),
+      0 /* decrypt */);
   if (cb_ret < 0) {
     return ssl_ticket_aead_error;
   } else if (cb_ret == 0) {
@@ -3484,14 +3430,13 @@ static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_cb(
   } else {
     assert(cb_ret == 1);
   }
-  return decrypt_ticket_with_cipher_ctx(out, out_len, cipher_ctx.get(),
-                                        hmac_ctx.get(), ticket, ticket_len);
+  return decrypt_ticket_with_cipher_ctx(out, cipher_ctx.get(), hmac_ctx.get(),
+                                        ticket);
 }
 
 static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_ticket_keys(
-    SSL_HANDSHAKE *hs, uint8_t **out, size_t *out_len, const uint8_t *ticket,
-    size_t ticket_len) {
-  assert(ticket_len >= SSL_TICKET_KEY_NAME_LEN + EVP_MAX_IV_LENGTH);
+    SSL_HANDSHAKE *hs, Array<uint8_t> *out, Span<const uint8_t> ticket) {
+  assert(ticket.size() >= SSL_TICKET_KEY_NAME_LEN + EVP_MAX_IV_LENGTH);
   SSL_CTX *ctx = hs->ssl->session_ctx.get();
 
   // Rotate the ticket key if necessary.
@@ -3499,40 +3444,40 @@ static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_ticket_keys(
     return ssl_ticket_aead_error;
   }
 
+  const EVP_CIPHER *cipher = EVP_aes_128_cbc();
+  auto name = ticket.subspan(0, SSL_TICKET_KEY_NAME_LEN);
+  auto iv =
+      ticket.subspan(SSL_TICKET_KEY_NAME_LEN, EVP_CIPHER_iv_length(cipher));
+
   // Pick the matching ticket key and decrypt.
   ScopedEVP_CIPHER_CTX cipher_ctx;
   ScopedHMAC_CTX hmac_ctx;
   {
     MutexReadLock lock(&ctx->lock);
     const TicketKey *key;
-    if (ctx->ticket_key_current &&
-        !OPENSSL_memcmp(ctx->ticket_key_current->name, ticket,
-                        SSL_TICKET_KEY_NAME_LEN)) {
+    if (ctx->ticket_key_current && name == ctx->ticket_key_current->name) {
       key = ctx->ticket_key_current.get();
-    } else if (ctx->ticket_key_prev &&
-               !OPENSSL_memcmp(ctx->ticket_key_prev->name, ticket,
-                               SSL_TICKET_KEY_NAME_LEN)) {
+    } else if (ctx->ticket_key_prev && name == ctx->ticket_key_prev->name) {
       key = ctx->ticket_key_prev.get();
     } else {
       return ssl_ticket_aead_ignore_ticket;
     }
-    const uint8_t *iv = ticket + SSL_TICKET_KEY_NAME_LEN;
     if (!HMAC_Init_ex(hmac_ctx.get(), key->hmac_key, sizeof(key->hmac_key),
                       tlsext_tick_md(), NULL) ||
-        !EVP_DecryptInit_ex(cipher_ctx.get(), EVP_aes_128_cbc(), NULL,
-                            key->aes_key, iv)) {
+        !EVP_DecryptInit_ex(cipher_ctx.get(), cipher, NULL,
+                            key->aes_key, iv.data())) {
       return ssl_ticket_aead_error;
     }
   }
-  return decrypt_ticket_with_cipher_ctx(out, out_len, cipher_ctx.get(),
-                                        hmac_ctx.get(), ticket, ticket_len);
+  return decrypt_ticket_with_cipher_ctx(out, cipher_ctx.get(), hmac_ctx.get(),
+                                        ticket);
 }
 
 static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_method(
-    SSL_HANDSHAKE *hs, uint8_t **out, size_t *out_len, bool *out_renew_ticket,
-    const uint8_t *ticket, size_t ticket_len) {
-  uint8_t *plaintext = (uint8_t *)OPENSSL_malloc(ticket_len);
-  if (plaintext == NULL) {
+    SSL_HANDSHAKE *hs, Array<uint8_t> *out, bool *out_renew_ticket,
+    Span<const uint8_t> ticket) {
+  Array<uint8_t> plaintext;
+  if (!plaintext.Init(ticket.size())) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     return ssl_ticket_aead_error;
   }
@@ -3540,50 +3485,47 @@ static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_method(
   size_t plaintext_len;
   const enum ssl_ticket_aead_result_t result =
       hs->ssl->session_ctx->ticket_aead_method->open(
-          hs->ssl, plaintext, &plaintext_len, ticket_len, ticket, ticket_len);
-
-  if (result == ssl_ticket_aead_success) {
-    *out = plaintext;
-    plaintext = NULL;
-    *out_len = plaintext_len;
+          hs->ssl, plaintext.data(), &plaintext_len, ticket.size(),
+          ticket.data(), ticket.size());
+  if (result != ssl_ticket_aead_success) {
+    return result;
   }
 
-  OPENSSL_free(plaintext);
-  return result;
+  plaintext.Shrink(plaintext_len);
+  *out = std::move(plaintext);
+  return ssl_ticket_aead_success;
 }
 
 enum ssl_ticket_aead_result_t ssl_process_ticket(
     SSL_HANDSHAKE *hs, UniquePtr<SSL_SESSION> *out_session,
-    bool *out_renew_ticket, const uint8_t *ticket, size_t ticket_len,
-    const uint8_t *session_id, size_t session_id_len) {
+    bool *out_renew_ticket, Span<const uint8_t> ticket,
+    Span<const uint8_t> session_id) {
   *out_renew_ticket = false;
   out_session->reset();
 
   if ((SSL_get_options(hs->ssl) & SSL_OP_NO_TICKET) ||
-      session_id_len > SSL_MAX_SSL_SESSION_ID_LENGTH) {
+      session_id.size() > SSL_MAX_SSL_SESSION_ID_LENGTH) {
     return ssl_ticket_aead_ignore_ticket;
   }
 
-  uint8_t *plaintext = NULL;
-  size_t plaintext_len;
+  Array<uint8_t> plaintext;
   enum ssl_ticket_aead_result_t result;
   if (hs->ssl->session_ctx->ticket_aead_method != NULL) {
-    result = ssl_decrypt_ticket_with_method(
-        hs, &plaintext, &plaintext_len, out_renew_ticket, ticket, ticket_len);
+    result = ssl_decrypt_ticket_with_method(hs, &plaintext, out_renew_ticket,
+                                            ticket);
   } else {
     // Ensure there is room for the key name and the largest IV |ticket_key_cb|
     // may try to consume. The real limit may be lower, but the maximum IV
     // length should be well under the minimum size for the session material and
     // HMAC.
-    if (ticket_len < SSL_TICKET_KEY_NAME_LEN + EVP_MAX_IV_LENGTH) {
+    if (ticket.size() < SSL_TICKET_KEY_NAME_LEN + EVP_MAX_IV_LENGTH) {
       return ssl_ticket_aead_ignore_ticket;
     }
     if (hs->ssl->session_ctx->ticket_key_cb != NULL) {
-      result = ssl_decrypt_ticket_with_cb(hs, &plaintext, &plaintext_len,
-                                          out_renew_ticket, ticket, ticket_len);
+      result =
+          ssl_decrypt_ticket_with_cb(hs, &plaintext, out_renew_ticket, ticket);
     } else {
-      result = ssl_decrypt_ticket_with_ticket_keys(
-          hs, &plaintext, &plaintext_len, ticket, ticket_len);
+      result = ssl_decrypt_ticket_with_ticket_keys(hs, &plaintext, ticket);
     }
   }
 
@@ -3592,10 +3534,8 @@ enum ssl_ticket_aead_result_t ssl_process_ticket(
   }
 
   // Decode the session.
-  UniquePtr<SSL_SESSION> session(
-      SSL_SESSION_from_bytes(plaintext, plaintext_len, hs->ssl->ctx.get()));
-  OPENSSL_free(plaintext);
-
+  UniquePtr<SSL_SESSION> session(SSL_SESSION_from_bytes(
+      plaintext.data(), plaintext.size(), hs->ssl->ctx.get()));
   if (!session) {
     ERR_clear_error();  // Don't leave an error on the queue.
     return ssl_ticket_aead_ignore_ticket;
@@ -3603,8 +3543,8 @@ enum ssl_ticket_aead_result_t ssl_process_ticket(
 
   // Copy the client's session ID into the new session, to denote the ticket has
   // been accepted.
-  OPENSSL_memcpy(session->session_id, session_id, session_id_len);
-  session->session_id_length = session_id_len;
+  OPENSSL_memcpy(session->session_id, session_id.data(), session_id.size());
+  session->session_id_length = session_id.size();
 
   *out_session = std::move(session);
   return ssl_ticket_aead_success;

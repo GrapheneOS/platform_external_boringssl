@@ -546,6 +546,7 @@ ssl_ctx_st::ssl_ctx_st(const SSL_METHOD *ssl_method)
       ed25519_enabled(false),
       rsa_pss_rsae_certs_enabled(true),
       false_start_allowed_without_alpn(false),
+      ignore_tls13_downgrade(false),
       handoff(false),
       enable_early_data(false) {
   CRYPTO_MUTEX_init(&lock);
@@ -626,7 +627,6 @@ ssl_st::ssl_st(SSL_CTX *ctx_arg)
       max_cert_list(ctx->max_cert_list),
       server(false),
       quiet_shutdown(ctx->quiet_shutdown),
-      did_dummy_pq_padding(false),
       enable_early_data(ctx->enable_early_data) {
   CRYPTO_new_ex_data(&ex_data);
 }
@@ -2260,10 +2260,6 @@ SSL_CTX *SSL_set_SSL_CTX(SSL *ssl, SSL_CTX *ctx) {
     return NULL;
   }
 
-  if (ctx == NULL) {
-    ctx = ssl->session_ctx.get();
-  }
-
   UniquePtr<CERT> new_cert = ssl_cert_dup(ctx->cert.get());
   if (!new_cert) {
     return nullptr;
@@ -2442,26 +2438,6 @@ void SSL_CTX_set_psk_server_callback(
   ctx->psk_server_callback = cb;
 }
 
-int SSL_set_dummy_pq_padding_size(SSL *ssl, size_t num_bytes) {
-  if (!ssl->config) {
-    return 0;
-  }
-  if (num_bytes > 0xffff) {
-    return 0;
-  }
-
-  ssl->config->dummy_pq_padding_len = num_bytes;
-  return 1;
-}
-
-int SSL_dummy_pq_padding_used(SSL *ssl) {
-  if (ssl->server) {
-    return 0;
-  }
-
-  return ssl->did_dummy_pq_padding;
-}
-
 void SSL_CTX_set_msg_callback(SSL_CTX *ctx,
                               void (*cb)(int write_p, int version,
                                          int content_type, const void *buf,
@@ -2543,6 +2519,10 @@ void SSL_CTX_set_select_certificate_cb(
 void SSL_CTX_set_dos_protection_cb(SSL_CTX *ctx,
                                    int (*cb)(const SSL_CLIENT_HELLO *)) {
   ctx->dos_protection_cb = cb;
+}
+
+void SSL_CTX_set_reverify_on_resume(SSL_CTX *ctx, int enabled) {
+  ctx->reverify_on_resume = !!enabled;
 }
 
 void SSL_set_renegotiate_mode(SSL *ssl, enum ssl_renegotiate_mode_t mode) {
@@ -2656,7 +2636,11 @@ void SSL_CTX_set_false_start_allowed_without_alpn(SSL_CTX *ctx, int allowed) {
   ctx->false_start_allowed_without_alpn = !!allowed;
 }
 
-int SSL_is_draft_downgrade(const SSL *ssl) { return ssl->s3->draft_downgrade; }
+int SSL_is_tls13_downgrade(const SSL *ssl) { return ssl->s3->tls13_downgrade; }
+
+void SSL_CTX_set_ignore_tls13_downgrade(SSL_CTX *ctx, int ignore) {
+  ctx->ignore_tls13_downgrade = !!ignore;
+}
 
 void SSL_set_shed_handshake_config(SSL *ssl, int enable) {
   if (!ssl->config) {
