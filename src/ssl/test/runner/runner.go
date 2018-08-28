@@ -1024,7 +1024,8 @@ func runTest(test *testCase, shimPath string, mallocNumToFail int64) error {
 			panic(fmt.Sprintf("The name of test %q suggests that it's version specific, but min/max version in the Config is %x/%x. One of them should probably be %x", test.name, test.config.MinVersion, test.config.MaxVersion, ver.version))
 		}
 
-		if ver.tls13Variant != 0 {
+		// Ignore this check against "TLS13", since TLS13 is used in many test names.
+		if ver.tls13Variant != 0 && ver.tls13Variant != TLS13RFC {
 			var foundFlag bool
 			for _, flag := range test.flags {
 				if flag == "-tls13-variant" {
@@ -1376,6 +1377,13 @@ var tlsVersions = []tlsVersion{
 		versionDTLS: VersionDTLS12,
 	},
 	{
+		name:         "TLS13",
+		version:      VersionTLS13,
+		excludeFlag:  "-no-tls13",
+		versionWire:  VersionTLS13,
+		tls13Variant: TLS13RFC,
+	},
+	{
 		name:         "TLS13Draft23",
 		version:      VersionTLS13,
 		excludeFlag:  "-no-tls13",
@@ -1480,7 +1488,7 @@ func bigFromHex(hex string) *big.Int {
 func convertToSplitHandshakeTests(tests []testCase) (splitHandshakeTests []testCase) {
 	var stdout bytes.Buffer
 	shim := exec.Command(*shimPath, "-is-handshaker-supported")
-	shim.Stdout = &stdout;
+	shim.Stdout = &stdout
 	if err := shim.Run(); err != nil {
 		panic(err)
 	}
@@ -2831,7 +2839,7 @@ read alert 1 0
 			messageCount:            5,
 			keyUpdateRequest:        keyUpdateRequested,
 			readWithUnfinishedWrite: true,
-			flags: []string{"-async"},
+			flags:                   []string{"-async"},
 		},
 		{
 			name: "SendSNIWarningAlert",
@@ -4967,6 +4975,49 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 					shouldFail:    true,
 					expectedError: ":CERTIFICATE_VERIFY_FAILED:",
 				})
+				// Tests that although the verify callback fails on resumption, by default we don't call it.
+				tests = append(tests, testCase{
+					testType: testType,
+					name:     "CertificateVerificationDoesNotFailOnResume" + suffix,
+					config: Config{
+						MaxVersion:   vers.version,
+						Certificates: []Certificate{rsaCertificate},
+					},
+					tls13Variant:  vers.tls13Variant,
+					flags:         append([]string{"-on-resume-verify-fail"}, flags...),
+					resumeSession: true,
+				})
+				if testType == clientTest && useCustomCallback {
+					tests = append(tests, testCase{
+						testType: testType,
+						name:     "CertificateVerificationFailsOnResume" + suffix,
+						config: Config{
+							MaxVersion:   vers.version,
+							Certificates: []Certificate{rsaCertificate},
+						},
+						tls13Variant: vers.tls13Variant,
+						flags: append([]string{
+							"-on-resume-verify-fail",
+							"-reverify-on-resume",
+						}, flags...),
+						resumeSession: true,
+						shouldFail:    true,
+						expectedError: ":CERTIFICATE_VERIFY_FAILED:",
+					})
+					tests = append(tests, testCase{
+						testType: testType,
+						name:     "CertificateVerificationPassesOnResume" + suffix,
+						config: Config{
+							MaxVersion:   vers.version,
+							Certificates: []Certificate{rsaCertificate},
+						},
+						tls13Variant: vers.tls13Variant,
+						flags: append([]string{
+							"-reverify-on-resume",
+						}, flags...),
+						resumeSession: true,
+					})
+				}
 			}
 		}
 
@@ -5632,7 +5683,8 @@ func addVersionNegotiationTests() {
 				config: Config{
 					TLS13Variant: vers.tls13Variant,
 					Bugs: ProtocolBugs{
-						SendSupportedVersions: []uint16{0x1111, vers.wire(protocol), 0x2222},
+						SendSupportedVersions:      []uint16{0x1111, vers.wire(protocol), 0x2222},
+						IgnoreTLS13DowngradeRandom: true,
 					},
 				},
 				expectedVersion: vers.version,
@@ -5672,8 +5724,9 @@ func addVersionNegotiationTests() {
 		config: Config{
 			MaxVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				SendClientVersion:     0x0304,
-				OmitSupportedVersions: true,
+				SendClientVersion:          0x0304,
+				OmitSupportedVersions:      true,
+				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
 		expectedVersion: VersionTLS12,
@@ -5684,8 +5737,9 @@ func addVersionNegotiationTests() {
 		name:     "ConflictingVersionNegotiation",
 		config: Config{
 			Bugs: ProtocolBugs{
-				SendClientVersion:     VersionTLS12,
-				SendSupportedVersions: []uint16{VersionTLS11},
+				SendClientVersion:          VersionTLS12,
+				SendSupportedVersions:      []uint16{VersionTLS11},
+				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
 		// The extension takes precedence over the ClientHello version.
@@ -5697,24 +5751,12 @@ func addVersionNegotiationTests() {
 		name:     "ConflictingVersionNegotiation-2",
 		config: Config{
 			Bugs: ProtocolBugs{
-				SendClientVersion:     VersionTLS11,
-				SendSupportedVersions: []uint16{VersionTLS12},
+				SendClientVersion:          VersionTLS11,
+				SendSupportedVersions:      []uint16{VersionTLS12},
+				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
 		// The extension takes precedence over the ClientHello version.
-		expectedVersion: VersionTLS12,
-	})
-
-	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "RejectFinalTLS13",
-		config: Config{
-			Bugs: ProtocolBugs{
-				SendSupportedVersions: []uint16{VersionTLS13, VersionTLS12},
-			},
-		},
-		// We currently implement a draft TLS 1.3 version. Ensure that
-		// the true TLS 1.3 value is ignored for now.
 		expectedVersion: VersionTLS12,
 	})
 
@@ -5752,8 +5794,9 @@ func addVersionNegotiationTests() {
 		name:     "MinorVersionTolerance",
 		config: Config{
 			Bugs: ProtocolBugs{
-				SendClientVersion:     0x03ff,
-				OmitSupportedVersions: true,
+				SendClientVersion:          0x03ff,
+				OmitSupportedVersions:      true,
+				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
 		expectedVersion: VersionTLS12,
@@ -5763,8 +5806,9 @@ func addVersionNegotiationTests() {
 		name:     "MajorVersionTolerance",
 		config: Config{
 			Bugs: ProtocolBugs{
-				SendClientVersion:     0x0400,
-				OmitSupportedVersions: true,
+				SendClientVersion:          0x0400,
+				OmitSupportedVersions:      true,
+				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
 		// TLS 1.3 must be negotiated with the supported_versions
@@ -5855,9 +5899,11 @@ func addVersionNegotiationTests() {
 				NegotiateVersion: VersionTLS12,
 			},
 		},
-		expectedVersion: VersionTLS12,
-		// TODO(davidben): This test should fail once TLS 1.3 is final
-		// and the fallback signal restored.
+		tls13Variant:       TLS13RFC,
+		expectedVersion:    VersionTLS12,
+		shouldFail:         true,
+		expectedError:      ":TLS13_DOWNGRADE:",
+		expectedLocalError: "remote error: illegal parameter",
 	})
 	testCases = append(testCases, testCase{
 		testType: serverTest,
@@ -5867,30 +5913,108 @@ func addVersionNegotiationTests() {
 				SendSupportedVersions: []uint16{VersionTLS12},
 			},
 		},
-		expectedVersion: VersionTLS12,
-		// TODO(davidben): This test should fail once TLS 1.3 is final
-		// and the fallback signal restored.
+		tls13Variant:       TLS13RFC,
+		expectedVersion:    VersionTLS12,
+		shouldFail:         true,
+		expectedLocalError: "tls: downgrade from TLS 1.3 detected",
 	})
 
 	testCases = append(testCases, testCase{
-		name: "Draft-Downgrade-Client",
+		name: "Downgrade-TLS11-Client",
 		config: Config{
-			MaxVersion: VersionTLS12,
 			Bugs: ProtocolBugs{
-				SendDraftTLS13DowngradeRandom: true,
+				NegotiateVersion: VersionTLS11,
 			},
 		},
-		flags: []string{"-expect-draft-downgrade"},
+		tls13Variant:       TLS13RFC,
+		expectedVersion:    VersionTLS11,
+		shouldFail:         true,
+		expectedError:      ":TLS13_DOWNGRADE:",
+		expectedLocalError: "remote error: illegal parameter",
 	})
 	testCases = append(testCases, testCase{
 		testType: serverTest,
-		name:     "Draft-Downgrade-Server",
+		name:     "Downgrade-TLS11-Server",
 		config: Config{
-			MaxVersion: VersionTLS12,
 			Bugs: ProtocolBugs{
-				ExpectDraftTLS13DowngradeRandom: true,
+				SendSupportedVersions: []uint16{VersionTLS11},
 			},
 		},
+		tls13Variant:       TLS13RFC,
+		expectedVersion:    VersionTLS11,
+		shouldFail:         true,
+		expectedLocalError: "tls: downgrade from TLS 1.2 detected",
+	})
+
+	// Test that the draft TLS 1.3 variants don't trigger the downgrade logic.
+	testCases = append(testCases, testCase{
+		name: "Downgrade-Draft-Client",
+		config: Config{
+			Bugs: ProtocolBugs{
+				NegotiateVersion:         VersionTLS12,
+				SendTLS13DowngradeRandom: true,
+			},
+		},
+		tls13Variant:    TLS13Draft28,
+		expectedVersion: VersionTLS12,
+	})
+	testCases = append(testCases, testCase{
+		testType: serverTest,
+		name:     "Downgrade-Draft-Server",
+		config: Config{
+			Bugs: ProtocolBugs{
+				CheckTLS13DowngradeRandom: true,
+			},
+		},
+		tls13Variant:    TLS13Draft28,
+		expectedVersion: VersionTLS13,
+	})
+
+	// Test that False Start is disabled when the downgrade logic triggers.
+	testCases = append(testCases, testCase{
+		name: "Downgrade-FalseStart",
+		config: Config{
+			NextProtos: []string{"foo"},
+			Bugs: ProtocolBugs{
+				NegotiateVersion:          VersionTLS12,
+				ExpectFalseStart:          true,
+				AlertBeforeFalseStartTest: alertAccessDenied,
+			},
+		},
+		tls13Variant:    TLS13RFC,
+		expectedVersion: VersionTLS12,
+		flags: []string{
+			"-false-start",
+			"-advertise-alpn", "\x03foo",
+			"-ignore-tls13-downgrade",
+		},
+		shimWritesFirst:    true,
+		shouldFail:         true,
+		expectedError:      ":TLSV1_ALERT_ACCESS_DENIED:",
+		expectedLocalError: "tls: peer did not false start: EOF",
+	})
+
+	// Test that draft TLS 1.3 versions do not trigger disabling False Start.
+	testCases = append(testCases, testCase{
+		name: "Downgrade-FalseStart-Draft",
+		config: Config{
+			MaxVersion:   VersionTLS13,
+			TLS13Variant: TLS13RFC,
+			NextProtos:   []string{"foo"},
+			Bugs: ProtocolBugs{
+				ExpectFalseStart: true,
+			},
+		},
+		expectedVersion: VersionTLS12,
+		flags: []string{
+			"-false-start",
+			"-advertise-alpn", "\x03foo",
+			"-expect-alpn", "foo",
+			"-ignore-tls13-downgrade",
+			"-tls13-variant", strconv.Itoa(TLS13Draft28),
+			"-max-version", strconv.Itoa(VersionTLS13),
+		},
+		shimWritesFirst: true,
 	})
 
 	// SSL 3.0 support has been removed. Test that the shim does not
@@ -7462,49 +7586,6 @@ func addExtensionTests() {
 		shouldFail:    true,
 		expectedError: ":INVALID_SCT_LIST:",
 	})
-
-	for _, version := range allVersions(tls) {
-		if version.version < VersionTLS12 {
-			continue
-		}
-
-		for _, paddingLen := range []int{400, 1100} {
-			testCases = append(testCases, testCase{
-				name:          fmt.Sprintf("DummyPQPadding-%d-%s", paddingLen, version.name),
-				testType:      clientTest,
-				tls13Variant:  version.tls13Variant,
-				resumeSession: true,
-				config: Config{
-					MaxVersion: version.version,
-					Bugs: ProtocolBugs{
-						ExpectDummyPQPaddingLength: paddingLen,
-					},
-				},
-				flags: []string{
-					"-max-version", version.shimFlag(tls),
-					"-dummy-pq-padding-len", strconv.Itoa(paddingLen),
-					"-expect-dummy-pq-padding",
-				},
-			})
-
-			testCases = append(testCases, testCase{
-				name:          fmt.Sprintf("DummyPQPadding-Server-%d-%s", paddingLen, version.name),
-				testType:      serverTest,
-				tls13Variant:  version.tls13Variant,
-				resumeSession: true,
-				config: Config{
-					MaxVersion: version.version,
-					Bugs: ProtocolBugs{
-						SendDummyPQPaddingLength:   paddingLen,
-						ExpectDummyPQPaddingLength: paddingLen,
-					},
-				},
-				flags: []string{
-					"-max-version", version.shimFlag(tls),
-				},
-			})
-		}
-	}
 }
 
 func addResumptionVersionTests() {
