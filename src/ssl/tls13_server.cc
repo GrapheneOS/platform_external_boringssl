@@ -313,8 +313,7 @@ static enum ssl_ticket_aead_result_t select_session(
   bool unused_renew;
   UniquePtr<SSL_SESSION> session;
   enum ssl_ticket_aead_result_t ret =
-      ssl_process_ticket(hs, &session, &unused_renew, CBS_data(&ticket),
-                         CBS_len(&ticket), NULL, 0);
+      ssl_process_ticket(hs, &session, &unused_renew, ticket, {});
   switch (ret) {
     case ssl_ticket_aead_success:
       break;
@@ -707,7 +706,7 @@ static enum ssl_hs_wait_t do_send_server_finished(SSL_HANDSHAKE *hs) {
     // If accepting 0-RTT, we send tickets half-RTT. This gets the tickets on
     // the wire sooner and also avoids triggering a write on |SSL_read| when
     // processing the client Finished. This requires computing the client
-    // Finished early. See draft-ietf-tls-tls13-18, section 4.5.1.
+    // Finished early. See RFC 8446, section 4.6.1.
     static const uint8_t kEndOfEarlyData[4] = {SSL3_MT_END_OF_EARLY_DATA, 0,
                                                0, 0};
     if (!hs->transcript.Update(kEndOfEarlyData)) {

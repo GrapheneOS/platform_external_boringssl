@@ -1696,8 +1696,8 @@ OPENSSL_EXPORT int SSL_SESSION_set1_id_context(SSL_SESSION *session,
 //
 // If this function returns one, clients retain multiple sessions and use each
 // only once. This prevents passive observers from correlating connections with
-// tickets. See draft-ietf-tls-tls13-18, appendix B.5. If it returns zero,
-// |session| cannot be used without leaking a correlator.
+// tickets. See RFC 8446, appendix C.4. If it returns zero, |session| cannot be
+// used without leaking a correlator.
 OPENSSL_EXPORT int SSL_SESSION_should_be_single_use(const SSL_SESSION *session);
 
 // SSL_SESSION_is_resumable returns one if |session| is resumable and zero
@@ -3004,26 +3004,6 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity_hint(const SSL *ssl);
 OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
 
 
-// Dummy post-quantum padding.
-//
-// Dummy post-quantum padding invovles the client (and later server) sending
-// useless, random-looking bytes in an extension in their ClientHello or
-// ServerHello. These extensions are sized to simulate a post-quantum
-// key-exchange and so enable measurement of the latency impact of the
-// additional bandwidth.
-
-// SSL_set_dummy_pq_padding_size enables the sending of a dummy PQ padding
-// extension and configures its size. This is only effective for a client: a
-// server will echo an extension with one of equal length when we get to that
-// phase of the experiment. It returns one for success and zero otherwise.
-OPENSSL_EXPORT int SSL_set_dummy_pq_padding_size(SSL *ssl, size_t num_bytes);
-
-// SSL_dummy_pq_padding_used returns one if the server echoed a dummy PQ padding
-// extension and zero otherwise. It may only be called on a client connection
-// once the ServerHello has been processed, otherwise it'll return zero.
-OPENSSL_EXPORT int SSL_dummy_pq_padding_used(SSL *ssl);
-
-
 // QUIC Transport Parameters.
 //
 // draft-ietf-quic-tls defines a new TLS extension quic_transport_parameters
@@ -3068,8 +3048,8 @@ OPENSSL_EXPORT void SSL_get_peer_quic_transport_params(const SSL *ssl,
 // WARNING: A 0-RTT handshake has different security properties from normal
 // handshake, so it is off by default unless opted in. In particular, early data
 // is replayable by a network attacker. Callers must account for this when
-// sending or processing data before the handshake is confirmed. See
-// draft-ietf-tls-tls13-18 for more information.
+// sending or processing data before the handshake is confirmed. See RFC 8446
+// for more information.
 //
 // As a server, if early data is accepted, |SSL_do_handshake| will complete as
 // soon as the ClientHello is processed and server flight sent. |SSL_write| may
@@ -3104,9 +3084,9 @@ OPENSSL_EXPORT void SSL_get_peer_quic_transport_params(const SSL *ssl,
 // properties. The caller must disregard any values from before the reset and
 // query again.
 //
-// Finally, to implement the fallback described in draft-ietf-tls-tls13-18
-// appendix C.3, retry on a fresh connection without 0-RTT if the handshake
-// fails with |SSL_R_WRONG_VERSION_ON_EARLY_DATA|.
+// Finally, to implement the fallback described in RFC 8446 appendix D.3, retry
+// on a fresh connection without 0-RTT if the handshake fails with
+// |SSL_R_WRONG_VERSION_ON_EARLY_DATA|.
 
 // SSL_CTX_set_early_data_enabled sets whether early data is allowed to be used
 // with resumptions using |ctx|.
@@ -3400,10 +3380,16 @@ OPENSSL_EXPORT int SSL_renegotiate_pending(SSL *ssl);
 // performed by |ssl|. This includes the pending renegotiation, if any.
 OPENSSL_EXPORT int SSL_total_renegotiations(const SSL *ssl);
 
+// tls13_variant_t determines what TLS 1.3 variant to negotiate.
+//
+// TODO(svaldez): Make |tls13_rfc| the default after callers are switched to
+// explicitly enable |tls13_all|.
 enum tls13_variant_t {
   tls13_default = 0,
   tls13_draft23,
   tls13_draft28,
+  tls13_rfc,
+  tls13_all = tls13_default,
 };
 
 // SSL_CTX_set_tls13_variant sets which variant of TLS 1.3 we negotiate. On the
@@ -3520,6 +3506,13 @@ OPENSSL_EXPORT void SSL_CTX_set_select_certificate_cb(
 // allow the handshake to continue or zero to cause the handshake to abort.
 OPENSSL_EXPORT void SSL_CTX_set_dos_protection_cb(
     SSL_CTX *ctx, int (*cb)(const SSL_CLIENT_HELLO *));
+
+// SSL_CTX_set_reverify_on_resume configures whether the certificate
+// verification callback will be used to reverify stored certificates
+// when resuming a session. This only works with |SSL_CTX_set_custom_verify|.
+// For now, this is incompatible with |SSL_VERIFY_NONE| mode, and is only
+// respected on clients.
+OPENSSL_EXPORT void SSL_CTX_set_reverify_on_resume(SSL_CTX *ctx, int enabled);
 
 // SSL_ST_* are possible values for |SSL_state|, the bitmasks that make them up,
 // and some historical values for compatibility. Only |SSL_ST_INIT| and
@@ -3671,10 +3664,14 @@ OPENSSL_EXPORT int32_t SSL_get_ticket_age_skew(const SSL *ssl);
 OPENSSL_EXPORT void SSL_CTX_set_false_start_allowed_without_alpn(SSL_CTX *ctx,
                                                                  int allowed);
 
-// SSL_is_draft_downgrade returns one if the TLS 1.3 anti-downgrade mechanism
-// would have aborted |ssl|'s handshake and zero otherwise.
-OPENSSL_EXPORT int SSL_is_draft_downgrade(const SSL *ssl);
+// SSL_CTX_set_ignore_tls13_downgrade configures whether connections on |ctx|
+// ignore the downgrade signal in the server's random value.
+OPENSSL_EXPORT void SSL_CTX_set_ignore_tls13_downgrade(SSL_CTX *ctx,
+                                                       int ignore);
 
+// SSL_is_tls13_downgrade returns one if the TLS 1.3 anti-downgrade
+// mechanism would have aborted |ssl|'s handshake and zero otherwise.
+OPENSSL_EXPORT int SSL_is_tls13_downgrade(const SSL *ssl);
 
 // Deprecated functions.
 
@@ -4780,6 +4777,7 @@ OPENSSL_EXPORT bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback);
 #define SSL_R_UNKNOWN_CERT_COMPRESSION_ALG 294
 #define SSL_R_INVALID_SIGNATURE_ALGORITHM 295
 #define SSL_R_DUPLICATE_SIGNATURE_ALGORITHM 296
+#define SSL_R_TLS13_DOWNGRADE 297
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020
