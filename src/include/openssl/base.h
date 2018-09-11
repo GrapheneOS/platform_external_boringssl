@@ -71,6 +71,10 @@
 #include <openssl/is_boringssl.h>
 #include <openssl/opensslconf.h>
 
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols.h>
+#endif
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -227,8 +231,16 @@ extern "C" {
 #endif
 #if __has_feature(memory_sanitizer)
 #define OPENSSL_MSAN
+#define OPENSSL_ASM_INCOMPATIBLE
 #endif
 #endif
+
+#if defined(OPENSSL_ASM_INCOMPATIBLE)
+#undef OPENSSL_ASM_INCOMPATIBLE
+#if !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif  // OPENSSL_ASM_INCOMPATIBLE
 
 // CRYPTO_THREADID is a dummy value.
 typedef int CRYPTO_THREADID;
@@ -358,6 +370,18 @@ typedef void *OPENSSL_BLOCK;
 #define BORINGSSL_NO_CXX
 #endif
 
+#if defined(BORINGSSL_PREFIX)
+#define BSSL_NAMESPACE_BEGIN \
+  namespace bssl {           \
+  inline namespace BORINGSSL_PREFIX {
+#define BSSL_NAMESPACE_END \
+  }                        \
+  }
+#else
+#define BSSL_NAMESPACE_BEGIN namespace bssl {
+#define BSSL_NAMESPACE_END }
+#endif
+
 // MSVC doesn't set __cplusplus to 201103 to indicate C++11 support (see
 // https://connect.microsoft.com/VisualStudio/feedback/details/763051/a-value-of-predefined-macro-cplusplus-is-still-199711l)
 // so MSVC is just assumed to support C++11.
@@ -366,6 +390,7 @@ typedef void *OPENSSL_BLOCK;
 #endif
 
 #if !defined(BORINGSSL_NO_CXX)
+
 extern "C++" {
 
 #include <memory>
@@ -387,7 +412,7 @@ extern "C++" {
 
 extern "C++" {
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace internal {
 
@@ -464,7 +489,7 @@ using UniquePtr = std::unique_ptr<T, internal::Deleter<T>>;
     return UpRef(ptr.get());                                        \
   }
 
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 }  // extern C++
 
