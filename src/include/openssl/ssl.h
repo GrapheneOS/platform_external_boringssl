@@ -3004,7 +3004,7 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity_hint(const SSL *ssl);
 OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
 
 
-// QUIC Transport Parameters.
+// QUIC transport parameters.
 //
 // draft-ietf-quic-tls defines a new TLS extension quic_transport_parameters
 // used by QUIC for each endpoint to unilaterally declare its supported
@@ -3666,6 +3666,10 @@ OPENSSL_EXPORT void SSL_CTX_set_false_start_allowed_without_alpn(SSL_CTX *ctx,
 // ignore the downgrade signal in the server's random value.
 OPENSSL_EXPORT void SSL_CTX_set_ignore_tls13_downgrade(SSL_CTX *ctx,
                                                        int ignore);
+
+// SSL_set_ignore_tls13_downgrade configures whether |ssl| ignores the downgrade
+// signal in the server's random value.
+OPENSSL_EXPORT void SSL_set_ignore_tls13_downgrade(SSL *ssl, int ignore);
 
 // SSL_is_tls13_downgrade returns one if the TLS 1.3 anti-downgrade
 // mechanism would have aborted |ssl|'s handshake and zero otherwise.
