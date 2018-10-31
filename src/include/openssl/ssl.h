@@ -3675,6 +3675,7 @@ OPENSSL_EXPORT void SSL_set_ignore_tls13_downgrade(SSL *ssl, int ignore);
 // mechanism would have aborted |ssl|'s handshake and zero otherwise.
 OPENSSL_EXPORT int SSL_is_tls13_downgrade(const SSL *ssl);
 
+
 // Deprecated functions.
 
 // SSL_library_init calls |CRYPTO_library_init| and returns one.
@@ -3966,7 +3967,6 @@ OPENSSL_EXPORT int SSL_CTX_set1_sigalgs_list(SSL_CTX *ctx, const char *str);
 // prefer |SSL_CTX_set_signing_algorithm_prefs| because it's clearer and it's
 // more convenient to codesearch for specific algorithm values.
 OPENSSL_EXPORT int SSL_set1_sigalgs_list(SSL *ssl, const char *str);
-
 
 #define SSL_set_app_data(s, arg) (SSL_set_ex_data(s, 0, (char *)(arg)))
 #define SSL_get_app_data(s) (SSL_get_ex_data(s, 0))
@@ -4267,6 +4267,14 @@ OPENSSL_EXPORT int OPENSSL_init_ssl(uint64_t opts,
 //
 // Use |SSL_enable_ocsp_stapling| instead.
 OPENSSL_EXPORT int SSL_set_tlsext_status_type(SSL *ssl, int type);
+
+// SSL_get_tlsext_status_type returns |TLSEXT_STATUSTYPE_ocsp| if the client
+// requested OCSP stapling and |TLSEXT_STATUSTYPE_nothing| otherwise. On the
+// client, this reflects whether OCSP stapling was enabled via, e.g.,
+// |SSL_set_tlsext_status_type|. On the server, this is determined during the
+// handshake. It may be queried in callbacks set by |SSL_CTX_set_cert_cb|. The
+// result is undefined after the handshake completes.
+OPENSSL_EXPORT int SSL_get_tlsext_status_type(const SSL *ssl);
 
 // SSL_set_tlsext_status_ocsp_resp sets the OCSP response. It returns one on
 // success and zero on error. On success, |ssl| takes ownership of |resp|, which
