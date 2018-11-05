@@ -193,8 +193,9 @@ bool ssl3_add_message(SSL *ssl, Array<uint8_t> msg) {
   //
   // TODO(davidben): See if we can do this uniformly.
   Span<const uint8_t> rest = msg;
-  if (ssl->s3->aead_write_ctx->is_null_cipher() ||
-      ssl->version == TLS1_3_DRAFT23_VERSION) {
+  if (ssl->ctx->quic_method == nullptr &&
+      (ssl->s3->aead_write_ctx->is_null_cipher() ||
+       ssl->version == TLS1_3_DRAFT23_VERSION)) {
     while (!rest.empty()) {
       Span<const uint8_t> chunk = rest.subspan(0, ssl->max_send_fragment);
       rest = rest.subspan(chunk.size());
@@ -246,16 +247,29 @@ bool tls_flush_pending_hs_data(SSL *ssl) {
   }
 
   UniquePtr<BUF_MEM> pending_hs_data = std::move(ssl->s3->pending_hs_data);
-  return add_record_to_flight(
-      ssl, SSL3_RT_HANDSHAKE,
+  auto data =
       MakeConstSpan(reinterpret_cast<const uint8_t *>(pending_hs_data->data),
-                    pending_hs_data->length));
+                    pending_hs_data->length);
+  if (ssl->ctx->quic_method) {
+    if (!ssl->ctx->quic_method->add_handshake_data(ssl, ssl->s3->write_level,
+                                                   data.data(), data.size())) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_QUIC_INTERNAL_ERROR);
+      return false;
+    }
+    return true;
+  }
+
+  return add_record_to_flight(ssl, SSL3_RT_HANDSHAKE, data);
 }
 
 bool ssl3_add_change_cipher_spec(SSL *ssl) {
   static const uint8_t kChangeCipherSpec[1] = {SSL3_MT_CCS};
 
-  if (!tls_flush_pending_hs_data(ssl) ||
+  if (!tls_flush_pending_hs_data(ssl)) {
+    return false;
+  }
+
+  if (!ssl->ctx->quic_method &&
       !add_record_to_flight(ssl, SSL3_RT_CHANGE_CIPHER_SPEC,
                             kChangeCipherSpec)) {
     return false;
@@ -269,6 +283,18 @@ bool ssl3_add_change_cipher_spec(SSL *ssl) {
 int ssl3_flush_flight(SSL *ssl) {
   if (!tls_flush_pending_hs_data(ssl)) {
     return -1;
+  }
+
+  if (ssl->ctx->quic_method) {
+    if (ssl->s3->write_shutdown != ssl_shutdown_none) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_PROTOCOL_IS_SHUTDOWN);
+      return -1;
+    }
+
+    if (!ssl->ctx->quic_method->flush_flight(ssl)) {
+      OPENSSL_PUT_ERROR(SSL, SSL_R_QUIC_INTERNAL_ERROR);
+      return -1;
+    }
   }
 
   if (ssl->s3->pending_flight == nullptr) {
