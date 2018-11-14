@@ -895,14 +895,6 @@ static void fe_from_montgomery(fe x) {
   fe_mul(x, x, kOne);
 }
 
-// BN_* compatability wrappers
-
-static BIGNUM *fe_to_BN(BIGNUM *out, const fe in) {
-  uint8_t tmp[NBYTES];
-  fe_tobytes(tmp, in);
-  return BN_le2bn(tmp, NBYTES, out);
-}
-
 static void fe_from_generic(fe out, const EC_FELEM *in) {
   fe_frombytes(out, in->bytes);
 }
@@ -1631,8 +1623,8 @@ static void batch_mul(fe x_out, fe y_out, fe z_out,
 // Takes the Jacobian coordinates (X, Y, Z) of a point and returns (X', Y') =
 // (X/Z^2, Y/Z^3).
 static int ec_GFp_nistp256_point_get_affine_coordinates(
-    const EC_GROUP *group, const EC_RAW_POINT *point, BIGNUM *x_out,
-    BIGNUM *y_out) {
+    const EC_GROUP *group, const EC_RAW_POINT *point, EC_FELEM *x_out,
+    EC_FELEM *y_out) {
   if (ec_GFp_simple_is_at_infinity(group, point)) {
     OPENSSL_PUT_ERROR(EC, EC_R_POINT_AT_INFINITY);
     return 0;
@@ -1652,10 +1644,7 @@ static int ec_GFp_nistp256_point_get_affine_coordinates(
     fe x;
     fe_from_generic(x, &point->X);
     fe_mul(x, x, z1);
-    if (!fe_to_BN(x_out, x)) {
-      OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-      return 0;
-    }
+    fe_to_generic(x_out, x);
   }
 
   if (y_out != NULL) {
@@ -1663,13 +1652,37 @@ static int ec_GFp_nistp256_point_get_affine_coordinates(
     fe_from_generic(y, &point->Y);
     fe_mul(z1, z1, z2);
     fe_mul(y, y, z1);
-    if (!fe_to_BN(y_out, y)) {
-      OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-      return 0;
-    }
+    fe_to_generic(y_out, y);
   }
 
   return 1;
+}
+
+static void ec_GFp_nistp256_add(const EC_GROUP *group, EC_RAW_POINT *r,
+                                const EC_RAW_POINT *a, const EC_RAW_POINT *b) {
+  fe x1, y1, z1, x2, y2, z2;
+  fe_from_generic(x1, &a->X);
+  fe_from_generic(y1, &a->Y);
+  fe_from_generic(z1, &a->Z);
+  fe_from_generic(x2, &b->X);
+  fe_from_generic(y2, &b->Y);
+  fe_from_generic(z2, &b->Z);
+  point_add(x1, y1, z1, x1, y1, z1, 0 /* both Jacobian */, x2, y2, z2);
+  fe_to_generic(&r->X, x1);
+  fe_to_generic(&r->Y, y1);
+  fe_to_generic(&r->Z, z1);
+}
+
+static void ec_GFp_nistp256_dbl(const EC_GROUP *group, EC_RAW_POINT *r,
+                                const EC_RAW_POINT *a) {
+  fe x, y, z;
+  fe_from_generic(x, &a->X);
+  fe_from_generic(y, &a->Y);
+  fe_from_generic(z, &a->Z);
+  point_double(x, y, z, x, y, z);
+  fe_to_generic(&r->X, x);
+  fe_to_generic(&r->Y, y);
+  fe_to_generic(&r->Z, z);
 }
 
 static void ec_GFp_nistp256_points_mul(const EC_GROUP *group, EC_RAW_POINT *r,
@@ -1800,6 +1813,8 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp256_method) {
   out->group_set_curve = ec_GFp_mont_group_set_curve;
   out->point_get_affine_coordinates =
     ec_GFp_nistp256_point_get_affine_coordinates;
+  out->add = ec_GFp_nistp256_add;
+  out->dbl = ec_GFp_nistp256_dbl;
   out->mul = ec_GFp_nistp256_points_mul;
   out->mul_public = ec_GFp_nistp256_point_mul_public;
   out->felem_mul = ec_GFp_mont_felem_mul;
@@ -1807,6 +1822,8 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp256_method) {
   out->bignum_to_felem = ec_GFp_mont_bignum_to_felem;
   out->felem_to_bignum = ec_GFp_mont_felem_to_bignum;
   out->scalar_inv_montgomery = ec_simple_scalar_inv_montgomery;
+  out->scalar_inv_montgomery_vartime = ec_GFp_simple_mont_inv_mod_ord_vartime;
+  out->cmp_x_coordinate = ec_GFp_simple_cmp_x_coordinate;
 };
 
 #undef BORINGSSL_NISTP256_64BIT

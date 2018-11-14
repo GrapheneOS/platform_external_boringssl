@@ -1000,6 +1000,15 @@ class SSLKeyShare {
   virtual bool Deserialize(CBS *in) { return false; }
 };
 
+struct NamedGroup {
+  int nid;
+  uint16_t group_id;
+  const char name[8], alias[11];
+};
+
+// NamedGroups returns all supported groups.
+Span<const NamedGroup> NamedGroups();
+
 // ssl_nid_to_group_id looks up the group corresponding to |nid|. On success, it
 // sets |*out_group_id| to the group ID and returns true. Otherwise, it returns
 // false.
@@ -1043,6 +1052,10 @@ bool tls_can_accept_handshake_data(const SSL *ssl, uint8_t *out_alert);
 // tls_has_unprocessed_handshake_data returns whether there is buffered
 // handshake data that has not been consumed by |get_message|.
 bool tls_has_unprocessed_handshake_data(const SSL *ssl);
+
+// tls_append_handshake_data appends |data| to the handshake buffer. It returns
+// true on success and false on allocation failure.
+bool tls_append_handshake_data(SSL *ssl, Span<const uint8_t> data);
 
 // dtls_has_unprocessed_handshake_data behaves like
 // |tls_has_unprocessed_handshake_data| for DTLS.

@@ -203,13 +203,6 @@ static void p224_felem_to_bin28(uint8_t out[28], const p224_felem in) {
   }
 }
 
-// From internal representation to OpenSSL BIGNUM
-static BIGNUM *p224_felem_to_BN(BIGNUM *out, const p224_felem in) {
-  p224_felem_bytearray b_out;
-  p224_felem_to_bin28(b_out, in);
-  return BN_le2bn(b_out, sizeof(b_out), out);
-}
-
 static void p224_generic_to_felem(p224_felem out, const EC_FELEM *in) {
   p224_bin28_to_felem(out, in->bytes);
 }
@@ -917,7 +910,7 @@ static void p224_batch_mul(p224_felem x_out, p224_felem y_out, p224_felem z_out,
 
       if (!skip) {
         p224_point_add(nq[0], nq[1], nq[2], nq[0], nq[1], nq[2], 1 /* mixed */,
-                  tmp[0], tmp[1], tmp[2]);
+                       tmp[0], tmp[1], tmp[2]);
       } else {
         OPENSSL_memcpy(nq, tmp, 3 * sizeof(p224_felem));
         skip = 0;
@@ -951,7 +944,7 @@ static void p224_batch_mul(p224_felem x_out, p224_felem y_out, p224_felem z_out,
 
       if (!skip) {
         p224_point_add(nq[0], nq[1], nq[2], nq[0], nq[1], nq[2], 0 /* mixed */,
-                  tmp[0], tmp[1], tmp[2]);
+                       tmp[0], tmp[1], tmp[2]);
       } else {
         OPENSSL_memcpy(nq, tmp, 3 * sizeof(p224_felem));
         skip = 0;
@@ -971,7 +964,8 @@ static void p224_batch_mul(p224_felem x_out, p224_felem y_out, p224_felem z_out,
 // Takes the Jacobian coordinates (X, Y, Z) of a point and returns
 // (X', Y') = (X/Z^2, Y/Z^3)
 static int ec_GFp_nistp224_point_get_affine_coordinates(
-    const EC_GROUP *group, const EC_RAW_POINT *point, BIGNUM *x, BIGNUM *y) {
+    const EC_GROUP *group, const EC_RAW_POINT *point, EC_FELEM *x,
+    EC_FELEM *y) {
   if (ec_GFp_simple_is_at_infinity(group, point)) {
     OPENSSL_PUT_ERROR(EC, EC_R_POINT_AT_INFINITY);
     return 0;
@@ -990,10 +984,7 @@ static int ec_GFp_nistp224_point_get_affine_coordinates(
     p224_felem_mul(tmp, x_in, z1);
     p224_felem_reduce(x_in, tmp);
     p224_felem_contract(x_out, x_in);
-    if (!p224_felem_to_BN(x, x_out)) {
-      OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-      return 0;
-    }
+    p224_felem_to_generic(x, x_out);
   }
 
   if (y != NULL) {
@@ -1004,13 +995,37 @@ static int ec_GFp_nistp224_point_get_affine_coordinates(
     p224_felem_mul(tmp, y_in, z1);
     p224_felem_reduce(y_in, tmp);
     p224_felem_contract(y_out, y_in);
-    if (!p224_felem_to_BN(y, y_out)) {
-      OPENSSL_PUT_ERROR(EC, ERR_R_BN_LIB);
-      return 0;
-    }
+    p224_felem_to_generic(y, y_out);
   }
 
   return 1;
+}
+
+static void ec_GFp_nistp224_add(const EC_GROUP *group, EC_RAW_POINT *r,
+                                const EC_RAW_POINT *a, const EC_RAW_POINT *b) {
+  p224_felem x1, y1, z1, x2, y2, z2;
+  p224_generic_to_felem(x1, &a->X);
+  p224_generic_to_felem(y1, &a->Y);
+  p224_generic_to_felem(z1, &a->Z);
+  p224_generic_to_felem(x2, &b->X);
+  p224_generic_to_felem(y2, &b->Y);
+  p224_generic_to_felem(z2, &b->Z);
+  p224_point_add(x1, y1, z1, x1, y1, z1, 0 /* both Jacobian */, x2, y2, z2);
+  p224_felem_to_generic(&r->X, x1);
+  p224_felem_to_generic(&r->Y, y1);
+  p224_felem_to_generic(&r->Z, z1);
+}
+
+static void ec_GFp_nistp224_dbl(const EC_GROUP *group, EC_RAW_POINT *r,
+                                const EC_RAW_POINT *a) {
+  p224_felem x, y, z;
+  p224_generic_to_felem(x, &a->X);
+  p224_generic_to_felem(y, &a->Y);
+  p224_generic_to_felem(z, &a->Z);
+  p224_point_double(x, y, z, x, y, z);
+  p224_felem_to_generic(&r->X, x);
+  p224_felem_to_generic(&r->Y, y);
+  p224_felem_to_generic(&r->Z, z);
 }
 
 static void ec_GFp_nistp224_points_mul(const EC_GROUP *group, EC_RAW_POINT *r,
@@ -1036,13 +1051,13 @@ static void ec_GFp_nistp224_points_mul(const EC_GROUP *group, EC_RAW_POINT *r,
     for (size_t j = 2; j <= 16; ++j) {
       if (j & 1) {
         p224_point_add(p_pre_comp[j][0], p_pre_comp[j][1], p_pre_comp[j][2],
-                  p_pre_comp[1][0], p_pre_comp[1][1], p_pre_comp[1][2],
-                  0, p_pre_comp[j - 1][0], p_pre_comp[j - 1][1],
-                  p_pre_comp[j - 1][2]);
+                       p_pre_comp[1][0], p_pre_comp[1][1], p_pre_comp[1][2], 0,
+                       p_pre_comp[j - 1][0], p_pre_comp[j - 1][1],
+                       p_pre_comp[j - 1][2]);
       } else {
-        p224_point_double(p_pre_comp[j][0], p_pre_comp[j][1],
-                     p_pre_comp[j][2], p_pre_comp[j / 2][0],
-                     p_pre_comp[j / 2][1], p_pre_comp[j / 2][2]);
+        p224_point_double(p_pre_comp[j][0], p_pre_comp[j][1], p_pre_comp[j][2],
+                          p_pre_comp[j / 2][0], p_pre_comp[j / 2][1],
+                          p_pre_comp[j / 2][2]);
       }
     }
   }
@@ -1100,6 +1115,8 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp224_method) {
   out->group_set_curve = ec_GFp_simple_group_set_curve;
   out->point_get_affine_coordinates =
       ec_GFp_nistp224_point_get_affine_coordinates;
+  out->add = ec_GFp_nistp224_add;
+  out->dbl = ec_GFp_nistp224_dbl;
   out->mul = ec_GFp_nistp224_points_mul;
   out->mul_public = ec_GFp_nistp224_points_mul;
   out->felem_mul = ec_GFp_nistp224_felem_mul;
@@ -1107,6 +1124,8 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp224_method) {
   out->bignum_to_felem = ec_GFp_nistp224_bignum_to_felem;
   out->felem_to_bignum = ec_GFp_nistp224_felem_to_bignum;
   out->scalar_inv_montgomery = ec_simple_scalar_inv_montgomery;
+  out->scalar_inv_montgomery_vartime = ec_GFp_simple_mont_inv_mod_ord_vartime;
+  out->cmp_x_coordinate = ec_GFp_simple_cmp_x_coordinate;
 };
 
 #endif  // BORINGSSL_HAS_UINT128 && !SMALL
