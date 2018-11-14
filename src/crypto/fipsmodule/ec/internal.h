@@ -124,8 +124,21 @@ struct ec_method_st {
   void (*group_finish)(EC_GROUP *);
   int (*group_set_curve)(EC_GROUP *, const BIGNUM *p, const BIGNUM *a,
                          const BIGNUM *b, BN_CTX *);
-  int (*point_get_affine_coordinates)(const EC_GROUP *, const EC_RAW_POINT *,
-                                      BIGNUM *x, BIGNUM *y);
+
+  // point_get_affine_coordinates sets |*x| and |*y| to the affine coordinates
+  // of |p|. Either |x| or |y| may be NULL to omit it. It returns one on success
+  // and zero if |p| is the point at infinity.
+  //
+  // Note: unlike |EC_FELEM|s used as intermediate values internal to the
+  // |EC_METHOD|, |*x| and |*y| are not encoded in Montgomery form.
+  int (*point_get_affine_coordinates)(const EC_GROUP *, const EC_RAW_POINT *p,
+                                      EC_FELEM *x, EC_FELEM *y);
+
+  // add sets |r| to |a| + |b|.
+  void (*add)(const EC_GROUP *group, EC_RAW_POINT *r, const EC_RAW_POINT *a,
+              const EC_RAW_POINT *b);
+  // dbl sets |r| to |a| + |a|.
+  void (*dbl)(const EC_GROUP *group, EC_RAW_POINT *r, const EC_RAW_POINT *a);
 
   // Computes |r = g_scalar*generator + p_scalar*p| if |g_scalar| and |p_scalar|
   // are both non-null. Computes |r = g_scalar*generator| if |p_scalar| is null.
@@ -149,10 +162,9 @@ struct ec_method_st {
   // TODO(davidben): This constrains |EC_FELEM|'s internal representation, adds
   // many indirect calls in the middle of the generic code, and a bunch of
   // conversions. If p224-64.c were easily convertable to Montgomery form, we
-  // could say |EC_FELEM| is always in Montgomery form. If we exposed the
-  // internal add and double implementations in each of the curves, we could
-  // give |EC_POINT| an |EC_METHOD|-specific representation and |EC_FELEM| is
-  // purely a |EC_GFp_mont_method| type.
+  // could say |EC_FELEM| is always in Montgomery form. If we routed the rest of
+  // simple.c to |EC_METHOD|, we could give |EC_POINT| an |EC_METHOD|-specific
+  // representation and say |EC_FELEM| is purely a |EC_GFp_mont_method| type.
   void (*felem_mul)(const EC_GROUP *, EC_FELEM *r, const EC_FELEM *a,
                     const EC_FELEM *b);
   void (*felem_sqr)(const EC_GROUP *, EC_FELEM *r, const EC_FELEM *a);
@@ -162,11 +174,22 @@ struct ec_method_st {
   int (*felem_to_bignum)(const EC_GROUP *group, BIGNUM *out,
                          const EC_FELEM *in);
 
-  // scalar_inv_mont sets |out| to |in|^-1, where both input and output are in
-  // Montgomery form.
+  // scalar_inv_montgomery sets |out| to |in|^-1, where both input and output
+  // are in Montgomery form.
   void (*scalar_inv_montgomery)(const EC_GROUP *group, EC_SCALAR *out,
                                 const EC_SCALAR *in);
 
+  // scalar_inv_montgomery_vartime performs the same computation as
+  // |scalar_inv_montgomery|. It further assumes that the inputs are public so
+  // there is no concern about leaking their values through timing.
+  int (*scalar_inv_montgomery_vartime)(const EC_GROUP *group, EC_SCALAR *out,
+                                       const EC_SCALAR *in);
+
+  // cmp_x_coordinate compares the x (affine) coordinate of |p|, mod the group
+  // order, with |r|. On error it returns zero. Otherwise it sets |*out_result|
+  // to one iff the values match.
+  int (*cmp_x_coordinate)(int *out_result, const EC_GROUP *group,
+                          const EC_POINT *p, const BIGNUM *r, BN_CTX *ctx);
 } /* EC_METHOD */;
 
 const EC_METHOD *EC_GFp_mont_method(void);
@@ -272,6 +295,11 @@ void ec_scalar_mul_montgomery(const EC_GROUP *group, EC_SCALAR *r,
 void ec_scalar_inv_montgomery(const EC_GROUP *group, EC_SCALAR *r,
                               const EC_SCALAR *a);
 
+// ec_scalar_inv_montgomery_vartime performs the same actions as
+// |ec_scalar_inv_montgomery|, but in variable time.
+int ec_scalar_inv_montgomery_vartime(const EC_GROUP *group, EC_SCALAR *r,
+                                     const EC_SCALAR *a);
+
 // ec_point_mul_scalar sets |r| to generator * |g_scalar| + |p| *
 // |p_scalar|. Unlike other functions which take |EC_SCALAR|, |g_scalar| and
 // |p_scalar| need not be fully reduced. They need only contain as many bits as
@@ -287,9 +315,19 @@ OPENSSL_EXPORT int ec_point_mul_scalar_public(
     const EC_GROUP *group, EC_POINT *r, const EC_SCALAR *g_scalar,
     const EC_POINT *p, const EC_SCALAR *p_scalar, BN_CTX *ctx);
 
-void ec_GFp_simple_mul(const EC_GROUP *group, EC_RAW_POINT *r,
-                       const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
-                       const EC_SCALAR *p_scalar);
+// ec_cmp_x_coordinate compares the x (affine) coordinate of |p| with |r|. It
+// returns zero on error. Otherwise it sets |*out_result| to one iff the values
+// match.
+int ec_cmp_x_coordinate(int *out_result, const EC_GROUP *group,
+                        const EC_POINT *p, const BIGNUM *r, BN_CTX *ctx);
+
+// ec_field_element_to_scalar reduces |r| modulo |group->order|. |r| must
+// previously have been reduced modulo |group->field|.
+int ec_field_element_to_scalar(const EC_GROUP *group, BIGNUM *r);
+
+void ec_GFp_mont_mul(const EC_GROUP *group, EC_RAW_POINT *r,
+                     const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
+                     const EC_SCALAR *p_scalar);
 
 // ec_compute_wNAF writes the modified width-(w+1) Non-Adjacent Form (wNAF) of
 // |scalar| to |out|. |out| must have room for |bits| + 1 elements, each of
@@ -302,9 +340,9 @@ void ec_GFp_simple_mul(const EC_GROUP *group, EC_RAW_POINT *r,
 void ec_compute_wNAF(const EC_GROUP *group, int8_t *out,
                      const EC_SCALAR *scalar, size_t bits, int w);
 
-void ec_GFp_simple_mul_public(const EC_GROUP *group, EC_RAW_POINT *r,
-                              const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
-                              const EC_SCALAR *p_scalar);
+void ec_GFp_mont_mul_public(const EC_GROUP *group, EC_RAW_POINT *r,
+                            const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
+                            const EC_SCALAR *p_scalar);
 
 // method functions in simple.c
 int ec_GFp_simple_group_init(EC_GROUP *);
@@ -313,17 +351,15 @@ int ec_GFp_simple_group_set_curve(EC_GROUP *, const BIGNUM *p, const BIGNUM *a,
                                   const BIGNUM *b, BN_CTX *);
 int ec_GFp_simple_group_get_curve(const EC_GROUP *, BIGNUM *p, BIGNUM *a,
                                   BIGNUM *b);
-unsigned ec_GFp_simple_group_get_degree(const EC_GROUP *);
 void ec_GFp_simple_point_init(EC_RAW_POINT *);
 void ec_GFp_simple_point_copy(EC_RAW_POINT *, const EC_RAW_POINT *);
 void ec_GFp_simple_point_set_to_infinity(const EC_GROUP *, EC_RAW_POINT *);
 int ec_GFp_simple_point_set_affine_coordinates(const EC_GROUP *, EC_RAW_POINT *,
                                                const BIGNUM *x,
                                                const BIGNUM *y);
-void ec_GFp_simple_add(const EC_GROUP *, EC_RAW_POINT *r, const EC_RAW_POINT *a,
-                       const EC_RAW_POINT *b);
-void ec_GFp_simple_dbl(const EC_GROUP *, EC_RAW_POINT *r,
-                       const EC_RAW_POINT *a);
+void ec_GFp_mont_add(const EC_GROUP *, EC_RAW_POINT *r, const EC_RAW_POINT *a,
+                     const EC_RAW_POINT *b);
+void ec_GFp_mont_dbl(const EC_GROUP *, EC_RAW_POINT *r, const EC_RAW_POINT *a);
 void ec_GFp_simple_invert(const EC_GROUP *, EC_RAW_POINT *);
 int ec_GFp_simple_is_at_infinity(const EC_GROUP *, const EC_RAW_POINT *);
 int ec_GFp_simple_is_on_curve(const EC_GROUP *, const EC_RAW_POINT *);
@@ -331,6 +367,16 @@ int ec_GFp_simple_cmp(const EC_GROUP *, const EC_RAW_POINT *a,
                       const EC_RAW_POINT *b);
 void ec_simple_scalar_inv_montgomery(const EC_GROUP *group, EC_SCALAR *r,
                                      const EC_SCALAR *a);
+
+int ec_GFp_simple_mont_inv_mod_ord_vartime(const EC_GROUP *group, EC_SCALAR *r,
+                                           const EC_SCALAR *a);
+
+// ec_GFp_simple_cmp_x_coordinate compares the x (affine) coordinate of |p|, mod
+// the group order, with |r|. It returns zero on error. Otherwise it sets
+// |*out_result| to one iff the values match.
+int ec_GFp_simple_cmp_x_coordinate(int *out_result, const EC_GROUP *group,
+                                   const EC_POINT *p, const BIGNUM *r,
+                                   BN_CTX *ctx);
 
 // method functions in montgomery.c
 int ec_GFp_mont_group_init(EC_GROUP *);
