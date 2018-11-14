@@ -846,15 +846,7 @@ int SSL_provide_quic_data(SSL *ssl, enum ssl_encryption_level_t level,
     return 0;
   }
 
-  // Re-create the handshake buffer if needed.
-  if (!ssl->s3->hs_buf) {
-    ssl->s3->hs_buf.reset(BUF_MEM_new());
-    if (!ssl->s3->hs_buf) {
-      return 0;
-    }
-  }
-
-  return BUF_MEM_append(ssl->s3->hs_buf.get(), data, len);
+  return tls_append_handshake_data(ssl, MakeConstSpan(data, len));
 }
 
 int SSL_do_handshake(SSL *ssl) {
@@ -2278,7 +2270,8 @@ EVP_PKEY *SSL_CTX_get0_privatekey(const SSL_CTX *ctx) {
 }
 
 const SSL_CIPHER *SSL_get_current_cipher(const SSL *ssl) {
-  return ssl->s3->aead_write_ctx->cipher();
+  const SSL_SESSION *session = SSL_get_session(ssl);
+  return session == nullptr ? nullptr : session->cipher;
 }
 
 int SSL_session_reused(const SSL *ssl) {

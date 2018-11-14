@@ -619,7 +619,7 @@ int EC_GROUP_get_curve_GFp(const EC_GROUP *group, BIGNUM *out_p, BIGNUM *out_a,
 int EC_GROUP_get_curve_name(const EC_GROUP *group) { return group->curve_name; }
 
 unsigned EC_GROUP_get_degree(const EC_GROUP *group) {
-  return ec_GFp_simple_group_get_degree(group);
+  return BN_num_bits(&group->field);
 }
 
 const char *EC_curve_nid2nist(int nid) {
@@ -743,7 +743,15 @@ int EC_POINT_get_affine_coordinates_GFp(const EC_GROUP *group,
     OPENSSL_PUT_ERROR(EC, EC_R_INCOMPATIBLE_OBJECTS);
     return 0;
   }
-  return group->meth->point_get_affine_coordinates(group, &point->raw, x, y);
+  EC_FELEM x_felem, y_felem;
+  if (!group->meth->point_get_affine_coordinates(group, &point->raw,
+                                                 x == NULL ? NULL : &x_felem,
+                                                 y == NULL ? NULL : &y_felem) ||
+      (x != NULL && !bn_set_words(x, x_felem.words, group->field.width)) ||
+      (y != NULL && !bn_set_words(y, y_felem.words, group->field.width))) {
+    return 0;
+  }
+  return 1;
 }
 
 int EC_POINT_set_affine_coordinates_GFp(const EC_GROUP *group, EC_POINT *point,
@@ -782,7 +790,7 @@ int EC_POINT_add(const EC_GROUP *group, EC_POINT *r, const EC_POINT *a,
     OPENSSL_PUT_ERROR(EC, EC_R_INCOMPATIBLE_OBJECTS);
     return 0;
   }
-  ec_GFp_simple_add(group, &r->raw, &a->raw, &b->raw);
+  group->meth->add(group, &r->raw, &a->raw, &b->raw);
   return 1;
 }
 
@@ -793,7 +801,7 @@ int EC_POINT_dbl(const EC_GROUP *group, EC_POINT *r, const EC_POINT *a,
     OPENSSL_PUT_ERROR(EC, EC_R_INCOMPATIBLE_OBJECTS);
     return 0;
   }
-  ec_GFp_simple_dbl(group, &r->raw, &a->raw);
+  group->meth->dbl(group, &r->raw, &a->raw);
   return 1;
 }
 
@@ -908,6 +916,43 @@ int ec_point_mul_scalar(const EC_GROUP *group, EC_POINT *r,
 
   group->meth->mul(group, &r->raw, g_scalar, (p == NULL) ? NULL : &p->raw,
                    p_scalar);
+  return 1;
+}
+
+int ec_cmp_x_coordinate(int *out_result, const EC_GROUP *group,
+                        const EC_POINT *p, const BIGNUM *r, BN_CTX *ctx) {
+  return group->meth->cmp_x_coordinate(out_result, group, p, r, ctx);
+}
+
+int ec_field_element_to_scalar(const EC_GROUP *group, BIGNUM *r) {
+  // We must have p < 2×order, assuming p is not tiny (p >= 17). Thus rather we
+  // can reduce by performing at most one subtraction.
+  //
+  // Proof: We only work with prime order curves, so the number of points on
+  // the curve is the order. Thus Hasse's theorem gives:
+  //
+  //     |order - (p + 1)| <= 2×sqrt(p)
+  //         p + 1 - order <= 2×sqrt(p)
+  //     p + 1 - 2×sqrt(p) <= order
+  //       p + 1 - 2×(p/4)  < order       (p/4 > sqrt(p) for p >= 17)
+  //         p/2 < p/2 + 1  < order
+  //                     p  < 2×order
+  //
+  // Additionally, one can manually check this property for built-in curves. It
+  // is enforced for legacy custom curves in |EC_GROUP_set_generator|.
+  //
+  // TODO(davidben): Introduce |EC_FIELD_ELEMENT|, make this a function from
+  // |EC_FIELD_ELEMENT| to |EC_SCALAR|, and cut out the |BIGNUM|. Does this need
+  // to be constant-time for signing? |r| is the x-coordinate for kG, which is
+  // public unless k was rerolled because |s| was zero.
+  assert(!BN_is_negative(r));
+  assert(BN_cmp(r, &group->field) < 0);
+  if (BN_cmp(r, &group->order) >= 0 &&
+      !BN_sub(r, r, &group->order)) {
+    return 0;
+  }
+  assert(!BN_is_negative(r));
+  assert(BN_cmp(r, &group->order) < 0);
   return 1;
 }
 

@@ -290,6 +290,7 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/fipsmodule/ghash-x86_64.S\
   linux-x86_64/crypto/fipsmodule/md5-x86_64.S\
   linux-x86_64/crypto/fipsmodule/p256-x86_64-asm.S\
+  linux-x86_64/crypto/fipsmodule/p256_beeu-x86_64-asm.S\
   linux-x86_64/crypto/fipsmodule/rdrand-x86_64.S\
   linux-x86_64/crypto/fipsmodule/rsaz-avx2.S\
   linux-x86_64/crypto/fipsmodule/sha1-x86_64.S\
