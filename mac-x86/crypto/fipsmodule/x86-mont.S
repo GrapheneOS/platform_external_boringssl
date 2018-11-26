@@ -1,3 +1,6 @@
+# This file is generated from a similarly-named Perl script in the BoringSSL
+# source tree. Do not edit by hand.
+
 #if defined(__i386__)
 .text
 .globl	_bn_mul_mont
