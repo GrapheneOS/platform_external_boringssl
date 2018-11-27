@@ -711,7 +711,8 @@ SSL_CONFIG::SSL_CONFIG(SSL *ssl_arg)
       retain_only_sha256_of_client_certs(false),
       handoff(false),
       shed_handshake_config(false),
-      ignore_tls13_downgrade(false) {
+      ignore_tls13_downgrade(false),
+      jdk11_workaround(false) {
   assert(ssl);
 }
 
@@ -945,6 +946,33 @@ static int ssl_do_post_handshake(SSL *ssl, const SSLMessage &msg) {
   }
 
   ssl->s3->total_renegotiations++;
+  return 1;
+}
+
+int SSL_process_quic_post_handshake(SSL *ssl) {
+  ssl_reset_error_state(ssl);
+
+  if (SSL_in_init(ssl)) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
+    return 0;
+  }
+
+  // Replay post-handshake message errors.
+  if (!check_read_error(ssl)) {
+    return 0;
+  }
+
+  // Process any buffered post-handshake messages.
+  SSLMessage msg;
+  while (ssl->method->get_message(ssl, &msg)) {
+    // Handle the post-handshake message and try again.
+    if (!ssl_do_post_handshake(ssl, msg)) {
+      ssl_set_read_error(ssl);
+      return 0;
+    }
+    ssl->method->next_message(ssl);
+  }
+
   return 1;
 }
 
@@ -2746,6 +2774,13 @@ void SSL_set_shed_handshake_config(SSL *ssl, int enable) {
     return;
   }
   ssl->config->shed_handshake_config = !!enable;
+}
+
+void SSL_set_jdk11_workaround(SSL *ssl, int enable) {
+  if (!ssl->config) {
+    return;
+  }
+  ssl->config->jdk11_workaround = !!enable;
 }
 
 int SSL_clear(SSL *ssl) {
