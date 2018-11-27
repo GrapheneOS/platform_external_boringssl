@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include <openssl/bn.h>
+#include <openssl/cpu.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 
@@ -42,12 +43,6 @@ typedef P256_POINT_AFFINE PRECOMP256_ROW[64];
 static const BN_ULONG ONE[P256_LIMBS] = {
     TOBN(0x00000000, 0x00000001), TOBN(0xffffffff, 0x00000000),
     TOBN(0xffffffff, 0xffffffff), TOBN(0x00000000, 0xfffffffe),
-};
-
-// P256_ORDER is the order of the P-256 group, not in Montgomery form.
-static const BN_ULONG P256_ORDER[P256_LIMBS] = {
-    TOBN(0xf3b9cac2, 0xfc632551), TOBN(0xbce6faad, 0xa7179e84),
-    TOBN(0xffffffff, 0xffffffff), TOBN(0xffffffff, 0x00000000),
 };
 
 // Precomputed tables for the default generator
@@ -591,7 +586,8 @@ static int ecp_nistz256_mont_inv_mod_ord_vartime(const EC_GROUP *group,
     return ec_GFp_simple_mont_inv_mod_ord_vartime(group, out, in);
   }
 
-  if (!beeu_mod_inverse_vartime(out->words, in->words, P256_ORDER)) {
+  assert(group->order.width == P256_LIMBS);
+  if (!beeu_mod_inverse_vartime(out->words, in->words, group->order.d)) {
     return 0;
   }
 
@@ -600,31 +596,25 @@ static int ecp_nistz256_mont_inv_mod_ord_vartime(const EC_GROUP *group,
   return 1;
 }
 
-static int ecp_nistz256_cmp_x_coordinate(int *out_result, const EC_GROUP *group,
-                                         const EC_POINT *p, const BIGNUM *r,
-                                         BN_CTX *ctx) {
-  *out_result = 0;
-
-  if (ec_GFp_simple_is_at_infinity(group, &p->raw)) {
-    OPENSSL_PUT_ERROR(EC, EC_R_POINT_AT_INFINITY);
+static int ecp_nistz256_cmp_x_coordinate(const EC_GROUP *group,
+                                         const EC_RAW_POINT *p,
+                                         const EC_SCALAR *r) {
+  if (ec_GFp_simple_is_at_infinity(group, p)) {
     return 0;
   }
 
-  BN_ULONG r_words[P256_LIMBS];
-  if (!bn_copy_words(r_words, P256_LIMBS, r)) {
-    return 0;
-  }
+  assert(group->order.width == P256_LIMBS);
+  assert(group->field.width == P256_LIMBS);
 
   // We wish to compare X/Z^2 with r. This is equivalent to comparing X with
   // r*Z^2. Note that X and Z are represented in Montgomery form, while r is
   // not.
   BN_ULONG r_Z2[P256_LIMBS], Z2_mont[P256_LIMBS], X[P256_LIMBS];
-  ecp_nistz256_mul_mont(Z2_mont, p->raw.Z.words, p->raw.Z.words);
-  ecp_nistz256_mul_mont(r_Z2, r_words, Z2_mont);
-  ecp_nistz256_from_mont(X, p->raw.X.words);
+  ecp_nistz256_mul_mont(Z2_mont, p->Z.words, p->Z.words);
+  ecp_nistz256_mul_mont(r_Z2, r->words, Z2_mont);
+  ecp_nistz256_from_mont(X, p->X.words);
 
   if (OPENSSL_memcmp(r_Z2, X, sizeof(r_Z2)) == 0) {
-    *out_result = 1;
     return 1;
   }
 
@@ -632,25 +622,17 @@ static int ecp_nistz256_cmp_x_coordinate(int *out_result, const EC_GROUP *group,
   // Therefore there is a small possibility, less than 1/2^128, that group_order
   // < p.x < P. in that case we need not only to compare against |r| but also to
   // compare against r+group_order.
-
-  // P_MINUS_ORDER is the difference between the field order (p) and the group
-  // order (N). This value is not in the Montgomery domain.
-  static const BN_ULONG P_MINUS_ORDER[P256_LIMBS] = {
-      TOBN(0x0c46353d, 0x039cdaae), TOBN(0x43190553, 0x58e8617b),
-      TOBN(0x00000000, 0x00000000), TOBN(0x00000000, 0x00000000)};
-
-  if (bn_less_than_words(r_words, P_MINUS_ORDER, P256_LIMBS)) {
-    // We can add in-place, ignoring the carry, because: r + group_order < p <
-    // 2^256
-    bn_add_words(r_words, r_words, P256_ORDER, P256_LIMBS);
-    ecp_nistz256_mul_mont(r_Z2, r_words, Z2_mont);
+  if (bn_less_than_words(r->words, group->field_minus_order.words,
+                         P256_LIMBS)) {
+    // We can ignore the carry because: r + group_order < p < 2^256.
+    bn_add_words(r_Z2, r->words, group->order.d, P256_LIMBS);
+    ecp_nistz256_mul_mont(r_Z2, r_Z2, Z2_mont);
     if (OPENSSL_memcmp(r_Z2, X, sizeof(r_Z2)) == 0) {
-      *out_result = 1;
       return 1;
     }
   }
 
-  return 1;
+  return 0;
 }
 
 DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistz256_method) {

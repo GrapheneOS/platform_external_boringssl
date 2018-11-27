@@ -1,3 +1,6 @@
+# This file is generated from a similarly-named Perl script in the BoringSSL
+# source tree. Do not edit by hand.
+
 #if defined(__i386__)
 .text
 .globl	ChaCha20_ctr32
