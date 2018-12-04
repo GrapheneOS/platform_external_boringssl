@@ -2,6 +2,9 @@
 # source tree. Do not edit by hand.
 
 #if defined(__i386__)
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 .text
 .align	6,0x90
 L_vpaes_consts:
