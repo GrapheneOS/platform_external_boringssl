@@ -131,6 +131,7 @@ if(${ARCH} STREQUAL "x86_64")
     chacha/chacha-x86_64.${ASM_EXT}
     cipher_extra/aes128gcmsiv-x86_64.${ASM_EXT}
     cipher_extra/chacha20_poly1305_x86_64.${ASM_EXT}
+    hrss/asm/poly_rq_mul.S
   )
 endif()
 
@@ -275,6 +276,7 @@ add_library(
   evp/sign.c
   ex_data.c
   hkdf/hkdf.c
+  hrss/hrss.c
   lhash/lhash.c
   mem.c
   obj/obj.c
@@ -455,6 +457,7 @@ add_executable(
   fipsmodule/rand/ctrdrbg_test.cc
   hkdf/hkdf_test.cc
   hmac_extra/hmac_test.cc
+  hrss/hrss_test.cc
   lhash/lhash_test.cc
   obj/obj_test.cc
   pem/pem_test.cc
