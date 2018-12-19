@@ -2177,6 +2177,7 @@ OPENSSL_EXPORT int SSL_set1_curves_list(SSL *ssl, const char *curves);
 #define SSL_CURVE_SECP384R1 24
 #define SSL_CURVE_SECP521R1 25
 #define SSL_CURVE_X25519 29
+#define SSL_CURVE_CECPQ2 16696
 
 // SSL_get_curve_id returns the ID of the curve used by |ssl|'s most recently
 // completed handshake or 0 if not applicable.
@@ -4714,6 +4715,14 @@ OPENSSL_EXPORT bool SSL_decline_handoff(SSL *ssl);
 OPENSSL_EXPORT bool SSL_apply_handoff(SSL *ssl, Span<const uint8_t> handoff);
 OPENSSL_EXPORT bool SSL_serialize_handback(const SSL *ssl, CBB *out);
 OPENSSL_EXPORT bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback);
+
+// SSL_get_traffic_secrets sets |*out_read_traffic_secret| and
+// |*out_write_traffic_secret| to reference the TLS 1.3 traffic secrets for
+// |ssl|. This function is only valid on TLS 1.3 connections that have
+// completed the handshake. It returns true on success and false on error.
+OPENSSL_EXPORT bool SSL_get_traffic_secrets(
+    const SSL *ssl, Span<const uint8_t> *out_read_traffic_secret,
+    Span<const uint8_t> *out_write_traffic_secret);
 
 BSSL_NAMESPACE_END
 
