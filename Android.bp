@@ -92,6 +92,7 @@ cc_library {
     vndk: {
         enabled: true,
     },
+    double_loadable: true,
     recovery_available: true,
     defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
     unique_host_soname: true,
