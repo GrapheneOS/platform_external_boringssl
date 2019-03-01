@@ -104,7 +104,6 @@ struct TestConfig {
   bool use_ticket_callback = false;
   bool renew_ticket = false;
   bool enable_early_data = false;
-  int tls13_variant = 0;
   bool enable_client_custom_extension = false;
   bool enable_server_custom_extension = false;
   bool custom_extension_skip = false;
@@ -166,12 +165,15 @@ struct TestConfig {
   bool fail_ocsp_callback = false;
   bool install_cert_compression_algs = false;
   bool reverify_on_resume = false;
+  bool enforce_rsa_key_usage = false;
   bool is_handshaker_supported = false;
   bool handshaker_resume = false;
   std::string handshaker_path;
   bool jdk11_workaround = false;
   bool server_preference = false;
   bool export_traffic_secrets = false;
+  bool key_update = false;
+  std::string delegated_credential;
 
   int argc;
   char **argv;
