@@ -51,6 +51,8 @@
 // SXY: https://eprint.iacr.org/2017/1005.pdf
 // NTRUTN14:
 // https://assets.onboardsecurity.com/static/downloads/NTRU/resources/NTRUTech014.pdf
+// NTRUCOMP:
+// https://eprint.iacr.org/2018/1174
 
 
 // Vector operations.
@@ -62,7 +64,7 @@
 // NEON and SSE2 for implementing some vector operations.
 
 // TODO: MSVC can likely also be made to work with vector operations.
-#if (defined(OPENSSL_X86) || defined(OPENSSL_X86_64)) && \
+#if ((defined(__SSE__) && defined(OPENSSL_X86)) || defined(OPENSSL_X86_64)) && \
     (defined(__clang__) || !defined(_MSC_VER))
 
 #define HRSS_HAVE_VECTOR_UNIT
@@ -486,26 +488,30 @@ static int poly2_top_bits_are_clear(const struct poly2 *p) {
 //  -----------------
 //   0  |  0  | 0
 //   0  |  1  | 1
-//   1  |  0  | 2 (aka -1)
-//   1  |  1  | <invalid>
+//   1  |  1  | -1 (aka 2)
+//   1  |  0  | <invalid>
 //
-// ('s' is for sign, and 'a' just a letter.)
+// ('s' is for sign, and 'a' is the absolute value.)
 //
 // Once bitsliced as such, the following circuits can be used to implement
 // addition and multiplication mod 3:
 //
 //   (s3, a3) = (s1, a1) × (s2, a2)
-//   s3 = (a1 ∧ s2) ⊕ (s1 ∧ a2)
-//   a3 = (s1 ∧ s2) ⊕ (a1 ∧ a2)
+//   a3 = a1 ∧ a2
+//   s3 = (s1 ⊕ s2) ∧ a3
 //
 //   (s3, a3) = (s1, a1) + (s2, a2)
-//   x = (a1 ⊕ a2)
-//   y = (s1 ⊕ s2) ⊕ (a1 ∧ a2)
-//   z = (s1 ∧ s2)
-//   s3 = y ∧ ¬x
-//   a3 = z ∨ (x ∧ ¬y)
+//   t = s1 ⊕ a2
+//   s3 = t ∧ (s2 ⊕ a1)
+//   a3 = (a1 ⊕ a2) ∨ (t ⊕ s2)
 //
-// Negating a value just involves swapping s and a.
+//   (s3, a3) = (s1, a1) - (s2, a2)
+//   t = a1 ⊕ a2
+//   s3 = (s1 ⊕ a2) ∧ (t ⊕ s2)
+//   a3 = t ∨ (s1 ⊕ s2)
+//
+// Negating a value just involves XORing s by a.
+//
 // struct poly3 {
 //   struct poly2 s, a;
 // };
@@ -538,22 +544,45 @@ static void poly3_zero(struct poly3 *p) {
   poly2_zero(&p->a);
 }
 
+// poly3_word_mul sets (|out_s|, |out_a) to (|s1|, |a1|) × (|s2|, |a2|).
+static void poly3_word_mul(crypto_word_t *out_s, crypto_word_t *out_a,
+                           const crypto_word_t s1, const crypto_word_t a1,
+                           const crypto_word_t s2, const crypto_word_t a2) {
+  *out_a = a1 & a2;
+  *out_s = (s1 ^ s2) & *out_a;
+}
+
+// poly3_word_add sets (|out_s|, |out_a|) to (|s1|, |a1|) + (|s2|, |a2|).
+static void poly3_word_add(crypto_word_t *out_s, crypto_word_t *out_a,
+                           const crypto_word_t s1, const crypto_word_t a1,
+                           const crypto_word_t s2, const crypto_word_t a2) {
+  const crypto_word_t t = s1 ^ a2;
+  *out_s = t & (s2 ^ a1);
+  *out_a = (a1 ^ a2) | (t ^ s2);
+}
+
+// poly3_word_sub sets (|out_s|, |out_a|) to (|s1|, |a1|) - (|s2|, |a2|).
+static void poly3_word_sub(crypto_word_t *out_s, crypto_word_t *out_a,
+                           const crypto_word_t s1, const crypto_word_t a1,
+                           const crypto_word_t s2, const crypto_word_t a2) {
+  const crypto_word_t t = a1 ^ a2;
+  *out_s = (s1 ^ a2) & (t ^ s2);
+  *out_a = t | (s1 ^ s2);
+}
+
 // lsb_to_all replicates the least-significant bit of |v| to all bits of the
 // word. This is used in bit-slicing operations to make a vector from a fixed
 // value.
 static crypto_word_t lsb_to_all(crypto_word_t v) { return 0u - (v & 1); }
 
-// poly3_mul_const sets |p| to |p|×m, where m  = (ms, ma).
+// poly3_mul_const sets |p| to |p|×m, where m = (ms, ma).
 static void poly3_mul_const(struct poly3 *p, crypto_word_t ms,
                             crypto_word_t ma) {
   ms = lsb_to_all(ms);
   ma = lsb_to_all(ma);
 
   for (size_t i = 0; i < WORDS_PER_POLY; i++) {
-    const crypto_word_t s = p->s.v[i];
-    const crypto_word_t a = p->a.v[i];
-    p->s.v[i] = (s & ma) ^ (ms & a);
-    p->a.v[i] = (ms & s) ^ (ma & a);
+    poly3_word_mul(&p->s.v[i], &p->a.v[i], p->s.v[i], p->a.v[i], ms, ma);
   }
 }
 
@@ -564,23 +593,15 @@ static void poly3_rotr_consttime(struct poly3 *p, size_t bits) {
   HRSS_poly2_rotr_consttime(&p->a, bits);
 }
 
-// poly3_fmadd sets |out| to |out| + |in|×m, where m is (ms, ma).
-static void poly3_fmadd(struct poly3 *RESTRICT out,
+// poly3_fmadd sets |out| to |out| - |in|×m, where m is (ms, ma).
+static void poly3_fmsub(struct poly3 *RESTRICT out,
                         const struct poly3 *RESTRICT in, crypto_word_t ms,
                         crypto_word_t ma) {
-  // (See the multiplication and addition circuits given above.)
+  crypto_word_t product_s, product_a;
   for (size_t i = 0; i < WORDS_PER_POLY; i++) {
-    const crypto_word_t s = in->s.v[i];
-    const crypto_word_t a = in->a.v[i];
-    const crypto_word_t product_s = (s & ma) ^ (ms & a);
-    const crypto_word_t product_a = (ms & s) ^ (ma & a);
-
-    const crypto_word_t x = out->a.v[i] ^ product_a;
-    const crypto_word_t y =
-        (out->s.v[i] ^ product_s) ^ (out->a.v[i] & product_a);
-    const crypto_word_t z = (out->s.v[i] & product_s);
-    out->s.v[i] = y & ~x;
-    out->a.v[i] = z | (x & ~y);
+    poly3_word_mul(&product_s, &product_a, in->s.v[i], in->a.v[i], ms, ma);
+    poly3_word_sub(&out->s.v[i], &out->a.v[i], out->s.v[i], out->a.v[i],
+                   product_s, product_a);
   }
 }
 
@@ -599,20 +620,13 @@ OPENSSL_UNUSED static int poly3_top_bits_are_clear(const struct poly3 *p) {
 // poly3_mod_phiN reduces |p| by Φ(N).
 static void poly3_mod_phiN(struct poly3 *p) {
   // In order to reduce by Φ(N) we subtract by the value of the greatest
-  // coefficient. That's the same as adding the negative of its value. The
-  // negative of (s, a) is (a, s), so the arguments are swapped in the following
-  // two lines.
-  const crypto_word_t factor_s = final_bit_to_all(p->a.v[WORDS_PER_POLY - 1]);
-  const crypto_word_t factor_a = final_bit_to_all(p->s.v[WORDS_PER_POLY - 1]);
+  // coefficient.
+  const crypto_word_t factor_s = final_bit_to_all(p->s.v[WORDS_PER_POLY - 1]);
+  const crypto_word_t factor_a = final_bit_to_all(p->a.v[WORDS_PER_POLY - 1]);
 
   for (size_t i = 0; i < WORDS_PER_POLY; i++) {
-    const crypto_word_t s = p->s.v[i];
-    const crypto_word_t a = p->a.v[i];
-    const crypto_word_t x = a ^ factor_a;
-    const crypto_word_t y = (s ^ factor_s) ^ (a & factor_a);
-    const crypto_word_t z = (s & factor_s);
-    p->s.v[i] = y & ~x;
-    p->a.v[i] = z | (x & ~y);
+    poly3_word_sub(&p->s.v[i], &p->a.v[i], p->s.v[i], p->a.v[i], factor_s,
+                   factor_a);
   }
 
   poly2_clear_top_bits(&p->s);
@@ -640,17 +654,6 @@ struct poly3_span {
   crypto_word_t *a;
 };
 
-// poly3_word_add sets (|out_s|, |out_a|) to (|s1|, |a1|) + (|s2|, |a2|).
-static void poly3_word_add(crypto_word_t *out_s, crypto_word_t *out_a,
-                           const crypto_word_t s1, const crypto_word_t a1,
-                           const crypto_word_t s2, const crypto_word_t a2) {
-  const crypto_word_t x = a1 ^ a2;
-  const crypto_word_t y = (s1 ^ s2) ^ (a1 & a2);
-  const crypto_word_t z = s1 & s2;
-  *out_s = y & ~x;
-  *out_a = z | (x & ~y);
-}
-
 // poly3_span_add adds |n| words of values from |a| and |b| and writes the
 // result to |out|.
 static void poly3_span_add(const struct poly3_span *out,
@@ -665,8 +668,7 @@ static void poly3_span_add(const struct poly3_span *out,
 static void poly3_span_sub(const struct poly3_span *a,
                            const struct poly3_span *b, size_t n) {
   for (size_t i = 0; i < n; i++) {
-    // Swapping |b->s| and |b->a| negates the value being added.
-    poly3_word_add(&a->s[i], &a->a[i], a->s[i], a->a[i], b->a[i], b->s[i]);
+    poly3_word_sub(&a->s[i], &a->a[i], a->s[i], a->a[i], b->s[i], b->a[i]);
   }
 }
 
@@ -686,13 +688,10 @@ static void poly3_mul_aux(const struct poly3_span *out,
 
     for (size_t i = 0; i < BITS_PER_WORD; i++) {
       // Multiply (s, a) by the next value from (b_s, b_a).
-      const crypto_word_t v_s = lsb_to_all(b_s);
-      const crypto_word_t v_a = lsb_to_all(b_a);
+      crypto_word_t m_s, m_a;
+      poly3_word_mul(&m_s, &m_a, a_s, a_a, lsb_to_all(b_s), lsb_to_all(b_a));
       b_s >>= 1;
       b_a >>= 1;
-
-      const crypto_word_t m_s = (v_s & a_a) ^ (a_s & v_a);
-      const crypto_word_t m_a = (a_s & v_s) ^ (a_a & v_a);
 
       if (i == 0) {
         // Special case otherwise the code tries to shift by BITS_PER_WORD
@@ -814,21 +813,22 @@ static inline void poly3_vec_cswap(vec_t a_s[6], vec_t a_a[6], vec_t b_s[6],
   }
 }
 
-// poly3_vec_fmadd adds (|ms|, |ma|) × (|b_s|, |b_a|) to (|a_s|, |a_a|).
-static inline void poly3_vec_fmadd(vec_t a_s[6], vec_t a_a[6], vec_t b_s[6],
+// poly3_vec_fmsub subtracts (|ms|, |ma|) × (|b_s|, |b_a|) from (|a_s|, |a_a|).
+static inline void poly3_vec_fmsub(vec_t a_s[6], vec_t a_a[6], vec_t b_s[6],
                                    vec_t b_a[6], const vec_t ms,
                                    const vec_t ma) {
   for (int i = 0; i < 6; i++) {
+    // See the bitslice formula, above.
     const vec_t s = b_s[i];
     const vec_t a = b_a[i];
-    const vec_t product_s = (s & ma) ^ (ms & a);
-    const vec_t product_a = (ms & s) ^ (ma & a);
+    const vec_t product_a = a & ma;
+    const vec_t product_s = (s ^ ms) & product_a;
 
-    const vec_t x = a_a[i] ^ product_a;
-    const vec_t y = (a_s[i] ^ product_s) ^ (a_a[i] & product_a);
-    const vec_t z = (a_s[i] & product_s);
-    a_s[i] = y & ~x;
-    a_a[i] = z | (x & ~y);
+    const vec_t out_s = a_s[i];
+    const vec_t out_a = a_a[i];
+    const vec_t t = out_a ^ product_a;
+    a_s[i] = (out_s ^ product_a) & (t ^ product_s);
+    a_a[i] = t | (out_s ^ product_s);
   }
 }
 
@@ -872,19 +872,18 @@ static void poly3_invert_vec(struct poly3 *out, const struct poly3 *in) {
   memset(&still_going, 0xff, sizeof(still_going));
 
   for (unsigned i = 0; i < 2 * (N - 1) - 1; i++) {
-    const vec_t s_a = vec_broadcast_bit(
-        still_going & ((f_a[0] & g_s[0]) ^ (f_s[0] & g_a[0])));
-    const vec_t s_s = vec_broadcast_bit(
-        still_going & ((f_a[0] & g_a[0]) ^ (f_s[0] & g_s[0])));
+    const vec_t s_a = vec_broadcast_bit(still_going & (f_a[0] & g_a[0]));
+    const vec_t s_s =
+        vec_broadcast_bit(still_going & ((f_s[0] ^ g_s[0]) & s_a));
     const vec_t should_swap =
         (s_s | s_a) & vec_broadcast_bit15(deg_f - deg_g);
 
     poly3_vec_cswap(f_s, f_a, g_s, g_a, should_swap);
-    poly3_vec_fmadd(f_s, f_a, g_s, g_a, s_s, s_a);
+    poly3_vec_fmsub(f_s, f_a, g_s, g_a, s_s, s_a);
     poly3_vec_rshift1(f_s, f_a);
 
     poly3_vec_cswap(b_s, b_a, c_s, c_a, should_swap);
-    poly3_vec_fmadd(b_s, b_a, c_s, c_a, s_s, s_a);
+    poly3_vec_fmsub(b_s, b_a, c_s, c_a, s_s, s_a);
     poly3_vec_lshift1(c_s, c_a);
 
     const vec_t deg_sum = should_swap & (deg_f ^ deg_g);
@@ -957,9 +956,9 @@ void HRSS_poly3_invert(struct poly3 *out, const struct poly3 *in) {
 
   for (unsigned i = 0; i < 2 * (N - 1) - 1; i++) {
     const crypto_word_t s_a = lsb_to_all(
-        still_going & ((f.a.v[0] & g.s.v[0]) ^ (f.s.v[0] & g.a.v[0])));
+        still_going & (f.a.v[0] & g.a.v[0]));
     const crypto_word_t s_s = lsb_to_all(
-        still_going & ((f.a.v[0] & g.a.v[0]) ^ (f.s.v[0] & g.s.v[0])));
+        still_going & ((f.s.v[0] ^ g.s.v[0]) & s_a));
     const crypto_word_t should_swap =
         (s_s | s_a) & constant_time_lt_w(deg_f, deg_g);
 
@@ -971,8 +970,8 @@ void HRSS_poly3_invert(struct poly3 *out, const struct poly3 *in) {
     deg_g ^= deg_sum;
     assert(deg_g >= 1);
 
-    poly3_fmadd(&f, &g, s_s, s_a);
-    poly3_fmadd(b, &c, s_s, s_a);
+    poly3_fmsub(&f, &g, s_s, s_a);
+    poly3_fmsub(b, &c, s_s, s_a);
     poly3_rshift1(&f);
     poly3_lshift1(&c);
 
@@ -1385,23 +1384,12 @@ static void poly_mul_novec(struct poly *out, const struct poly *x,
   OPENSSL_memset(&out->v[N], 0, 3 * sizeof(uint16_t));
 }
 
-// On x86-64, we can use the AVX2 code from [HRSS]. (The authors have given
-// explicit permission for this and signed a CLA.) However it's 57KB of object
-// code, so it's not used if |OPENSSL_SMALL| is defined.
-#if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && \
-    defined(OPENSSL_X86_64) && defined(OPENSSL_LINUX)
-// poly_Rq_mul is defined in assembly.
-extern void poly_Rq_mul(struct poly *r, const struct poly *a,
-                        const struct poly *b);
-#endif
-
 static void poly_mul(struct poly *r, const struct poly *a,
                      const struct poly *b) {
-#if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && \
-    defined(OPENSSL_X86_64) && defined(OPENSSL_LINUX)
+#if defined(POLY_RQ_MUL_ASM)
   const int has_avx2 = (OPENSSL_ia32cap_P[2] & (1 << 5)) != 0;
   if (has_avx2) {
-    poly_Rq_mul(r, a, b);
+    poly_Rq_mul(r->v, a->v, b->v);
     return;
   }
 #endif
@@ -1472,7 +1460,7 @@ static void poly2_from_poly(struct poly2 *out, const struct poly *in) {
   *words = word;
 }
 
-// mod3 treats |a| is a signed number and returns |a| mod 3.
+// mod3 treats |a| as a signed number and returns |a| mod 3.
 static uint16_t mod3(int16_t a) {
   const int16_t q = ((int32_t)a * 21845) >> 16;
   int16_t ret = a - 3 * q;
@@ -1495,9 +1483,10 @@ static void poly3_from_poly(struct poly3 *out, const struct poly *in) {
     // The signed value is reduced mod 3, yielding {0, 1, 2}.
     const uint16_t v = mod3((int16_t)(in->v[i] << 3) >> 3);
     s >>= 1;
-    s |= (crypto_word_t)(v & 2) << (BITS_PER_WORD - 2);
+    const crypto_word_t s_bit = (crypto_word_t)(v & 2) << (BITS_PER_WORD - 2);
+    s |= s_bit;
     a >>= 1;
-    a |= (crypto_word_t)(v & 1) << (BITS_PER_WORD - 1);
+    a |= s_bit | (crypto_word_t)(v & 1) << (BITS_PER_WORD - 1);
     shift++;
 
     if (shift == BITS_PER_WORD) {
@@ -1537,9 +1526,11 @@ static crypto_word_t poly3_from_poly_checked(struct poly3 *out,
     ok &= constant_time_eq_w(v, expected);
 
     s >>= 1;
-    s |= (crypto_word_t)(mod3 & 2) << (BITS_PER_WORD - 2);
+    const crypto_word_t s_bit = (crypto_word_t)(mod3 & 2)
+                                << (BITS_PER_WORD - 2);
+    s |= s_bit;
     a >>= 1;
-    a |= (crypto_word_t)(mod3 & 1) << (BITS_PER_WORD - 1);
+    a |= s_bit | (crypto_word_t)(mod3 & 1) << (BITS_PER_WORD - 1);
     shift++;
 
     if (shift == BITS_PER_WORD) {
@@ -1686,6 +1677,7 @@ static void poly_invert(struct poly *out, const struct poly *in) {
 
 #define POLY_BYTES 1138
 
+// poly_marshal serialises all but the final coefficient of |in| to |out|.
 static void poly_marshal(uint8_t out[POLY_BYTES], const struct poly *in) {
   const uint16_t *p = in->v;
 
@@ -1718,7 +1710,11 @@ static void poly_marshal(uint8_t out[POLY_BYTES], const struct poly *in) {
   out[6] = 0xf & (p[3] >> 9);
 }
 
-static void poly_unmarshal(struct poly *out, const uint8_t in[POLY_BYTES]) {
+// poly_unmarshal parses the output of |poly_marshal| and sets |out| such that
+// all but the final coefficients match, and the final coefficient is calculated
+// such that evaluating |out| at one results in zero. It returns one on success
+// or zero if |in| is an invalid encoding.
+static int poly_unmarshal(struct poly *out, const uint8_t in[POLY_BYTES]) {
   uint16_t *p = out->v;
 
   for (size_t i = 0; i < N / 8; i++) {
@@ -1751,9 +1747,10 @@ static void poly_unmarshal(struct poly *out, const uint8_t in[POLY_BYTES]) {
     out->v[i] = (int16_t)(out->v[i] << 3) >> 3;
   }
 
-  // There are four unused bits at the top of the final byte. They are always
-  // marshaled as zero by this code but we allow them to take any value when
-  // parsing in order to support future extension.
+  // There are four unused bits in the last byte. We require them to be zero.
+  if ((in[6] & 0xf0) != 0) {
+    return 0;
+  }
 
   // Set the final coefficient as specifed in [HRSSNIST] 1.9.2 step 6.
   uint32_t sum = 0;
@@ -1762,6 +1759,8 @@ static void poly_unmarshal(struct poly *out, const uint8_t in[POLY_BYTES]) {
   }
 
   out->v[N - 1] = (uint16_t)(0u - sum);
+
+  return 1;
 }
 
 // mod3_from_modQ maps {0, 1, Q-1, 65535} -> {0, 1, 2, 2}. Note that |v| may
@@ -1795,69 +1794,21 @@ static void poly_marshal_mod3(uint8_t out[HRSS_POLY3_BYTES],
 // HRSS-specific functions
 // -----------------------
 
-// poly_short_sample implements the sampling algorithm given in [HRSSNIST]
-// section 1.8.1. The output coefficients are in {0, 1, 0xffff} which makes some
-// later computation easier.
+// poly_short_sample samples a vector of values in {0xffff (i.e. -1), 0, 1}.
+// This is the same action as the algorithm in [HRSSNIST] section 1.8.1, but
+// with HRSS-SXY the sampling algorithm is now a private detail of the
+// implementation (previously it had to match between two parties). This
+// function uses that freedom to implement a flatter distribution of values.
 static void poly_short_sample(struct poly *out,
                               const uint8_t in[HRSS_SAMPLE_BYTES]) {
-  // We wish to calculate the difference (mod 3) between two, two-bit numbers.
-  // Here is a table of results for a - b. Negative one is written as 0b11 so
-  // that a couple of shifts can be used to sign-extend it. Any input value of
-  // 0b11 is invalid and a convention is adopted that an invalid input results
-  // in an invalid output (0b10).
-  //
-  //  b  a result
-  // 00 00 00
-  // 00 01 01
-  // 00 10 11
-  // 00 11 10
-  // 01 00 11
-  // 01 01 00
-  // 01 10 01
-  // 01 11 10
-  // 10 00 01
-  // 10 01 11
-  // 10 10 00
-  // 10 11 10
-  // 11 00 10
-  // 11 01 10
-  // 11 10 10
-  // 11 11 10
-  //
-  // The result column is encoded in a single-word lookup-table:
-  // 0001 1110 1100 0110 0111 0010 1010 1010
-  //   1    d    c    6    7    2    a    a
-  static const uint32_t kLookup = 0x1dc672aa;
-
-  // In order to generate pairs of numbers mod 3 (non-uniformly) we treat pairs
-  // of bits in a uint32 as separate values and sum two random vectors of 1-bit
-  // numbers. This works because these pairs are isolated because no carry can
-  // spread between them.
-
-  uint16_t *p = out->v;
-  for (size_t i = 0; i < N / 8; i++) {
-    uint32_t v;
-    OPENSSL_memcpy(&v, in, sizeof(v));
-    in += sizeof(v);
-
-    uint32_t sums = (v & 0x55555555) + ((v >> 1) & 0x55555555);
-    for (unsigned j = 0; j < 8; j++) {
-      p[j] = (int32_t)(kLookup << ((sums & 15) << 1)) >> 30;
-      sums >>= 4;
-    }
-    p += 8;
+  OPENSSL_STATIC_ASSERT(HRSS_SAMPLE_BYTES == N - 1,
+                        "HRSS_SAMPLE_BYTES incorrect");
+  for (size_t i = 0; i < N - 1; i++) {
+    uint16_t v = mod3(in[i]);
+    // Map {0, 1, 2} -> {0, 1, 0xffff}
+    v |= ((v >> 1) ^ 1) - 1;
+    out->v[i] = v;
   }
-
-  // There are four values remaining.
-  uint16_t v;
-  OPENSSL_memcpy(&v, in, sizeof(v));
-
-  uint16_t sums = (v & 0x5555) + ((v >> 1) & 0x5555);
-  for (unsigned j = 0; j < 4; j++) {
-    p[j] = (int32_t)(kLookup << ((sums & 15) << 1)) >> 30;
-    sums >>= 4;
-  }
-
   out->v[N - 1] = 0;
 }
 
@@ -2077,17 +2028,6 @@ void HRSS_generate_key(
   poly_clamp(&priv->ph_inverse);
 }
 
-static void owf(uint8_t out[POLY_BYTES], const struct public_key *pub,
-                const struct poly *m_lifted, const struct poly *r) {
-  struct poly prh_plus_m;
-  poly_mul(&prh_plus_m, r, &pub->ph);
-  for (unsigned i = 0; i < N; i++) {
-    prh_plus_m.v[i] += m_lifted->v[i];
-  }
-
-  poly_marshal(out, &prh_plus_m);
-}
-
 static const char kSharedKey[] = "shared key";
 
 void HRSS_encap(uint8_t out_ciphertext[POLY_BYTES],
@@ -2100,7 +2040,14 @@ void HRSS_encap(uint8_t out_ciphertext[POLY_BYTES],
   poly_short_sample(&m, in);
   poly_short_sample(&r, in + HRSS_SAMPLE_BYTES);
   poly_lift(&m_lifted, &m);
-  owf(out_ciphertext, pub, &m_lifted, &r);
+
+  struct poly prh_plus_m;
+  poly_mul(&prh_plus_m, &r, &pub->ph);
+  for (unsigned i = 0; i < N; i++) {
+    prh_plus_m.v[i] += m_lifted.v[i];
+  }
+
+  poly_marshal(out_ciphertext, &prh_plus_m);
 
   uint8_t m_bytes[HRSS_POLY3_BYTES], r_bytes[HRSS_POLY3_BYTES];
   poly_marshal_mod3(m_bytes, &m);
@@ -2116,11 +2063,8 @@ void HRSS_encap(uint8_t out_ciphertext[POLY_BYTES],
 }
 
 void HRSS_decap(uint8_t out_shared_key[HRSS_KEY_BYTES],
-                const struct HRSS_public_key *in_pub,
                 const struct HRSS_private_key *in_priv,
                 const uint8_t *ciphertext, size_t ciphertext_len) {
-  const struct public_key *pub =
-      public_key_from_external((struct HRSS_public_key *)in_pub);
   const struct private_key *priv =
       private_key_from_external((struct HRSS_private_key *)in_priv);
 
@@ -2156,53 +2100,71 @@ void HRSS_decap(uint8_t out_shared_key[HRSS_KEY_BYTES],
                         "HRSS shared key length incorrect");
   SHA256_Final(out_shared_key, &hash_ctx);
 
+  struct poly c;
   // If the ciphertext is publicly invalid then a random shared key is still
   // returned to simply the logic of the caller, but this path is not constant
   // time.
-  if (ciphertext_len != HRSS_CIPHERTEXT_BYTES) {
+  if (ciphertext_len != HRSS_CIPHERTEXT_BYTES ||
+      !poly_unmarshal(&c, ciphertext)) {
     return;
   }
 
-  struct poly c;
-  poly_unmarshal(&c, ciphertext);
-
-  struct poly f;
+  struct poly f, cf;
+  struct poly3 cf3, m3;
   poly_from_poly3(&f, &priv->f);
-
-  struct poly cf;
   poly_mul(&cf, &c, &f);
-
-  struct poly3 cf3;
   poly3_from_poly(&cf3, &cf);
   // Note that cf3 is not reduced mod Φ(N). That reduction is deferred.
-
-  struct poly3 m3;
   HRSS_poly3_mul(&m3, &cf3, &priv->f_inverse);
 
   struct poly m, m_lifted;
   poly_from_poly3(&m, &m3);
   poly_lift(&m_lifted, &m);
 
+  struct poly r;
   for (unsigned i = 0; i < N; i++) {
-    c.v[i] -= m_lifted.v[i];
+    r.v[i] = c.v[i] - m_lifted.v[i];
   }
-  poly_mul(&c, &c, &priv->ph_inverse);
-  poly_mod_phiN(&c);
-  poly_clamp(&c);
+  poly_mul(&r, &r, &priv->ph_inverse);
+  poly_mod_phiN(&r);
+  poly_clamp(&r);
 
   struct poly3 r3;
-  crypto_word_t ok = poly3_from_poly_checked(&r3, &c);
+  crypto_word_t ok = poly3_from_poly_checked(&r3, &r);
+
+  // [NTRUCOMP] section 5.1 includes ReEnc2 and a proof that it's valid. Rather
+  // than do an expensive |poly_mul|, it rebuilds |c'| from |c - lift(m)|
+  // (called |b|) with:
+  //   t = (−b(1)/N) mod Q
+  //   c' = b + tΦ(N) + lift(m) mod Q
+  //
+  // When polynomials are transmitted, the final coefficient is omitted and
+  // |poly_unmarshal| sets it such that f(1) == 0. Thus c(1) == 0. Also,
+  // |poly_lift| multiplies the result by (x-1) and therefore evaluating a
+  // lifted polynomial at 1 is also zero. Thus lift(m)(1) == 0 and so
+  // (c - lift(m))(1) == 0.
+  //
+  // Although we defer the reduction above, |b| is conceptually reduced mod
+  // Φ(N). In order to do that reduction one subtracts |c[N-1]| from every
+  // coefficient. Therefore b(1) = -c[N-1]×N. The value of |t|, above, then is
+  // just recovering |c[N-1]|, and adding tΦ(N) is simply undoing the reduction.
+  // Therefore b + tΦ(N) + lift(m) = c by construction and we don't need to
+  // recover |c| at all so long as we do the checks in
+  // |poly3_from_poly_checked|.
+  //
+  // The |poly_marshal| here then is just confirming that |poly_unmarshal| is
+  // strict and could be omitted.
 
   uint8_t expected_ciphertext[HRSS_CIPHERTEXT_BYTES];
   OPENSSL_STATIC_ASSERT(HRSS_CIPHERTEXT_BYTES == POLY_BYTES,
                         "ciphertext is the wrong size");
   assert(ciphertext_len == sizeof(expected_ciphertext));
-  owf(expected_ciphertext, pub, &m_lifted, &c);
+  poly_marshal(expected_ciphertext, &c);
 
   uint8_t m_bytes[HRSS_POLY3_BYTES];
   uint8_t r_bytes[HRSS_POLY3_BYTES];
   poly_marshal_mod3(m_bytes, &m);
-  poly_marshal_mod3(r_bytes, &c);
+  poly_marshal_mod3(r_bytes, &r);
 
   ok &= constant_time_is_zero_w(CRYPTO_memcmp(ciphertext, expected_ciphertext,
                                               sizeof(expected_ciphertext)));
@@ -2231,7 +2193,9 @@ void HRSS_marshal_public_key(uint8_t out[HRSS_PUBLIC_KEY_BYTES],
 int HRSS_parse_public_key(struct HRSS_public_key *out,
                           const uint8_t in[HRSS_PUBLIC_KEY_BYTES]) {
   struct public_key *pub = public_key_from_external(out);
-  poly_unmarshal(&pub->ph, in);
+  if (!poly_unmarshal(&pub->ph, in)) {
+    return 0;
+  }
   OPENSSL_memset(&pub->ph.v[N], 0, 3 * sizeof(uint16_t));
   return 1;
 }
