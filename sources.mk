@@ -247,6 +247,7 @@ linux_aarch64_sources := \
   linux-aarch64/crypto/fipsmodule/sha1-armv8.S\
   linux-aarch64/crypto/fipsmodule/sha256-armv8.S\
   linux-aarch64/crypto/fipsmodule/sha512-armv8.S\
+  linux-aarch64/crypto/test/trampoline-armv8.S\
 
 linux_arm_sources := \
   linux-arm/crypto/chacha/chacha-armv4.S\
@@ -259,6 +260,7 @@ linux_arm_sources := \
   linux-arm/crypto/fipsmodule/sha1-armv4-large.S\
   linux-arm/crypto/fipsmodule/sha256-armv4.S\
   linux-arm/crypto/fipsmodule/sha512-armv4.S\
+  linux-arm/crypto/test/trampoline-armv4.S\
   src/crypto/curve25519/asm/x25519-asm-arm.S\
   src/crypto/poly1305/poly1305_arm_asm.S\
 
@@ -279,6 +281,7 @@ linux_x86_sources := \
   linux-x86/crypto/fipsmodule/sha512-586.S\
   linux-x86/crypto/fipsmodule/vpaes-x86.S\
   linux-x86/crypto/fipsmodule/x86-mont.S\
+  linux-x86/crypto/test/trampoline-x86.S\
 
 linux_x86_64_sources := \
   linux-x86_64/crypto/chacha/chacha-x86_64.S\
@@ -288,6 +291,7 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S\
   linux-x86_64/crypto/fipsmodule/aesni-x86_64.S\
   linux-x86_64/crypto/fipsmodule/bsaes-x86_64.S\
+  linux-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64.S\
   linux-x86_64/crypto/fipsmodule/ghash-x86_64.S\
   linux-x86_64/crypto/fipsmodule/md5-x86_64.S\
   linux-x86_64/crypto/fipsmodule/p256-x86_64-asm.S\
@@ -300,5 +304,6 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/fipsmodule/vpaes-x86_64.S\
   linux-x86_64/crypto/fipsmodule/x86_64-mont.S\
   linux-x86_64/crypto/fipsmodule/x86_64-mont5.S\
+  linux-x86_64/crypto/test/trampoline-x86_64.S\
   src/crypto/hrss/asm/poly_rq_mul.S\
 
