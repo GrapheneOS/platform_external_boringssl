@@ -24,4 +24,6 @@ git commit -m "external/boringssl: Sync to ${new_revision}.
 This includes the following changes:
 
 https://boringssl.googlesource.com/boringssl/+log/${old_revision}..${new_revision}
+
+Test: atest CtsLibcoreTestCases (TODO)
 "
