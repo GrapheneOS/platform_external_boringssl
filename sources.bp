@@ -247,6 +247,7 @@ cc_defaults {
                 "linux-aarch64/crypto/chacha/chacha-armv8.S",
                 "linux-aarch64/crypto/fipsmodule/aesv8-armx64.S",
                 "linux-aarch64/crypto/fipsmodule/armv8-mont.S",
+                "linux-aarch64/crypto/fipsmodule/ghash-neon-armv8.S",
                 "linux-aarch64/crypto/fipsmodule/ghashv8-armx64.S",
                 "linux-aarch64/crypto/fipsmodule/sha1-armv8.S",
                 "linux-aarch64/crypto/fipsmodule/sha256-armv8.S",
