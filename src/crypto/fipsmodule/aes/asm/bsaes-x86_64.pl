@@ -811,9 +811,6 @@ ___
 $code.=<<___;
 .text
 
-.extern	aes_nohw_encrypt
-.extern	aes_nohw_decrypt
-
 .type	_bsaes_encrypt8,\@abi-omnipotent
 .align	64
 _bsaes_encrypt8:
@@ -1609,22 +1606,14 @@ $code.=<<___;
 ___
 }
 $code.=<<___;
-.extern	aes_nohw_cbc_encrypt
 .globl	bsaes_cbc_encrypt
 .type	bsaes_cbc_encrypt,\@abi-omnipotent
 .align	16
 bsaes_cbc_encrypt:
 .cfi_startproc
-___
-$code.=<<___ if ($win64);
-	mov	48(%rsp),$arg6		# pull direction flag
-___
-$code.=<<___;
-	cmp	\$0,$arg6
-	jne	aes_nohw_cbc_encrypt
-	cmp	\$128,$arg3
-	jb	aes_nohw_cbc_encrypt
-
+	# In OpenSSL, this function had a fallback to aes_nohw_cbc_encrypt for
+	# short inputs or if enc is one. We patch this out, using bsaes for all
+	# input sizes. The caller is required to ensure enc is zero.
 	mov	%rsp, %rax
 .Lcbc_dec_prologue:
 	push	%rbp
@@ -1683,6 +1672,8 @@ $code.=<<___;
 
 	movdqu	(%rbx), @XMM[15]	# load IV
 	sub	\$8,$len
+	jc	.Lcbc_dec_loop_done
+
 .Lcbc_dec_loop:
 	movdqu	0x00($inp), @XMM[0]	# load input
 	movdqu	0x10($inp), @XMM[1]
@@ -1727,6 +1718,7 @@ $code.=<<___;
 	sub	\$8,$len
 	jnc	.Lcbc_dec_loop
 
+.Lcbc_dec_loop_done:
 	add	\$8,$len
 	jz	.Lcbc_dec_done
 
@@ -1859,13 +1851,12 @@ $code.=<<___;
 	jmp	.Lcbc_dec_done
 .align	16
 .Lcbc_dec_one:
-	lea	($inp), $arg1
-	lea	0x20(%rbp), $arg2	# buffer output
-	lea	($key), $arg3
-	call	aes_nohw_decrypt		# doesn't touch %xmm
-	pxor	0x20(%rbp), @XMM[15]	# ^= IV
-	movdqu	@XMM[15], ($out)	# write output
-	movdqa	@XMM[0], @XMM[15]	# IV
+	movdqa	@XMM[15], 0x20(%rbp)	# put aside IV
+	call	_bsaes_decrypt8
+	pxor	0x20(%rbp), @XMM[0]	# ^= IV
+	movdqu	0x00($inp), @XMM[15]	# IV
+	movdqu	@XMM[0], 0x00($out)	# write output
+	jmp	.Lcbc_dec_done
 
 .Lcbc_dec_done:
 	movdqu	@XMM[15], (%rbx)	# return IV
@@ -1968,8 +1959,8 @@ $code.=<<___;
 	mov	$arg3, $len
 	mov	$arg4, $key
 	movdqa	%xmm0, 0x20(%rbp)	# copy counter
-	cmp	\$8, $arg3
-	jb	.Lctr_enc_short
+	# In OpenSSL, short inputs fall back to aes_nohw_* here. We patch this
+	# out to retain a constant-time implementation.
 
 	mov	%eax, %ebx		# rounds
 	shl	\$7, %rax		# 128 bytes per inner round key
@@ -2103,27 +2094,9 @@ $code.=<<___;
 	movdqu	0x60($inp), @XMM[14]
 	pxor	@XMM[14], @XMM[2]
 	movdqu	@XMM[2], 0x60($out)
-	jmp	.Lctr_enc_done
 
-.align	16
-.Lctr_enc_short:
-	lea	0x20(%rbp), $arg1
-	lea	0x30(%rbp), $arg2
-	lea	($key), $arg3
-	call	aes_nohw_encrypt
-	movdqu	($inp), @XMM[1]
-	lea	16($inp), $inp
-	mov	0x2c(%rbp), %eax	# load 32-bit counter
-	bswap	%eax
-	pxor	0x30(%rbp), @XMM[1]
-	inc	%eax			# increment
-	movdqu	@XMM[1], ($out)
-	bswap	%eax
-	lea	16($out), $out
-	mov	%eax, 0x2c(%rsp)	# save 32-bit counter
-	dec	$len
-	jnz	.Lctr_enc_short
-
+	# OpenSSL contains aes_nohw_* fallback code here. We patch this
+	# out to retain a constant-time implementation.
 .Lctr_enc_done:
 	lea	(%rsp), %rax
 	pxor	%xmm0, %xmm0
