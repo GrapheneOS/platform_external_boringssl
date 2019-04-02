@@ -348,7 +348,6 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/fipsmodule/aes-x86_64.S\
   linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S\
   linux-x86_64/crypto/fipsmodule/aesni-x86_64.S\
-  linux-x86_64/crypto/fipsmodule/bsaes-x86_64.S\
   linux-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64.S\
   linux-x86_64/crypto/fipsmodule/ghash-x86_64.S\
   linux-x86_64/crypto/fipsmodule/md5-x86_64.S\
