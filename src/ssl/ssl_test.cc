@@ -1650,11 +1650,11 @@ class SSLVersionTest : public ::testing::TestWithParam<VersionParam> {
   bssl::UniquePtr<EVP_PKEY> key_;
 };
 
-INSTANTIATE_TEST_CASE_P(WithVersion, SSLVersionTest,
-                        testing::ValuesIn(kAllVersions),
-                        [](const testing::TestParamInfo<VersionParam> &i) {
-                          return i.param.name;
-                        });
+INSTANTIATE_TEST_SUITE_P(WithVersion, SSLVersionTest,
+                         testing::ValuesIn(kAllVersions),
+                         [](const testing::TestParamInfo<VersionParam> &i) {
+                           return i.param.name;
+                         });
 
 TEST_P(SSLVersionTest, SequenceNumber) {
   ASSERT_TRUE(Connect());
@@ -3574,7 +3574,7 @@ std::string TicketAEADMethodParamToString(
   return ret;
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     TicketAEADMethodTests, TicketAEADMethodTest,
     testing::Combine(testing::Values(TLS1_2_VERSION, TLS1_3_VERSION),
                      testing::Values(0, 1, 2),
@@ -4050,8 +4050,9 @@ TEST(SSLTest, Handoff) {
 
   ScopedCBB cbb;
   Array<uint8_t> handoff;
+  SSL_CLIENT_HELLO hello;
   ASSERT_TRUE(CBB_init(cbb.get(), 256));
-  ASSERT_TRUE(SSL_serialize_handoff(server.get(), cbb.get()));
+  ASSERT_TRUE(SSL_serialize_handoff(server.get(), cbb.get(), &hello));
   ASSERT_TRUE(CBBFinishArray(cbb.get(), &handoff));
 
   bssl::UniquePtr<SSL> handshaker(SSL_new(handshaker_ctx.get()));
@@ -4122,8 +4123,9 @@ TEST(SSLTest, HandoffDeclined) {
   ASSERT_EQ(server_err, SSL_ERROR_HANDOFF);
 
   ScopedCBB cbb;
+  SSL_CLIENT_HELLO hello;
   ASSERT_TRUE(CBB_init(cbb.get(), 256));
-  ASSERT_TRUE(SSL_serialize_handoff(server.get(), cbb.get()));
+  ASSERT_TRUE(SSL_serialize_handoff(server.get(), cbb.get(), &hello));
 
   ASSERT_TRUE(SSL_decline_handoff(server.get()));
 
