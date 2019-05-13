@@ -89,6 +89,7 @@ cc_defaults {
 cc_library {
     name: "libcrypto",
     vendor_available: true,
+    native_bridge_supported: true,
     vndk: {
         enabled: true,
     },
@@ -105,6 +106,7 @@ cc_library_static {
     defaults: ["boringssl_defaults", "boringssl_flags"],
     host_supported: true,
     recovery_available: true,
+    native_bridge_supported: true,
 
     target: {
         windows: {
@@ -157,6 +159,7 @@ cc_library {
     name: "libssl",
     recovery_available: true,
     vendor_available: true,
+    native_bridge_supported: true,
     vndk: {
         enabled: true,
     },
