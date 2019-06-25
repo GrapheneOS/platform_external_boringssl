@@ -467,4 +467,3 @@ cc_defaults {
         "src/ssl/ssl_test.cc",
     ],
 }
-

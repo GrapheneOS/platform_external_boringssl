@@ -84,7 +84,12 @@ cc_library {
     },
     double_loadable: true,
     recovery_available: true,
-    defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
+    defaults: [
+        "libcrypto_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
     unique_host_soname: true,
 }
 
@@ -93,7 +98,12 @@ cc_library {
 // modules should use the static variant of libcrypto.
 cc_library_static {
     name: "libcrypto_static",
-    defaults: ["libcrypto_sources", "libcrypto_defaults", "boringssl_defaults", "boringssl_flags"],
+    defaults: [
+        "libcrypto_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
 
     target: {
         host: {
@@ -115,7 +125,11 @@ cc_library_static {
 // Deprecated: all users should move to libssl
 cc_library_static {
     name: "libssl_static",
-    defaults: ["libssl_sources", "boringssl_defaults", "boringssl_flags"],
+    defaults: [
+        "libssl_sources",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
 }
 
 // Static and Shared library
@@ -128,7 +142,11 @@ cc_library {
         enabled: true,
     },
     host_supported: true,
-    defaults: ["libssl_sources", "boringssl_defaults", "boringssl_flags"],
+    defaults: [
+        "libssl_sources",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
     unique_host_soname: true,
 
     shared_libs: ["libcrypto"],
@@ -138,7 +156,10 @@ cc_library {
 cc_binary {
     name: "bssl",
     host_supported: true,
-    defaults: ["bssl_sources", "boringssl_flags"],
+    defaults: [
+        "bssl_sources",
+        "boringssl_flags",
+    ],
 
     shared_libs: [
         "libcrypto",
@@ -180,14 +201,20 @@ cc_binary {
         "libcrypto",
     ],
 
-    defaults: ["boringssl_test_support_sources", "boringssl_flags"],
+    defaults: [
+        "boringssl_test_support_sources",
+        "boringssl_flags",
+    ],
 }
 
 // Test support library
 cc_library_static {
     name: "boringssl_test_support",
     host_supported: true,
-    defaults: ["boringssl_test_support_sources", "boringssl_flags"],
+    defaults: [
+        "boringssl_test_support_sources",
+        "boringssl_flags",
+    ],
 
     shared_libs: [
         "libcrypto",
@@ -197,21 +224,30 @@ cc_library_static {
 
 // Tests
 cc_test {
-  name: "boringssl_crypto_test",
-  test_suites: ["device-tests"],
-  host_supported: true,
-  defaults: ["boringssl_crypto_test_sources", "boringssl_flags"],
-  whole_static_libs: ["boringssl_test_support"],
+    name: "boringssl_crypto_test",
+    test_suites: ["device-tests"],
+    host_supported: true,
+    defaults: [
+        "boringssl_crypto_test_sources",
+        "boringssl_flags",
+    ],
+    whole_static_libs: ["boringssl_test_support"],
 
-  shared_libs: ["libcrypto"],
+    shared_libs: ["libcrypto"],
 }
 
 cc_test {
-  name: "boringssl_ssl_test",
-  test_suites: ["device-tests"],
-  host_supported: true,
-  defaults: ["boringssl_ssl_test_sources", "boringssl_flags"],
-  whole_static_libs: ["boringssl_test_support"],
+    name: "boringssl_ssl_test",
+    test_suites: ["device-tests"],
+    host_supported: true,
+    defaults: [
+        "boringssl_ssl_test_sources",
+        "boringssl_flags",
+    ],
+    whole_static_libs: ["boringssl_test_support"],
 
-  shared_libs: ["libcrypto", "libssl"],
+    shared_libs: [
+        "libcrypto",
+        "libssl",
+    ],
 }
