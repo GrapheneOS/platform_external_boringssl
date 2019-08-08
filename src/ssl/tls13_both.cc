@@ -370,13 +370,8 @@ bool tls13_process_certificate_verify(SSL_HANDSHAKE *hs, const SSLMessage &msg) 
     return false;
   }
 
-  bool sig_ok = ssl_public_key_verify(ssl, signature, signature_algorithm,
-                                      hs->peer_pubkey.get(), input);
-#if defined(BORINGSSL_UNSAFE_FUZZER_MODE)
-  sig_ok = true;
-  ERR_clear_error();
-#endif
-  if (!sig_ok) {
+  if (!ssl_public_key_verify(ssl, signature, signature_algorithm,
+                             hs->peer_pubkey.get(), input)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
     return false;
@@ -488,15 +483,16 @@ bool tls13_add_certificate(SSL_HANDSHAKE *hs) {
 
   if (ssl_signing_with_dc(hs)) {
     const CRYPTO_BUFFER *raw = dc->raw.get();
+    CBB child;
     if (!CBB_add_u16(&extensions, TLSEXT_TYPE_delegated_credential) ||
-        !CBB_add_u16(&extensions, CRYPTO_BUFFER_len(raw)) ||
-        !CBB_add_bytes(&extensions,
-                       CRYPTO_BUFFER_data(raw),
+        !CBB_add_u16_length_prefixed(&extensions, &child) ||
+        !CBB_add_bytes(&child, CRYPTO_BUFFER_data(raw),
                        CRYPTO_BUFFER_len(raw)) ||
         !CBB_flush(&extensions)) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
       return 0;
     }
+    ssl->s3->delegated_credential_used = true;
   }
 
   for (size_t i = 1; i < sk_CRYPTO_BUFFER_num(cert->chain.get()); i++) {
