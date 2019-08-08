@@ -22,14 +22,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha512"
 	"debug/elf"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"strings"
 
 	"boringssl.googlesource.com/boringssl/util/ar"
 	"boringssl.googlesource.com/boringssl/util/fipstools/fipscommon"
@@ -37,10 +35,7 @@ import (
 
 func do(outPath, oInput string, arInput string) error {
 	var objectBytes []byte
-	var isStatic bool
 	if len(arInput) > 0 {
-		isStatic = true
-
 		if len(oInput) > 0 {
 			return fmt.Errorf("-in-archive and -in-object are mutually exclusive")
 		}
@@ -68,7 +63,6 @@ func do(outPath, oInput string, arInput string) error {
 		if objectBytes, err = ioutil.ReadFile(oInput); err != nil {
 			return err
 		}
-		isStatic = strings.HasSuffix(oInput, ".o")
 	} else {
 		return fmt.Errorf("exactly one of -in-archive or -in-object is required")
 	}
@@ -78,18 +72,15 @@ func do(outPath, oInput string, arInput string) error {
 		return errors.New("failed to parse object: " + err.Error())
 	}
 
-	// Find the .text and, optionally, .data sections.
+	// Find the .text section.
 
-	var textSection, rodataSection *elf.Section
-	var textSectionIndex, rodataSectionIndex elf.SectionIndex
+	var textSection *elf.Section
+	var textSectionIndex elf.SectionIndex
 	for i, section := range object.Sections {
-		switch section.Name {
-		case ".text":
+		if section.Name == ".text" {
 			textSectionIndex = elf.SectionIndex(i)
 			textSection = section
-		case ".rodata":
-			rodataSectionIndex = elf.SectionIndex(i)
-			rodataSection = section
+			break
 		}
 	}
 
@@ -99,7 +90,8 @@ func do(outPath, oInput string, arInput string) error {
 
 	// Find the starting and ending symbols for the module.
 
-	var textStart, textEnd, rodataStart, rodataEnd *uint64
+	var startSeen, endSeen bool
+	var start, end uint64
 
 	symbols, err := object.Symbols()
 	if err != nil {
@@ -107,115 +99,50 @@ func do(outPath, oInput string, arInput string) error {
 	}
 
 	for _, symbol := range symbols {
-		var base uint64
-		switch symbol.Section {
-		case textSectionIndex:
-			base = textSection.Addr
-		case rodataSectionIndex:
-			if rodataSection == nil {
-				continue
-			}
-			base = rodataSection.Addr
-		default:
+		if symbol.Section != textSectionIndex {
 			continue
 		}
 
-		if isStatic {
-			// Static objects appear to have different semantics about whether symbol
-			// values are relative to their section or not.
-			base = 0
-		} else if symbol.Value < base {
-			return fmt.Errorf("symbol %q at %x, which is below base of %x", symbol.Name, symbol.Value, base)
-		}
-
-		value := symbol.Value - base
 		switch symbol.Name {
 		case "BORINGSSL_bcm_text_start":
-			if textStart != nil {
+			if startSeen {
 				return errors.New("duplicate start symbol found")
 			}
-			textStart = &value
+			startSeen = true
+			start = symbol.Value
 		case "BORINGSSL_bcm_text_end":
-			if textEnd != nil {
+			if endSeen {
 				return errors.New("duplicate end symbol found")
 			}
-			textEnd = &value
-		case "BORINGSSL_bcm_rodata_start":
-			if rodataStart != nil {
-				return errors.New("duplicate rodata start symbol found")
-			}
-			rodataStart = &value
-		case "BORINGSSL_bcm_rodata_end":
-			if rodataEnd != nil {
-				return errors.New("duplicate rodata end symbol found")
-			}
-			rodataEnd = &value
+			endSeen = true
+			end = symbol.Value
 		default:
 			continue
 		}
 	}
 
-	if textStart == nil || textEnd == nil {
-		return errors.New("could not find .text module boundaries in object")
+	if !startSeen || !endSeen {
+		return errors.New("could not find module boundaries in object")
 	}
 
-	if (rodataStart == nil) != (rodataSection == nil) {
-		return errors.New("rodata start marker inconsistent with rodata section presence")
-	}
-
-	if (rodataStart != nil) != (rodataEnd != nil) {
-		return errors.New("rodata marker presence inconsistent")
-	}
-
-	if max := textSection.Size; *textStart > max || *textStart > *textEnd || *textEnd > max {
-		return fmt.Errorf("invalid module .text boundaries: start: %x, end: %x, max: %x", *textStart, *textEnd, max)
-	}
-
-	if rodataSection != nil {
-		if max := rodataSection.Size; *rodataStart > max || *rodataStart > *rodataEnd || *rodataEnd > max {
-			return fmt.Errorf("invalid module .rodata boundaries: start: %x, end: %x, max: %x", *rodataStart, *rodataEnd, max)
-		}
+	if max := textSection.Size; start > max || start > end || end > max {
+		return fmt.Errorf("invalid module boundaries: start: %x, end: %x, max: %x", start, end, max)
 	}
 
 	// Extract the module from the .text section and hash it.
 
 	text := textSection.Open()
-	if _, err := text.Seek(int64(*textStart), 0); err != nil {
+	if _, err := text.Seek(int64(start), 0); err != nil {
 		return errors.New("failed to seek to module start in .text: " + err.Error())
 	}
-	moduleText := make([]byte, *textEnd-*textStart)
+	moduleText := make([]byte, end-start)
 	if _, err := io.ReadFull(text, moduleText); err != nil {
 		return errors.New("failed to read .text: " + err.Error())
 	}
 
-	// Maybe extract the module's read-only data too
-	var moduleROData []byte
-	if rodataSection != nil {
-		rodata := rodataSection.Open()
-		if _, err := rodata.Seek(int64(*rodataStart), 0); err != nil {
-			return errors.New("failed to seek to module start in .rodata: " + err.Error())
-		}
-		moduleROData = make([]byte, *rodataEnd-*rodataStart)
-		if _, err := io.ReadFull(rodata, moduleROData); err != nil {
-			return errors.New("failed to read .rodata: " + err.Error())
-		}
-	}
-
 	var zeroKey [64]byte
 	mac := hmac.New(sha512.New, zeroKey[:])
-
-	if moduleROData != nil {
-		var lengthBytes [8]byte
-		binary.LittleEndian.PutUint64(lengthBytes[:], uint64(len(moduleText)))
-		mac.Write(lengthBytes[:])
-		mac.Write(moduleText)
-
-		binary.LittleEndian.PutUint64(lengthBytes[:], uint64(len(moduleROData)))
-		mac.Write(lengthBytes[:])
-		mac.Write(moduleROData)
-	} else {
-		mac.Write(moduleText)
-	}
+	mac.Write(moduleText)
 	calculated := mac.Sum(nil)
 
 	// Replace the default hash value in the object with the calculated
