@@ -39,14 +39,14 @@ enum encoding_relation {
   invalid,
 };
 
-struct Base64TestVector {
+struct TestVector {
   enum encoding_relation relation;
   const char *decoded;
   const char *encoded;
 };
 
 // Test vectors from RFC 4648.
-static const Base64TestVector kTestVectors[] = {
+static const TestVector kTestVectors[] = {
     {canonical, "", ""},
     {canonical, "f", "Zg==\n"},
     {canonical, "fo", "Zm8=\n"},
@@ -103,7 +103,7 @@ static const Base64TestVector kTestVectors[] = {
      "=======\n"},
 };
 
-class Base64Test : public testing::TestWithParam<Base64TestVector> {};
+class Base64Test : public testing::TestWithParam<TestVector> {};
 
 INSTANTIATE_TEST_SUITE_P(, Base64Test, testing::ValuesIn(kTestVectors));
 
@@ -122,7 +122,7 @@ static std::string RemoveNewlines(const char *in) {
 }
 
 TEST_P(Base64Test, EncodeBlock) {
-  const Base64TestVector &t = GetParam();
+  const TestVector &t = GetParam();
   if (t.relation != canonical) {
     return;
   }
@@ -140,7 +140,7 @@ TEST_P(Base64Test, EncodeBlock) {
 }
 
 TEST_P(Base64Test, DecodeBase64) {
-  const Base64TestVector &t = GetParam();
+  const TestVector &t = GetParam();
   if (t.relation == valid) {
     // The non-canonical encodings will generally have odd whitespace etc
     // that |EVP_DecodeBase64| will reject.
@@ -164,7 +164,7 @@ TEST_P(Base64Test, DecodeBase64) {
 }
 
 TEST_P(Base64Test, DecodeBlock) {
-  const Base64TestVector &t = GetParam();
+  const TestVector &t = GetParam();
   if (t.relation != canonical) {
     return;
   }
@@ -188,7 +188,7 @@ TEST_P(Base64Test, DecodeBlock) {
 }
 
 TEST_P(Base64Test, EncodeDecode) {
-  const Base64TestVector &t = GetParam();
+  const TestVector &t = GetParam();
 
   EVP_ENCODE_CTX ctx;
   const size_t decoded_len = strlen(t.decoded);
@@ -246,7 +246,7 @@ TEST_P(Base64Test, EncodeDecode) {
 }
 
 TEST_P(Base64Test, DecodeUpdateStreaming) {
-  const Base64TestVector &t = GetParam();
+  const TestVector &t = GetParam();
   if (t.relation == invalid) {
     return;
   }
