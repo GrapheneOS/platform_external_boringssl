@@ -469,7 +469,7 @@ static const char kPEMCRL[] =
     "fNQMQoI9So4Vdy88Kow6BBBV3Lu6sZHue+cjxXETrmshNdNk8ABUMQA=\n"
     "-----END PKCS7-----\n";
 
-static void TestCertReparse(const uint8_t *der_bytes, size_t der_len) {
+static void TestCertRepase(const uint8_t *der_bytes, size_t der_len) {
   bssl::UniquePtr<STACK_OF(X509)> certs(sk_X509_new_null());
   ASSERT_TRUE(certs);
   bssl::UniquePtr<STACK_OF(X509)> certs2(sk_X509_new_null());
@@ -638,11 +638,11 @@ static void TestPEMCRLs(const char *pem) {
 }
 
 TEST(PKCS7Test, CertReparseNSS) {
-  TestCertReparse(kPKCS7NSS, sizeof(kPKCS7NSS));
+  TestCertRepase(kPKCS7NSS, sizeof(kPKCS7NSS));
 }
 
 TEST(PKCS7Test, CertReparseWindows) {
-  TestCertReparse(kPKCS7Windows, sizeof(kPKCS7Windows));
+  TestCertRepase(kPKCS7Windows, sizeof(kPKCS7Windows));
 }
 
 TEST(PKCS7Test, CrlReparse) {
