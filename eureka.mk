@@ -110,12 +110,15 @@ crypto_sources := \
   src/crypto/evp/p_ed25519_asn1.c\
   src/crypto/evp/p_rsa.c\
   src/crypto/evp/p_rsa_asn1.c\
+  src/crypto/evp/p_x25519.c\
+  src/crypto/evp/p_x25519_asn1.c\
   src/crypto/evp/pbkdf.c\
   src/crypto/evp/print.c\
   src/crypto/evp/scrypt.c\
   src/crypto/evp/sign.c\
   src/crypto/ex_data.c\
   src/crypto/fipsmodule/bcm.c\
+  src/crypto/fipsmodule/fips_shared_support.c\
   src/crypto/fipsmodule/is_fips.c\
   src/crypto/hkdf/hkdf.c\
   src/crypto/hrss/hrss.c\
@@ -150,6 +153,7 @@ crypto_sources := \
   src/crypto/refcount_lock.c\
   src/crypto/rsa_extra/rsa_asn1.c\
   src/crypto/rsa_extra/rsa_print.c\
+  src/crypto/siphash/siphash.c\
   src/crypto/stack/stack.c\
   src/crypto/thread.c\
   src/crypto/thread_none.c\
@@ -238,6 +242,11 @@ crypto_sources := \
   src/crypto/x509v3/v3_sxnet.c\
   src/crypto/x509v3/v3_utl.c\
   src/third_party/fiat/curve25519.c\
+  src/third_party/sike/asm/fp_generic.c\
+  src/third_party/sike/curve_params.c\
+  src/third_party/sike/fpx.c\
+  src/third_party/sike/isogeny.c\
+  src/third_party/sike/sike.c\
 
 ssl_sources := \
   src/ssl/bio_ssl.cc\
@@ -305,6 +314,7 @@ linux_aarch64_sources := \
   linux-aarch64/crypto/fipsmodule/sha512-armv8.S\
   linux-aarch64/crypto/fipsmodule/vpaes-armv8.S\
   linux-aarch64/crypto/test/trampoline-armv8.S\
+  linux-aarch64/crypto/third_party/sike/asm/fp-armv8.S\
 
 linux_arm_sources := \
   linux-arm/crypto/chacha/chacha-armv4.S\
@@ -362,5 +372,6 @@ linux_x86_64_sources := \
   linux-x86_64/crypto/fipsmodule/x86_64-mont.S\
   linux-x86_64/crypto/fipsmodule/x86_64-mont5.S\
   linux-x86_64/crypto/test/trampoline-x86_64.S\
+  linux-x86_64/crypto/third_party/sike/asm/fp-x86_64.S\
   src/crypto/hrss/asm/poly_rq_mul.S\
 
