@@ -65,7 +65,6 @@
 #include <openssl/x509v3.h>
 
 #include "../internal.h"
-#include "internal.h"
 
 
 static const char *const names[] = {
@@ -345,7 +344,7 @@ static void run_cert(X509 *crt, const char *nameincert,
         ret = X509_check_host(crt, name, namelen, 0, NULL);
         match = -1;
         if (ret < 0) {
-            fprintf(stderr, "internal error in X509_check_host\n");
+            fprintf(stderr, "internal error in X509_check_host");
             ++errors;
         } else if (fn->host) {
             if (ret == 1 && !samename)
@@ -360,7 +359,7 @@ static void run_cert(X509 *crt, const char *nameincert,
                               X509_CHECK_FLAG_NO_WILDCARDS, NULL);
         match = -1;
         if (ret < 0) {
-            fprintf(stderr, "internal error in X509_check_host\n");
+            fprintf(stderr, "internal error in X509_check_host");
             ++errors;
         } else if (fn->host) {
             if (ret == 1 && !samename)
@@ -386,21 +385,12 @@ static void run_cert(X509 *crt, const char *nameincert,
     }
 }
 
-// TODO(davidben): Convert this test to GTest more thoroughly.
+// TOOD(davidben): Convert this test to GTest more thoroughly.
 TEST(X509V3Test, NameTest) {
     const struct set_name_fn *pfn = name_fns;
     while (pfn->name) {
         const char *const *pname = names;
         while (*pname) {
-            // The common name fallback requires the name look sufficiently
-            // DNS-like.
-            if (strcmp(pfn->name, "set CN") == 0 &&
-                !x509v3_looks_like_dns_name(
-                    reinterpret_cast<const unsigned char*>(*pname),
-                    strlen(*pname))) {
-                ++pname;
-                continue;
-            }
             bssl::UniquePtr<X509> crt(make_cert());
             ASSERT_TRUE(crt);
             ASSERT_TRUE(pfn->fn(crt.get(), *pname));

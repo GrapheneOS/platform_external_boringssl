@@ -35,8 +35,6 @@ bar:
 	.quad 42
 .L2:
 	.quad .L2-.L1
-	.uleb128 .L2-.L1
-	.sleb128 .L2-.L1
 
 	# Local labels and their jumps are left alone.
 	.text
