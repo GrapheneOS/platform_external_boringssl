@@ -465,6 +465,9 @@ BSSL_NAMESPACE_BEGIN
 #define SSL_HANDSHAKE_MAC_SHA256 0x2
 #define SSL_HANDSHAKE_MAC_SHA384 0x4
 
+// SSL_MAX_MD_SIZE is size of the largest hash function used in TLS, SHA-384.
+#define SSL_MAX_MD_SIZE 48
+
 // An SSLCipherPreferenceList contains a list of SSL_CIPHERs with equal-
 // preference groups. For TLS clients, the groups are moot because the server
 // picks the cipher and groups cannot be expressed on the wire. However, for
@@ -559,6 +562,12 @@ bool ssl_cipher_requires_server_key_exchange(const SSL_CIPHER *cipher);
 // length of an encrypted 1-byte record, for use in record-splitting. Otherwise
 // it returns zero.
 size_t ssl_cipher_get_record_split_len(const SSL_CIPHER *cipher);
+
+// ssl_choose_tls13_cipher returns an |SSL_CIPHER| corresponding with the best
+// available from |cipher_suites| compatible with |version| and |group_id|. It
+// returns NULL if there isn't a compatible cipher.
+const SSL_CIPHER *ssl_choose_tls13_cipher(CBS cipher_suites, uint16_t version,
+                                          uint16_t group_id);
 
 
 // Transcript layer.
@@ -1446,13 +1455,13 @@ struct SSL_HANDSHAKE {
   uint16_t max_version = 0;
 
   size_t hash_len = 0;
-  uint8_t secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t early_traffic_secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t client_handshake_secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t server_handshake_secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t client_traffic_secret_0[EVP_MAX_MD_SIZE] = {0};
-  uint8_t server_traffic_secret_0[EVP_MAX_MD_SIZE] = {0};
-  uint8_t expected_client_finished[EVP_MAX_MD_SIZE] = {0};
+  uint8_t secret[SSL_MAX_MD_SIZE] = {0};
+  uint8_t early_traffic_secret[SSL_MAX_MD_SIZE] = {0};
+  uint8_t client_handshake_secret[SSL_MAX_MD_SIZE] = {0};
+  uint8_t server_handshake_secret[SSL_MAX_MD_SIZE] = {0};
+  uint8_t client_traffic_secret_0[SSL_MAX_MD_SIZE] = {0};
+  uint8_t server_traffic_secret_0[SSL_MAX_MD_SIZE] = {0};
+  uint8_t expected_client_finished[SSL_MAX_MD_SIZE] = {0};
 
   union {
     // sent is a bitset where the bits correspond to elements of kExtensions
@@ -2029,7 +2038,7 @@ struct SSL_X509_METHOD {
   // check_client_CA_list returns one if |names| is a good list of X.509
   // distinguished names and zero otherwise. This is used to ensure that we can
   // reject unparsable values at handshake time when using crypto/x509.
-  int (*check_client_CA_list)(STACK_OF(CRYPTO_BUFFER) *names);
+  bool (*check_client_CA_list)(STACK_OF(CRYPTO_BUFFER) *names);
 
   // cert_clear frees and NULLs all X509 certificate-related state.
   void (*cert_clear)(CERT *cert);
@@ -2046,35 +2055,35 @@ struct SSL_X509_METHOD {
 
   // session_cache_objects fills out |sess->x509_peer| and |sess->x509_chain|
   // from |sess->certs| and erases |sess->x509_chain_without_leaf|. It returns
-  // one on success or zero on error.
-  int (*session_cache_objects)(SSL_SESSION *session);
+  // true on success or false on error.
+  bool (*session_cache_objects)(SSL_SESSION *session);
   // session_dup duplicates any needed fields from |session| to |new_session|.
-  // It returns one on success or zero on error.
-  int (*session_dup)(SSL_SESSION *new_session, const SSL_SESSION *session);
+  // It returns true on success or false on error.
+  bool (*session_dup)(SSL_SESSION *new_session, const SSL_SESSION *session);
   // session_clear frees any X509-related state from |session|.
   void (*session_clear)(SSL_SESSION *session);
   // session_verify_cert_chain verifies the certificate chain in |session|,
-  // sets |session->verify_result| and returns one on success or zero on
+  // sets |session->verify_result| and returns true on success or false on
   // error.
-  int (*session_verify_cert_chain)(SSL_SESSION *session, SSL_HANDSHAKE *ssl,
-                                   uint8_t *out_alert);
+  bool (*session_verify_cert_chain)(SSL_SESSION *session, SSL_HANDSHAKE *ssl,
+                                    uint8_t *out_alert);
 
   // hs_flush_cached_ca_names drops any cached |X509_NAME|s from |hs|.
   void (*hs_flush_cached_ca_names)(SSL_HANDSHAKE *hs);
-  // ssl_new does any neccessary initialisation of |hs|. It returns one on
-  // success or zero on error.
-  int (*ssl_new)(SSL_HANDSHAKE *hs);
+  // ssl_new does any necessary initialisation of |hs|. It returns true on
+  // success or false on error.
+  bool (*ssl_new)(SSL_HANDSHAKE *hs);
   // ssl_free frees anything created by |ssl_new|.
   void (*ssl_config_free)(SSL_CONFIG *cfg);
   // ssl_flush_cached_client_CA drops any cached |X509_NAME|s from |ssl|.
   void (*ssl_flush_cached_client_CA)(SSL_CONFIG *cfg);
   // ssl_auto_chain_if_needed runs the deprecated auto-chaining logic if
   // necessary. On success, it updates |ssl|'s certificate configuration as
-  // needed and returns one. Otherwise, it returns zero.
-  int (*ssl_auto_chain_if_needed)(SSL_HANDSHAKE *hs);
-  // ssl_ctx_new does any neccessary initialisation of |ctx|. It returns one on
-  // success or zero on error.
-  int (*ssl_ctx_new)(SSL_CTX *ctx);
+  // needed and returns true. Otherwise, it returns false.
+  bool (*ssl_auto_chain_if_needed)(SSL_HANDSHAKE *hs);
+  // ssl_ctx_new does any necessary initialisation of |ctx|. It returns true on
+  // success or false on error.
+  bool (*ssl_ctx_new)(SSL_CTX *ctx);
   // ssl_ctx_free frees anything created by |ssl_ctx_new|.
   void (*ssl_ctx_free)(SSL_CTX *ctx);
   // ssl_ctx_flush_cached_client_CA drops any cached |X509_NAME|s from |ctx|.
@@ -2164,8 +2173,6 @@ struct SSL3_STATE {
   // the receive half of the connection.
   UniquePtr<ERR_SAVE_STATE> read_error;
 
-  int alert_dispatch = 0;
-
   int total_renegotiations = 0;
 
   // This holds a variable that indicates what we were doing when a 0 or -1 is
@@ -2221,6 +2228,10 @@ struct SSL3_STATE {
   // session_reused indicates whether a session was resumed.
   bool session_reused : 1;
 
+  // delegated_credential_used is whether we presented a delegated credential to
+  // the peer.
+  bool delegated_credential_used : 1;
+
   bool send_connection_binding : 1;
 
   // In a client, this means that the server supported Channel ID and that a
@@ -2244,6 +2255,13 @@ struct SSL3_STATE {
   // token_binding_negotiated is set if Token Binding was negotiated.
   bool token_binding_negotiated : 1;
 
+  // pq_experimental_signal_seen is true if the peer was observed
+  // sending/echoing the post-quantum experiment signal.
+  bool pq_experiment_signal_seen : 1;
+
+  // alert_dispatch is true there is an alert in |send_alert| to be sent.
+  bool alert_dispatch : 1;
+
   // hs_buf is the buffer of handshake data to process.
   UniquePtr<BUF_MEM> hs_buf;
 
@@ -2266,6 +2284,9 @@ struct SSL3_STATE {
   // which resumed a session.
   int32_t ticket_age_skew = 0;
 
+  // ssl_early_data_reason stores details on why 0-RTT was accepted or rejected.
+  enum ssl_early_data_reason_t early_data_reason = ssl_early_data_unknown;
+
   // aead_read_ctx is the current read cipher state.
   UniquePtr<SSLAEADContext> aead_read_ctx;
 
@@ -2276,14 +2297,12 @@ struct SSL3_STATE {
   // one.
   UniquePtr<SSL_HANDSHAKE> hs;
 
-  uint8_t write_traffic_secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t read_traffic_secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t exporter_secret[EVP_MAX_MD_SIZE] = {0};
-  uint8_t early_exporter_secret[EVP_MAX_MD_SIZE] = {0};
+  uint8_t write_traffic_secret[SSL_MAX_MD_SIZE] = {0};
+  uint8_t read_traffic_secret[SSL_MAX_MD_SIZE] = {0};
+  uint8_t exporter_secret[SSL_MAX_MD_SIZE] = {0};
   uint8_t write_traffic_secret_len = 0;
   uint8_t read_traffic_secret_len = 0;
   uint8_t exporter_secret_len = 0;
-  uint8_t early_exporter_secret_len = 0;
 
   // Connection binding to prevent renegotiation attacks
   uint8_t previous_client_finished[12] = {0};
@@ -2674,7 +2693,8 @@ void ssl_session_renew_timeout(SSL *ssl, SSL_SESSION *session,
 
 void ssl_update_cache(SSL_HANDSHAKE *hs, int mode);
 
-int ssl_send_alert(SSL *ssl, int level, int desc);
+void ssl_send_alert(SSL *ssl, int level, int desc);
+int ssl_send_alert_impl(SSL *ssl, int level, int desc);
 bool ssl3_get_message(const SSL *ssl, SSLMessage *out);
 ssl_open_record_t ssl3_open_handshake(SSL *ssl, size_t *out_consumed,
                                       uint8_t *out_alert, Span<uint8_t> in);
@@ -3169,6 +3189,11 @@ struct ssl_ctx_st {
 
   // If enable_early_data is true, early data can be sent and accepted.
   bool enable_early_data : 1;
+
+  // pq_experiment_signal indicates that an empty extension should be sent
+  // (for clients) or echoed (for servers) to indicate participation in an
+  // experiment of post-quantum key exchanges.
+  bool pq_experiment_signal : 1;
 
  private:
   ~ssl_ctx_st();
