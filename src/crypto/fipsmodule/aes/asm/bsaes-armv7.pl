@@ -2431,4 +2431,4 @@ close SELF;
 
 print $code;
 
-close STDOUT or die "error closing STDOUT";
+close STDOUT;
