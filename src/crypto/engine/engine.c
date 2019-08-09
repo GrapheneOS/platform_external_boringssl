@@ -41,10 +41,9 @@ ENGINE *ENGINE_new(void) {
   return engine;
 }
 
-int ENGINE_free(ENGINE *engine) {
+void ENGINE_free(ENGINE *engine) {
   // Methods are currently required to be static so are not unref'ed.
   OPENSSL_free(engine);
-  return 1;
 }
 
 // set_method takes a pointer to a method and its given size and sets

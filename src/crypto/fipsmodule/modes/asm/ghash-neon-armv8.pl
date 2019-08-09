@@ -284,4 +284,4 @@ foreach (split("\n",$code)) {
 
 	print $_,"\n";
 }
-close STDOUT or die "error closing STDOUT"; # enforce flush
+close STDOUT; # enforce flush
