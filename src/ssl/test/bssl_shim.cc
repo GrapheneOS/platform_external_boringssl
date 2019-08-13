@@ -279,23 +279,23 @@ static uint16_t GetProtocolVersion(const SSL *ssl) {
 // after a renegotiation, that authentication-related properties match |config|.
 static bool CheckAuthProperties(SSL *ssl, bool is_resume,
                                 const TestConfig *config) {
-  if (!config->expected_ocsp_response.empty()) {
+  if (!config->expect_ocsp_response.empty()) {
     const uint8_t *data;
     size_t len;
     SSL_get0_ocsp_response(ssl, &data, &len);
-    if (config->expected_ocsp_response.size() != len ||
-        OPENSSL_memcmp(config->expected_ocsp_response.data(), data, len) != 0) {
+    if (config->expect_ocsp_response.size() != len ||
+        OPENSSL_memcmp(config->expect_ocsp_response.data(), data, len) != 0) {
       fprintf(stderr, "OCSP response mismatch\n");
       return false;
     }
   }
 
-  if (!config->expected_signed_cert_timestamps.empty()) {
+  if (!config->expect_signed_cert_timestamps.empty()) {
     const uint8_t *data;
     size_t len;
     SSL_get0_signed_cert_timestamp_list(ssl, &data, &len);
-    if (config->expected_signed_cert_timestamps.size() != len ||
-        OPENSSL_memcmp(config->expected_signed_cert_timestamps.data(), data,
+    if (config->expect_signed_cert_timestamps.size() != len ||
+        OPENSSL_memcmp(config->expect_signed_cert_timestamps.data(), data,
                        len) != 0) {
       fprintf(stderr, "SCT list mismatch\n");
       return false;
@@ -389,6 +389,39 @@ static bool CheckAuthProperties(SSL *ssl, bool is_resume,
   return true;
 }
 
+static const char *EarlyDataReasonToString(ssl_early_data_reason_t reason) {
+  switch (reason) {
+    case ssl_early_data_unknown:
+      return "unknown";
+    case ssl_early_data_disabled:
+      return "disabled";
+    case ssl_early_data_accepted:
+      return "accepted";
+    case ssl_early_data_protocol_version:
+      return "protocol_version";
+    case ssl_early_data_peer_declined:
+      return "peer_declined";
+    case ssl_early_data_no_session_offered:
+      return "no_session_offered";
+    case ssl_early_data_session_not_resumed:
+      return "session_not_resumed";
+    case ssl_early_data_unsupported_for_session:
+      return "unsupported_for_session";
+    case ssl_early_data_hello_retry_request:
+      return "hello_retry_request";
+    case ssl_early_data_alpn_mismatch:
+      return "alpn_mismatch";
+    case ssl_early_data_channel_id:
+      return "channel_id";
+    case ssl_early_data_token_binding:
+      return "token_binding";
+    case ssl_early_data_ticket_age_skew:
+      return "ticket_age_skew";
+  }
+
+  abort();
+}
+
 // CheckHandshakeProperties checks, immediately after |ssl| completes its
 // initial handshake (or False Starts), whether all the properties are
 // consistent with the test configuration and invariants.
@@ -459,23 +492,23 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     return false;
   }
 
-  if (!config->expected_server_name.empty()) {
+  if (!config->expect_server_name.empty()) {
     const char *server_name =
         SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
     if (server_name == nullptr ||
-        server_name != config->expected_server_name) {
+        server_name != config->expect_server_name) {
       fprintf(stderr, "servername mismatch (got %s; want %s)\n",
-              server_name, config->expected_server_name.c_str());
+              server_name, config->expect_server_name.c_str());
       return false;
     }
   }
 
-  if (!config->expected_next_proto.empty()) {
+  if (!config->expect_next_proto.empty()) {
     const uint8_t *next_proto;
     unsigned next_proto_len;
     SSL_get0_next_proto_negotiated(ssl, &next_proto, &next_proto_len);
-    if (next_proto_len != config->expected_next_proto.size() ||
-        OPENSSL_memcmp(next_proto, config->expected_next_proto.data(),
+    if (next_proto_len != config->expect_next_proto.size() ||
+        OPENSSL_memcmp(next_proto, config->expect_next_proto.data(),
                        next_proto_len) != 0) {
       fprintf(stderr, "negotiated next proto mismatch\n");
       return false;
@@ -486,48 +519,48 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     const uint8_t *alpn_proto;
     unsigned alpn_proto_len;
     SSL_get0_alpn_selected(ssl, &alpn_proto, &alpn_proto_len);
-    if (alpn_proto_len != config->expected_alpn.size() ||
-        OPENSSL_memcmp(alpn_proto, config->expected_alpn.data(),
+    if (alpn_proto_len != config->expect_alpn.size() ||
+        OPENSSL_memcmp(alpn_proto, config->expect_alpn.data(),
                        alpn_proto_len) != 0) {
       fprintf(stderr, "negotiated alpn proto mismatch\n");
       return false;
     }
   }
 
-  if (!config->expected_quic_transport_params.empty()) {
+  if (!config->expect_quic_transport_params.empty()) {
     const uint8_t *peer_params;
     size_t peer_params_len;
     SSL_get_peer_quic_transport_params(ssl, &peer_params, &peer_params_len);
-    if (peer_params_len != config->expected_quic_transport_params.size() ||
+    if (peer_params_len != config->expect_quic_transport_params.size() ||
         OPENSSL_memcmp(peer_params,
-                       config->expected_quic_transport_params.data(),
+                       config->expect_quic_transport_params.data(),
                        peer_params_len) != 0) {
       fprintf(stderr, "QUIC transport params mismatch\n");
       return false;
     }
   }
 
-  if (!config->expected_channel_id.empty()) {
+  if (!config->expect_channel_id.empty()) {
     uint8_t channel_id[64];
     if (!SSL_get_tls_channel_id(ssl, channel_id, sizeof(channel_id))) {
       fprintf(stderr, "no channel id negotiated\n");
       return false;
     }
-    if (config->expected_channel_id.size() != 64 ||
-        OPENSSL_memcmp(config->expected_channel_id.data(), channel_id, 64) !=
+    if (config->expect_channel_id.size() != 64 ||
+        OPENSSL_memcmp(config->expect_channel_id.data(), channel_id, 64) !=
             0) {
       fprintf(stderr, "channel id mismatch\n");
       return false;
     }
   }
 
-  if (config->expected_token_binding_param != -1) {
+  if (config->expect_token_binding_param != -1) {
     if (!SSL_is_token_binding_negotiated(ssl)) {
       fprintf(stderr, "no Token Binding negotiated\n");
       return false;
     }
     if (SSL_get_negotiated_token_binding_param(ssl) !=
-        static_cast<uint8_t>(config->expected_token_binding_param)) {
+        static_cast<uint8_t>(config->expect_token_binding_param)) {
       fprintf(stderr, "Token Binding param mismatch\n");
       return false;
     }
@@ -587,12 +620,22 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     return false;
   }
 
-  if (is_resume && !SSL_in_early_data(ssl)) {
+  // The early data status is only applicable after the handshake is confirmed.
+  if (!SSL_in_early_data(ssl)) {
     if ((config->expect_accept_early_data && !SSL_early_data_accepted(ssl)) ||
         (config->expect_reject_early_data && SSL_early_data_accepted(ssl))) {
       fprintf(stderr,
               "Early data was%s accepted, but we expected the opposite\n",
               SSL_early_data_accepted(ssl) ? "" : " not");
+      return false;
+    }
+
+    const char *early_data_reason =
+        EarlyDataReasonToString(SSL_get_early_data_reason(ssl));
+    if (!config->expect_early_data_reason.empty() &&
+        config->expect_early_data_reason != early_data_reason) {
+      fprintf(stderr, "Early data reason was \"%s\", expected \"%s\"\n",
+              early_data_reason, config->expect_early_data_reason.c_str());
       return false;
     }
   }
@@ -619,6 +662,21 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
   if (config->expect_tls13_downgrade != !!SSL_is_tls13_downgrade(ssl)) {
     fprintf(stderr, "Got %s downgrade signal, but wanted the opposite.\n",
             SSL_is_tls13_downgrade(ssl) ? "" : "no ");
+    return false;
+  }
+
+  if (config->expect_delegated_credential_used !=
+      !!SSL_delegated_credential_used(ssl)) {
+    fprintf(stderr,
+            "Got %s delegated credential usage, but wanted opposite. \n",
+            SSL_delegated_credential_used(ssl) ? "" : "no");
+    return false;
+  }
+
+  if (config->expect_pq_experiment_signal !=
+      !!SSL_pq_experiment_signal_seen(ssl)) {
+    fprintf(stderr, "Got %sPQ experiment signal, but wanted opposite. \n",
+            SSL_pq_experiment_signal_seen(ssl) ? "" : "no ");
     return false;
   }
 
@@ -698,6 +756,16 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
     if (!SSL_in_early_data(ssl.get()) ||
         !CheckHandshakeProperties(ssl.get(), is_resume, config)) {
       fprintf(stderr, "SSL_in_early_data returned false before reset.\n");
+      return false;
+    }
+
+    // Client pre- and post-0-RTT reject states are considered logically
+    // different connections with different test expections. Check that the test
+    // did not mistakenly configure reason expectations on the wrong one.
+    if (!config->expect_early_data_reason.empty()) {
+      fprintf(stderr,
+              "Test error: client reject -expect-early-data-reason flags "
+              "should be configured with -on-retry, not -on-resume.\n");
       return false;
     }
 
@@ -802,22 +870,6 @@ static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
     // Reset the state to assert later that the callback isn't called in
     // renegotations.
     GetTestState(ssl)->got_new_session = false;
-  }
-
-  if (config->export_early_keying_material > 0) {
-    std::vector<uint8_t> result(
-        static_cast<size_t>(config->export_early_keying_material));
-    if (!SSL_export_early_keying_material(
-            ssl, result.data(), result.size(), config->export_label.data(),
-            config->export_label.size(),
-            reinterpret_cast<const uint8_t *>(config->export_context.data()),
-            config->export_context.size())) {
-      fprintf(stderr, "failed to export keying material\n");
-      return false;
-    }
-    if (WriteAll(ssl, result.data(), result.size()) < 0) {
-      return false;
-    }
   }
 
   if (config->export_keying_material > 0) {
