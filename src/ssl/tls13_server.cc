@@ -53,6 +53,12 @@ enum server_hs_state_t {
 
 static const uint8_t kZeroes[EVP_MAX_MD_SIZE] = {0};
 
+// Allow a minute of ticket age skew in either direction. This covers
+// transmission delays in ClientHello and NewSessionTicket, as well as
+// drift between client and server clock rate since the ticket was issued.
+// See RFC 8446, section 8.3.
+static const int32_t kMaxTicketAgeSkewSeconds = 60;
+
 static int resolve_ecdhe_secret(SSL_HANDSHAKE *hs, bool *out_need_retry,
                                 SSL_CLIENT_HELLO *client_hello) {
   SSL *const ssl = hs->ssl;
@@ -97,77 +103,15 @@ static int ssl_ext_supported_versions_add_serverhello(SSL_HANDSHAKE *hs,
   return 1;
 }
 
-// CipherScorer produces a "score" for each possible cipher suite offered by
-// the client.
-class CipherScorer {
- public:
-  CipherScorer(uint16_t group_id)
-      : aes_is_fine_(EVP_has_aes_hardware()),
-        security_128_is_fine_(group_id != SSL_CURVE_CECPQ2) {}
-
-  typedef std::tuple<bool, bool, bool> Score;
-
-  // MinScore returns a |Score| that will compare less than the score of all
-  // cipher suites.
-  Score MinScore() const {
-    return Score(false, false, false);
-  }
-
-  Score Evaluate(const SSL_CIPHER *a) const {
-    return Score(
-        // Something is always preferable to nothing.
-        true,
-        // Either 128-bit is fine, or 256-bit is preferred.
-        security_128_is_fine_ || a->algorithm_enc != SSL_AES128GCM,
-        // Either AES is fine, or else ChaCha20 is preferred.
-        aes_is_fine_ || a->algorithm_enc == SSL_CHACHA20POLY1305);
-  }
-
- private:
-  const bool aes_is_fine_;
-  const bool security_128_is_fine_;
-};
-
 static const SSL_CIPHER *choose_tls13_cipher(
     const SSL *ssl, const SSL_CLIENT_HELLO *client_hello, uint16_t group_id) {
-  if (client_hello->cipher_suites_len % 2 != 0) {
-    return nullptr;
-  }
-
   CBS cipher_suites;
   CBS_init(&cipher_suites, client_hello->cipher_suites,
            client_hello->cipher_suites_len);
 
   const uint16_t version = ssl_protocol_version(ssl);
 
-  const SSL_CIPHER *best = nullptr;
-  CipherScorer scorer(group_id);
-  CipherScorer::Score best_score = scorer.MinScore();
-
-  while (CBS_len(&cipher_suites) > 0) {
-    uint16_t cipher_suite;
-    if (!CBS_get_u16(&cipher_suites, &cipher_suite)) {
-      return nullptr;
-    }
-
-    // Limit to TLS 1.3 ciphers we know about.
-    const SSL_CIPHER *candidate = SSL_get_cipher_by_value(cipher_suite);
-    if (candidate == nullptr ||
-        SSL_CIPHER_get_min_version(candidate) > version ||
-        SSL_CIPHER_get_max_version(candidate) < version) {
-      continue;
-    }
-
-    const CipherScorer::Score candidate_score = scorer.Evaluate(candidate);
-    // |candidate_score| must be larger to displace the current choice. That way
-    // the client's order controls between ciphers with an equal score.
-    if (candidate_score > best_score) {
-      best = candidate;
-      best_score = candidate_score;
-    }
-  }
-
-  return best;
+  return ssl_choose_tls13_cipher(cipher_suites, version, group_id);
 }
 
 static bool add_new_session_tickets(SSL_HANDSHAKE *hs, bool *out_sent_tickets) {
@@ -307,16 +251,15 @@ static enum ssl_hs_wait_t do_select_parameters(SSL_HANDSHAKE *hs) {
 
 static enum ssl_ticket_aead_result_t select_session(
     SSL_HANDSHAKE *hs, uint8_t *out_alert, UniquePtr<SSL_SESSION> *out_session,
-    int32_t *out_ticket_age_skew, const SSLMessage &msg,
-    const SSL_CLIENT_HELLO *client_hello) {
+    int32_t *out_ticket_age_skew, bool *out_offered_ticket,
+    const SSLMessage &msg, const SSL_CLIENT_HELLO *client_hello) {
   SSL *const ssl = hs->ssl;
-  *out_session = NULL;
+  *out_session = nullptr;
 
-  // Decode the ticket if we agreed on a PSK key exchange mode.
   CBS pre_shared_key;
-  if (!hs->accept_psk_mode ||
-      !ssl_client_hello_get_extension(client_hello, &pre_shared_key,
-                                      TLSEXT_TYPE_pre_shared_key)) {
+  *out_offered_ticket = ssl_client_hello_get_extension(
+      client_hello, &pre_shared_key, TLSEXT_TYPE_pre_shared_key);
+  if (!*out_offered_ticket) {
     return ssl_ticket_aead_ignore_ticket;
   }
 
@@ -335,6 +278,11 @@ static enum ssl_ticket_aead_result_t select_session(
                                                 &client_ticket_age, out_alert,
                                                 &pre_shared_key)) {
     return ssl_ticket_aead_error;
+  }
+
+  // If the peer did not offer psk_dhe, ignore the resumption.
+  if (!hs->accept_psk_mode) {
+    return ssl_ticket_aead_ignore_ticket;
   }
 
   // TLS 1.3 session tickets are renewed separately as part of the
@@ -406,10 +354,18 @@ static enum ssl_hs_wait_t do_select_session(SSL_HANDSHAKE *hs) {
 
   uint8_t alert = SSL_AD_DECODE_ERROR;
   UniquePtr<SSL_SESSION> session;
-  switch (select_session(hs, &alert, &session, &ssl->s3->ticket_age_skew, msg,
-                         &client_hello)) {
+  bool offered_ticket = false;
+  switch (select_session(hs, &alert, &session, &ssl->s3->ticket_age_skew,
+                         &offered_ticket, msg, &client_hello)) {
     case ssl_ticket_aead_ignore_ticket:
       assert(!session);
+      if (!ssl->enable_early_data) {
+        ssl->s3->early_data_reason = ssl_early_data_disabled;
+      } else if (!offered_ticket) {
+        ssl->s3->early_data_reason = ssl_early_data_no_session_offered;
+      } else {
+        ssl->s3->early_data_reason = ssl_early_data_session_not_resumed;
+      }
       if (!ssl_get_new_session(hs, 1 /* server */)) {
         ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
         return ssl_hs_error;
@@ -421,24 +377,32 @@ static enum ssl_hs_wait_t do_select_session(SSL_HANDSHAKE *hs) {
       // a fresh session.
       hs->new_session =
           SSL_SESSION_dup(session.get(), SSL_SESSION_DUP_AUTH_ONLY);
-
-      if (ssl->enable_early_data &&
-          // Early data must be acceptable for this ticket.
-          session->ticket_max_early_data != 0 &&
-          // The client must have offered early data.
-          hs->early_data_offered &&
-          // Channel ID is incompatible with 0-RTT.
-          !ssl->s3->channel_id_valid &&
-          // If Token Binding is negotiated, reject 0-RTT.
-          !ssl->s3->token_binding_negotiated &&
-          // The negotiated ALPN must match the one in the ticket.
-          MakeConstSpan(ssl->s3->alpn_selected) == session->early_alpn) {
-        ssl->s3->early_data_accepted = true;
-      }
-
-      if (hs->new_session == NULL) {
+      if (hs->new_session == nullptr) {
         ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
         return ssl_hs_error;
+      }
+
+      if (!ssl->enable_early_data) {
+        ssl->s3->early_data_reason = ssl_early_data_disabled;
+      } else if (session->ticket_max_early_data == 0) {
+        ssl->s3->early_data_reason = ssl_early_data_unsupported_for_session;
+      } else if (!hs->early_data_offered) {
+        ssl->s3->early_data_reason = ssl_early_data_peer_declined;
+      } else if (ssl->s3->channel_id_valid) {
+          // Channel ID is incompatible with 0-RTT.
+        ssl->s3->early_data_reason = ssl_early_data_channel_id;
+      } else if (ssl->s3->token_binding_negotiated) {
+          // Token Binding is incompatible with 0-RTT.
+        ssl->s3->early_data_reason = ssl_early_data_token_binding;
+      } else if (MakeConstSpan(ssl->s3->alpn_selected) != session->early_alpn) {
+        // The negotiated ALPN must match the one in the ticket.
+        ssl->s3->early_data_reason = ssl_early_data_alpn_mismatch;
+      } else if (ssl->s3->ticket_age_skew < -kMaxTicketAgeSkewSeconds ||
+                 kMaxTicketAgeSkewSeconds < ssl->s3->ticket_age_skew) {
+        ssl->s3->early_data_reason = ssl_early_data_ticket_age_skew;
+      } else {
+        ssl->s3->early_data_reason = ssl_early_data_accepted;
+        ssl->s3->early_data_accepted = true;
       }
 
       ssl->s3->session_reused = true;
@@ -499,7 +463,10 @@ static enum ssl_hs_wait_t do_select_session(SSL_HANDSHAKE *hs) {
   bool need_retry;
   if (!resolve_ecdhe_secret(hs, &need_retry, &client_hello)) {
     if (need_retry) {
-      ssl->s3->early_data_accepted = false;
+      if (ssl->s3->early_data_accepted) {
+        ssl->s3->early_data_reason = ssl_early_data_hello_retry_request;
+        ssl->s3->early_data_accepted = false;
+      }
       ssl->s3->skip_early_data = true;
       ssl->method->next_message(ssl);
       if (!hs->transcript.UpdateForHelloRetryRequest()) {
@@ -950,7 +917,15 @@ static enum ssl_hs_wait_t do_send_new_session_ticket(SSL_HANDSHAKE *hs) {
   }
 
   hs->tls13_state = state_done;
-  return sent_tickets ? ssl_hs_flush : ssl_hs_ok;
+  // In TLS 1.3, the NewSessionTicket isn't flushed until the server performs a
+  // write, to prevent a non-reading client from causing the server to hang in
+  // the case of a small server write buffer. Consumers which don't write data
+  // to the client will need to do a zero-byte write if they wish to flush the
+  // tickets.
+  if (hs->ssl->ctx->quic_method != nullptr && sent_tickets) {
+    return ssl_hs_flush;
+  }
+  return ssl_hs_ok;
 }
 
 enum ssl_hs_wait_t tls13_server_handshake(SSL_HANDSHAKE *hs) {
