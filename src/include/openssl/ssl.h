@@ -1160,7 +1160,7 @@ OPENSSL_EXPORT void *SSL_CTX_get_default_passwd_cb_userdata(const SSL_CTX *ctx);
 
 // Custom private keys.
 
-enum ssl_private_key_result_t {
+enum ssl_private_key_result_t BORINGSSL_ENUM_INT {
   ssl_private_key_success,
   ssl_private_key_retry,
   ssl_private_key_failure,
@@ -1296,7 +1296,8 @@ OPENSSL_EXPORT uint16_t SSL_CIPHER_get_max_version(const SSL_CIPHER *cipher);
 OPENSSL_EXPORT const char *SSL_CIPHER_standard_name(const SSL_CIPHER *cipher);
 
 // SSL_CIPHER_get_name returns the OpenSSL name of |cipher|. For example,
-// "ECDHE-RSA-AES128-GCM-SHA256".
+// "ECDHE-RSA-AES128-GCM-SHA256". Callers are recommended to use
+// |SSL_CIPHER_standard_name| instead.
 OPENSSL_EXPORT const char *SSL_CIPHER_get_name(const SSL_CIPHER *cipher);
 
 // SSL_CIPHER_get_kx_name returns a string that describes the key-exchange
@@ -1399,7 +1400,7 @@ OPENSSL_EXPORT int SSL_CIPHER_get_bits(const SSL_CIPHER *cipher,
 // based on client preferences. An equal-preference is specified with square
 // brackets, combining multiple selectors separated by |. For example:
 //
-//   [ECDHE-ECDSA-CHACHA20-POLY1305|ECDHE-ECDSA-AES128-GCM-SHA256]
+//   [TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256|TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256]
 //
 // Once an equal-preference group is used, future directives must be
 // opcode-less. Inside an equal-preference group, spaces are not allowed.
@@ -2039,13 +2040,13 @@ OPENSSL_EXPORT SSL_SESSION *SSL_magic_pending_session_ptr(void);
 // On the client, ticket-based sessions use the same APIs as ID-based tickets.
 // Callers do not need to handle them differently.
 //
-// On the server, tickets are encrypted and authenticated with a secret key. By
-// default, an |SSL_CTX| generates a key on creation and uses it for the
-// lifetime of the |SSL_CTX|. Tickets are minted and processed
-// transparently. The following functions may be used to configure a persistent
-// key or implement more custom behavior, including key rotation and sharing
-// keys between multiple servers in a large deployment. There are three levels
-// of customisation possible:
+// On the server, tickets are encrypted and authenticated with a secret key.
+// By default, an |SSL_CTX| will manage session ticket encryption keys by
+// generating them internally and rotating every 48 hours. Tickets are minted
+// and processed transparently. The following functions may be used to configure
+// a persistent key or implement more custom behavior, including key rotation
+// and sharing keys between multiple servers in a large deployment. There are
+// three levels of customisation possible:
 //
 // 1) One can simply set the keys with |SSL_CTX_set_tlsext_ticket_keys|.
 // 2) One can configure an |EVP_CIPHER_CTX| and |HMAC_CTX| directly for
@@ -2111,7 +2112,7 @@ OPENSSL_EXPORT int SSL_CTX_set_tlsext_ticket_key_cb(
 
 // ssl_ticket_aead_result_t enumerates the possible results from decrypting a
 // ticket with an |SSL_TICKET_AEAD_METHOD|.
-enum ssl_ticket_aead_result_t {
+enum ssl_ticket_aead_result_t BORINGSSL_ENUM_INT {
   // ssl_ticket_aead_success indicates that the ticket was successfully
   // decrypted.
   ssl_ticket_aead_success,
@@ -2206,6 +2207,7 @@ OPENSSL_EXPORT int SSL_set1_curves_list(SSL *ssl, const char *curves);
 #define SSL_CURVE_SECP521R1 25
 #define SSL_CURVE_X25519 29
 #define SSL_CURVE_CECPQ2 16696
+#define SSL_CURVE_CECPQ2b 65074
 
 // SSL_get_curve_id returns the ID of the curve used by |ssl|'s most recently
 // completed handshake or 0 if not applicable.
@@ -2285,7 +2287,7 @@ OPENSSL_EXPORT void SSL_set_verify(SSL *ssl, int mode,
                                    int (*callback)(int ok,
                                                    X509_STORE_CTX *store_ctx));
 
-enum ssl_verify_result_t {
+enum ssl_verify_result_t BORINGSSL_ENUM_INT {
   ssl_verify_ok,
   ssl_verify_invalid,
   ssl_verify_retry,
@@ -3033,6 +3035,19 @@ OPENSSL_EXPORT const char *SSL_get_psk_identity_hint(const SSL *ssl);
 OPENSSL_EXPORT const char *SSL_get_psk_identity(const SSL *ssl);
 
 
+// Post-quantum experiment signaling extension.
+//
+// *** EXPERIMENTAL ***
+//
+// In order to define a control group in an experiment of post-quantum key
+// agreements, clients and servers may send a non-IANA defined extension as a
+// signaling bit. These functions should not be used without explicit permission
+// from BoringSSL-team.
+
+OPENSSL_EXPORT void SSL_CTX_enable_pq_experiment_signal(SSL_CTX *ctx);
+OPENSSL_EXPORT int SSL_pq_experiment_signal_seen(const SSL *ssl);
+
+
 // QUIC transport parameters.
 //
 // draft-ietf-quic-tls defines a new TLS extension quic_transport_parameters
@@ -3099,6 +3114,10 @@ OPENSSL_EXPORT int SSL_set1_delegated_credential(
     SSL *ssl, CRYPTO_BUFFER *dc, EVP_PKEY *pkey,
     const SSL_PRIVATE_KEY_METHOD *key_method);
 
+// SSL_delegated_credential_used returns one if a delegated credential was used
+// and zero otherwise.
+OPENSSL_EXPORT int SSL_delegated_credential_used(const SSL *ssl);
+
 
 // QUIC integration.
 //
@@ -3135,7 +3154,7 @@ OPENSSL_EXPORT int SSL_set1_delegated_credential(
 
 // ssl_encryption_level_t represents a specific QUIC encryption level used to
 // transmit handshake messages.
-enum ssl_encryption_level_t {
+enum ssl_encryption_level_t BORINGSSL_ENUM_INT {
   ssl_encryption_initial = 0,
   ssl_encryption_early_data,
   ssl_encryption_handshake,
@@ -3291,6 +3310,10 @@ OPENSSL_EXPORT void SSL_set_early_data_enabled(SSL *ssl, int enabled);
 // and |SSL_write| to send half-RTT data.
 OPENSSL_EXPORT int SSL_in_early_data(const SSL *ssl);
 
+// SSL_SESSION_early_data_capable returns whether early data would have been
+// attempted with |session| if enabled.
+OPENSSL_EXPORT int SSL_SESSION_early_data_capable(const SSL_SESSION *session);
+
 // SSL_early_data_accepted returns whether early data was accepted on the
 // handshake performed by |ssl|.
 OPENSSL_EXPORT int SSL_early_data_accepted(const SSL *ssl);
@@ -3304,12 +3327,45 @@ OPENSSL_EXPORT int SSL_early_data_accepted(const SSL *ssl);
 // |SSL_ERROR_EARLY_DATA_REJECTED|.
 OPENSSL_EXPORT void SSL_reset_early_data_reject(SSL *ssl);
 
-// SSL_export_early_keying_material behaves like |SSL_export_keying_material|,
-// but it uses the early exporter. The operation will fail if |ssl| did not
-// negotiate TLS 1.3 or 0-RTT.
-OPENSSL_EXPORT int SSL_export_early_keying_material(
-    SSL *ssl, uint8_t *out, size_t out_len, const char *label, size_t label_len,
-    const uint8_t *context, size_t context_len);
+// SSL_get_ticket_age_skew returns the difference, in seconds, between the
+// client-sent ticket age and the server-computed value in TLS 1.3 server
+// connections which resumed a session.
+OPENSSL_EXPORT int32_t SSL_get_ticket_age_skew(const SSL *ssl);
+
+enum ssl_early_data_reason_t BORINGSSL_ENUM_INT {
+  // The handshake has not progressed far enough for the 0-RTT status to be
+  // known.
+  ssl_early_data_unknown,
+  // 0-RTT is disabled for this connection.
+  ssl_early_data_disabled,
+  // 0-RTT was accepted.
+  ssl_early_data_accepted,
+  // The negotiated protocol version does not support 0-RTT.
+  ssl_early_data_protocol_version,
+  // The peer declined to offer or accept 0-RTT for an unknown reason.
+  ssl_early_data_peer_declined,
+  // The client did not offer a session.
+  ssl_early_data_no_session_offered,
+  // The server declined to resume the session.
+  ssl_early_data_session_not_resumed,
+  // The session does not support 0-RTT.
+  ssl_early_data_unsupported_for_session,
+  // The server sent a HelloRetryRequest.
+  ssl_early_data_hello_retry_request,
+  // The negotiated ALPN protocol did not match the session.
+  ssl_early_data_alpn_mismatch,
+  // The connection negotiated Channel ID, which is incompatible with 0-RTT.
+  ssl_early_data_channel_id,
+  // The connection negotiated token binding, which is incompatible with 0-RTT.
+  ssl_early_data_token_binding,
+  // The client and server ticket age were too far apart.
+  ssl_early_data_ticket_age_skew,
+};
+
+// SSL_get_early_data_reason returns details why 0-RTT was accepted or rejected
+// on |ssl|. This is primarily useful on the server.
+OPENSSL_EXPORT enum ssl_early_data_reason_t SSL_get_early_data_reason(
+    const SSL *ssl);
 
 
 // Alerts.
@@ -3522,7 +3578,7 @@ OPENSSL_EXPORT void SSL_CTX_set_current_time_cb(
 // such as HTTP/1.1, and not others, such as HTTP/2.
 OPENSSL_EXPORT void SSL_set_shed_handshake_config(SSL *ssl, int enable);
 
-enum ssl_renegotiate_mode_t {
+enum ssl_renegotiate_mode_t BORINGSSL_ENUM_INT {
   ssl_renegotiate_never = 0,
   ssl_renegotiate_once,
   ssl_renegotiate_freely,
@@ -3620,7 +3676,7 @@ typedef struct ssl_early_callback_ctx {
 
 // ssl_select_cert_result_t enumerates the possible results from selecting a
 // certificate with |select_certificate_cb|.
-enum ssl_select_cert_result_t {
+enum ssl_select_cert_result_t BORINGSSL_ENUM_INT {
   // ssl_select_cert_success indicates that the certificate selection was
   // successful.
   ssl_select_cert_success = 1,
@@ -3650,6 +3706,8 @@ OPENSSL_EXPORT int SSL_early_callback_ctx_extension_get(
 // |SSL_ERROR_PENDING_CERTIFICATE| and the caller should arrange for the
 // high-level operation on |ssl| to be retried at a later time, which will
 // result in another call to |cb|.
+//
+// |SSL_get_servername| may be used during this callback.
 //
 // Note: The |SSL_CLIENT_HELLO| is only valid for the duration of the callback
 // and is not valid while the handshake is paused.
@@ -3814,11 +3872,6 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
 // SSL_max_seal_overhead returns the maximum overhead, in bytes, of sealing a
 // record with |ssl|.
 OPENSSL_EXPORT size_t SSL_max_seal_overhead(const SSL *ssl);
-
-// SSL_get_ticket_age_skew returns the difference, in seconds, between the
-// client-sent ticket age and the server-computed value in TLS 1.3 server
-// connections which resumed a session.
-OPENSSL_EXPORT int32_t SSL_get_ticket_age_skew(const SSL *ssl);
 
 // SSL_CTX_set_false_start_allowed_without_alpn configures whether connections
 // on |ctx| may use False Start (if |SSL_MODE_ENABLE_FALSE_START| is enabled)
