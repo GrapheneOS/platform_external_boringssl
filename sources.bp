@@ -119,7 +119,6 @@ cc_defaults {
         "src/crypto/evp/scrypt.c",
         "src/crypto/evp/sign.c",
         "src/crypto/ex_data.c",
-        "src/crypto/fipsmodule/bcm.c",
         "src/crypto/fipsmodule/fips_shared_support.c",
         "src/crypto/fipsmodule/is_fips.c",
         "src/crypto/hkdf/hkdf.c",
@@ -254,6 +253,45 @@ cc_defaults {
         linux_arm64: {
             srcs: [
                 "linux-aarch64/crypto/chacha/chacha-armv8.S",
+                "linux-aarch64/crypto/test/trampoline-armv8.S",
+                "linux-aarch64/crypto/third_party/sike/asm/fp-armv8.S",
+            ],
+        },
+        linux_arm: {
+            srcs: [
+                "linux-arm/crypto/chacha/chacha-armv4.S",
+                "linux-arm/crypto/test/trampoline-armv4.S",
+                "src/crypto/curve25519/asm/x25519-asm-arm.S",
+                "src/crypto/poly1305/poly1305_arm_asm.S",
+            ],
+        },
+        linux_x86: {
+            srcs: [
+                "linux-x86/crypto/chacha/chacha-x86.S",
+                "linux-x86/crypto/test/trampoline-x86.S",
+            ],
+        },
+        linux_x86_64: {
+            srcs: [
+                "linux-x86_64/crypto/chacha/chacha-x86_64.S",
+                "linux-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.S",
+                "linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S",
+                "linux-x86_64/crypto/test/trampoline-x86_64.S",
+                "linux-x86_64/crypto/third_party/sike/asm/fp-x86_64.S",
+                "src/crypto/hrss/asm/poly_rq_mul.S",
+            ],
+        },
+    },
+}
+
+cc_defaults {
+    name: "libcrypto_bcm_sources",
+    srcs: [
+        "src/crypto/fipsmodule/bcm.c",
+    ],
+    target: {
+        linux_arm64: {
+            srcs: [
                 "linux-aarch64/crypto/fipsmodule/aesv8-armx64.S",
                 "linux-aarch64/crypto/fipsmodule/armv8-mont.S",
                 "linux-aarch64/crypto/fipsmodule/ghash-neon-armv8.S",
@@ -262,13 +300,10 @@ cc_defaults {
                 "linux-aarch64/crypto/fipsmodule/sha256-armv8.S",
                 "linux-aarch64/crypto/fipsmodule/sha512-armv8.S",
                 "linux-aarch64/crypto/fipsmodule/vpaes-armv8.S",
-                "linux-aarch64/crypto/test/trampoline-armv8.S",
-                "linux-aarch64/crypto/third_party/sike/asm/fp-armv8.S",
             ],
         },
         linux_arm: {
             srcs: [
-                "linux-arm/crypto/chacha/chacha-armv4.S",
                 "linux-arm/crypto/fipsmodule/aes-armv4.S",
                 "linux-arm/crypto/fipsmodule/aesv8-armx32.S",
                 "linux-arm/crypto/fipsmodule/armv4-mont.S",
@@ -278,14 +313,10 @@ cc_defaults {
                 "linux-arm/crypto/fipsmodule/sha1-armv4-large.S",
                 "linux-arm/crypto/fipsmodule/sha256-armv4.S",
                 "linux-arm/crypto/fipsmodule/sha512-armv4.S",
-                "linux-arm/crypto/test/trampoline-armv4.S",
-                "src/crypto/curve25519/asm/x25519-asm-arm.S",
-                "src/crypto/poly1305/poly1305_arm_asm.S",
             ],
         },
         linux_x86: {
             srcs: [
-                "linux-x86/crypto/chacha/chacha-x86.S",
                 "linux-x86/crypto/fipsmodule/aes-586.S",
                 "linux-x86/crypto/fipsmodule/aesni-x86.S",
                 "linux-x86/crypto/fipsmodule/bn-586.S",
@@ -298,14 +329,10 @@ cc_defaults {
                 "linux-x86/crypto/fipsmodule/sha512-586.S",
                 "linux-x86/crypto/fipsmodule/vpaes-x86.S",
                 "linux-x86/crypto/fipsmodule/x86-mont.S",
-                "linux-x86/crypto/test/trampoline-x86.S",
             ],
         },
         linux_x86_64: {
             srcs: [
-                "linux-x86_64/crypto/chacha/chacha-x86_64.S",
-                "linux-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.S",
-                "linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/aes-x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/aesni-x86_64.S",
@@ -322,9 +349,6 @@ cc_defaults {
                 "linux-x86_64/crypto/fipsmodule/vpaes-x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/x86_64-mont.S",
                 "linux-x86_64/crypto/fipsmodule/x86_64-mont5.S",
-                "linux-x86_64/crypto/test/trampoline-x86_64.S",
-                "linux-x86_64/crypto/third_party/sike/asm/fp-x86_64.S",
-                "src/crypto/hrss/asm/poly_rq_mul.S",
             ],
         },
     },
