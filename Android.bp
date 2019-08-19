@@ -90,6 +90,7 @@ cc_library {
     double_loadable: true,
     recovery_available: true,
     defaults: [
+        "libcrypto_bcm_sources",
         "libcrypto_sources",
         "libcrypto_defaults",
         "boringssl_defaults",
@@ -105,6 +106,7 @@ cc_library_static {
     name: "libcrypto_static",
     visibility: ["//visibility:public"],
     defaults: [
+        "libcrypto_bcm_sources",
         "libcrypto_sources",
         "libcrypto_defaults",
         "boringssl_defaults",
