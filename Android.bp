@@ -130,16 +130,6 @@ cc_library_static {
 //// libssl
 
 // Target static library
-// Deprecated: all users should move to libssl
-cc_library_static {
-    name: "libssl_static",
-    visibility: ["//visibility:public"],
-    defaults: [
-        "libssl_sources",
-        "boringssl_defaults",
-        "boringssl_flags",
-    ],
-}
 
 // Static and Shared library
 cc_library {
