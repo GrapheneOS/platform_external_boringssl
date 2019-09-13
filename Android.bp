@@ -76,6 +76,60 @@ cc_defaults {
             clang_asflags: ["-march=armv8-a+crypto"],
         },
     },
+    // To allow integrity check to read and checksum the code
+    xom: false,
+}
+
+cc_object {
+    name: "bcm_object",
+    device_supported: true,
+    recovery_available: true,
+    native_bridge_supported: true,
+    defaults: [
+        "libcrypto_bcm_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
+    target: {
+        android: {
+            cflags: [
+                "-DBORINGSSL_FIPS",
+                "-fPIC",
+            ],
+            linker_script: "src/crypto/fipsmodule/fips_shared.lds",
+        },
+    },
+}
+
+bootstrap_go_package {
+    name: "bssl_ar",
+    pkgPath: "boringssl.googlesource.com/boringssl/util/ar",
+    srcs: [
+        "src/util/ar/ar.go",
+    ],
+    testSrcs: [
+        "src/util/ar/ar_test.go",
+    ],
+}
+
+bootstrap_go_package {
+    name: "bssl_fipscommon",
+    pkgPath: "boringssl.googlesource.com/boringssl/util/fipstools/fipscommon",
+    srcs: [
+        "src/util/fipstools/fipscommon/const.go",
+    ],
+}
+
+blueprint_go_binary {
+    name: "bssl_inject_hash",
+    srcs: [
+        "src/util/fipstools/inject_hash/inject_hash.go",
+    ],
+    deps: [
+        "bssl_ar",
+        "bssl_fipscommon",
+    ],
 }
 
 // Target and host library
@@ -90,13 +144,23 @@ cc_library {
     double_loadable: true,
     recovery_available: true,
     defaults: [
-        "libcrypto_bcm_sources",
         "libcrypto_sources",
         "libcrypto_defaults",
         "boringssl_defaults",
         "boringssl_flags",
     ],
     unique_host_soname: true,
+    srcs: [
+        ":bcm_object",
+    ],
+    target: {
+        android: {
+            cflags: [
+                "-DBORINGSSL_FIPS",
+            ],
+            inject_bssl_hash: true,
+        },
+    },
 }
 
 // Static library
