@@ -327,6 +327,7 @@ linux_arm_sources := \
   linux-arm/crypto/fipsmodule/sha1-armv4-large.S\
   linux-arm/crypto/fipsmodule/sha256-armv4.S\
   linux-arm/crypto/fipsmodule/sha512-armv4.S\
+  linux-arm/crypto/fipsmodule/vpaes-armv7.S\
   linux-arm/crypto/test/trampoline-armv4.S\
   src/crypto/curve25519/asm/x25519-asm-arm.S\
   src/crypto/poly1305/poly1305_arm_asm.S\

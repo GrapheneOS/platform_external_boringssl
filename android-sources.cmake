@@ -405,6 +405,7 @@ set(crypto_sources_ios_arm
   ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/sha1-armv4-large.S
   ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/sha256-armv4.S
   ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/sha512-armv4.S
+  ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/vpaes-armv7.S
   ${BORINGSSL_ROOT}ios-arm/crypto/test/trampoline-armv4.S
 )
 set(crypto_sources_linux_aarch64
@@ -431,6 +432,7 @@ set(crypto_sources_linux_arm
   ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/sha1-armv4-large.S
   ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/sha256-armv4.S
   ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/sha512-armv4.S
+  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/vpaes-armv7.S
   ${BORINGSSL_ROOT}linux-arm/crypto/test/trampoline-armv4.S
   ${BORINGSSL_ROOT}src/crypto/curve25519/asm/x25519-asm-arm.S
   ${BORINGSSL_ROOT}src/crypto/poly1305/poly1305_arm_asm.S
