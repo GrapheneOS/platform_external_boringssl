@@ -76,8 +76,6 @@ cc_defaults {
             clang_asflags: ["-march=armv8-a+crypto"],
         },
     },
-    // To allow integrity check to read and checksum the code
-    xom: false,
 }
 
 cc_object {
