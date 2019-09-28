@@ -89,6 +89,9 @@ cc_object {
         "boringssl_defaults",
         "boringssl_flags",
     ],
+    sanitize: {
+        address: false,
+    },
     target: {
         android: {
             cflags: [
