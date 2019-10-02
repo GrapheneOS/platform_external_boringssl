@@ -136,8 +136,6 @@ static void BORINGSSL_maybe_set_module_text_permissions(int permission) {
 static void BORINGSSL_maybe_set_module_text_permissions(int permission) {}
 #endif  // !ANDROID
 
-#else
-static const uint8_t BORINGSSL_bcm_text_hash[SHA512_DIGEST_LENGTH] = {0};
 #endif  // !ASAN
 
 static void __attribute__((constructor))
@@ -154,13 +152,19 @@ BORINGSSL_bcm_power_on_self_test(void) {
   const uint8_t *const rodata_end = BORINGSSL_bcm_rodata_end;
 #endif
 
-  static const uint8_t kHMACKey[64] = {0};
+#if defined(OPENSSL_ANDROID)
+  uint8_t result[SHA256_DIGEST_LENGTH];
+  const EVP_MD *const kHashFunction = EVP_sha256();
+#else
   uint8_t result[SHA512_DIGEST_LENGTH];
+  const EVP_MD *const kHashFunction = EVP_sha512();
+#endif
 
+  static const uint8_t kHMACKey[64] = {0};
   unsigned result_len;
   HMAC_CTX hmac_ctx;
   HMAC_CTX_init(&hmac_ctx);
-  if (!HMAC_Init_ex(&hmac_ctx, kHMACKey, sizeof(kHMACKey), EVP_sha512(),
+  if (!HMAC_Init_ex(&hmac_ctx, kHMACKey, sizeof(kHMACKey), kHashFunction,
                     NULL /* no ENGINE */)) {
     fprintf(stderr, "HMAC_Init_ex failed.\n");
     goto err;
@@ -192,11 +196,15 @@ BORINGSSL_bcm_power_on_self_test(void) {
   if (!check_test(expected, result, sizeof(result), "FIPS integrity test")) {
     goto err;
   }
-#endif
 
-  if (!BORINGSSL_self_test(BORINGSSL_bcm_text_hash)) {
+  if (!boringssl_fips_self_test(BORINGSSL_bcm_text_hash, sizeof(result))) {
     goto err;
   }
+#else
+  if (!BORINGSSL_self_test()) {
+    goto err;
+  }
+#endif  // OPENSSL_ASAN
 
   return;
 
