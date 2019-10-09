@@ -3969,4 +3969,5 @@ sha256_block_data_order_avx:
 	.byte	0xf3,0xc3
 .cfi_endproc	
 .size	sha256_block_data_order_avx,.-sha256_block_data_order_avx
+.section	.note.GNU-stack,"",@progbits
 #endif
