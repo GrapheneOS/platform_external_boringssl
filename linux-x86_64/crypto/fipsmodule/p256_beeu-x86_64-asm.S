@@ -339,4 +339,5 @@ beeu_mod_inverse_vartime:
 .cfi_endproc	
 
 .size	beeu_mod_inverse_vartime, .-beeu_mod_inverse_vartime
+.section	.note.GNU-stack,"",@progbits
 #endif

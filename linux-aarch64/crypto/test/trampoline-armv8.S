@@ -683,5 +683,6 @@ abi_test_clobber_v15_upper:
 	fmov	v15.d[1], xzr
 	ret
 .size	abi_test_clobber_v15_upper,.-abi_test_clobber_v15_upper
+.section	.note.GNU-stack,"",%progbits
 #endif
 #endif  // !OPENSSL_NO_ASM

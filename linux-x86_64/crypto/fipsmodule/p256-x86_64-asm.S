@@ -4539,4 +4539,5 @@ ecp_nistz256_point_add_affinex:
 	.byte	0xf3,0xc3
 .cfi_endproc	
 .size	ecp_nistz256_point_add_affinex,.-ecp_nistz256_point_add_affinex
+.section	.note.GNU-stack,"",@progbits
 #endif

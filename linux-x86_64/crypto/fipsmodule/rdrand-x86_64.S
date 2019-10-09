@@ -59,4 +59,5 @@ CRYPTO_rdrand_multiple8_buf:
 	.byte	0xf3,0xc3
 .cfi_endproc	
 .size	CRYPTO_rdrand_multiple8_buf,.-CRYPTO_rdrand_multiple8_buf
+.section	.note.GNU-stack,"",@progbits
 #endif
