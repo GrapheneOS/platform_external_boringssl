@@ -1867,4 +1867,5 @@ sike_mpmul:
 .cfi_adjust_cfa_offset	-8
 	.byte	0xf3,0xc3
 .cfi_endproc	
+.section	.note.GNU-stack,"",@progbits
 #endif
