@@ -1540,5 +1540,5 @@ bn_sub_part_words:
 	popl	%ebp
 	ret
 .size	bn_sub_part_words,.-.L_bn_sub_part_words_begin
-.section	.note.GNU-stack,"",@progbits
 #endif
+.section	.note.GNU-stack,"",@progbits
