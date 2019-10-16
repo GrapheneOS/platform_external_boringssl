@@ -514,5 +514,5 @@ abi_test_set_direction_flag:
 	std
 	.byte	0xf3,0xc3
 .size	abi_test_set_direction_flag,.-abi_test_set_direction_flag
-.section	.note.GNU-stack,"",@progbits
 #endif
+.section	.note.GNU-stack,"",@progbits
