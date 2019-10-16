@@ -97,6 +97,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa.c
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/ec_extra/ec_asn1.c
+  ${BORINGSSL_ROOT}src/crypto/ec_extra/ec_derive.c
   ${BORINGSSL_ROOT}src/crypto/ecdh_extra/ecdh_extra.c
   ${BORINGSSL_ROOT}src/crypto/ecdsa_extra/ecdsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/engine/engine.c
