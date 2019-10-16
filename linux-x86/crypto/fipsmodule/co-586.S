@@ -1262,5 +1262,5 @@ bn_sqr_comba4:
 	popl	%esi
 	ret
 .size	bn_sqr_comba4,.-.L_bn_sqr_comba4_begin
-.section	.note.GNU-stack,"",@progbits
 #endif
+.section	.note.GNU-stack,"",@progbits

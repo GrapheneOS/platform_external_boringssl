@@ -202,5 +202,5 @@ abi_test_clobber_xmm7:
 	pxor	%xmm7,%xmm7
 	ret
 .size	abi_test_clobber_xmm7,.-.L_abi_test_clobber_xmm7_begin
-.section	.note.GNU-stack,"",@progbits
 #endif
+.section	.note.GNU-stack,"",@progbits

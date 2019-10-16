@@ -1211,6 +1211,6 @@ vpaes_ctr32_encrypt_blocks:
 	ldp	x29,x30,[sp],#16
 	ret
 .size	vpaes_ctr32_encrypt_blocks,.-vpaes_ctr32_encrypt_blocks
-.section	.note.GNU-stack,"",%progbits
 #endif
 #endif  // !OPENSSL_NO_ASM
+.section	.note.GNU-stack,"",%progbits
