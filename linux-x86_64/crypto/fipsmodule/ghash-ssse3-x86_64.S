@@ -423,5 +423,5 @@ gcm_ghash_ssse3:
 
 .Llow4_mask:
 .quad	0x0f0f0f0f0f0f0f0f, 0x0f0f0f0f0f0f0f0f
-.section	.note.GNU-stack,"",@progbits
 #endif
+.section	.note.GNU-stack,"",@progbits

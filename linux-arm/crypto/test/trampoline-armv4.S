@@ -375,6 +375,6 @@ abi_test_clobber_d15:
 	vmov	s31, r0
 	bx	lr
 .size	abi_test_clobber_d15,.-abi_test_clobber_d15
-.section	.note.GNU-stack,"",%progbits
 #endif
 #endif  // !OPENSSL_NO_ASM
+.section	.note.GNU-stack,"",%progbits

@@ -2988,5 +2988,5 @@ sha512_block_data_order_avx:
 	.byte	0xf3,0xc3
 .cfi_endproc	
 .size	sha512_block_data_order_avx,.-sha512_block_data_order_avx
-.section	.note.GNU-stack,"",@progbits
 #endif
+.section	.note.GNU-stack,"",@progbits
