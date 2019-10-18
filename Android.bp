@@ -97,6 +97,10 @@ cc_object {
             cflags: [
                 "-DBORINGSSL_FIPS",
                 "-fPIC",
+                // -fno[data|text]-sections required to ensure a
+                // single text and data section for FIPS integrity check
+                "-fno-data-sections",
+                "-fno-function-sections",
             ],
             linker_script: "src/crypto/fipsmodule/fips_shared.lds",
         },
