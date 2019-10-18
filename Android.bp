@@ -329,3 +329,18 @@ cc_test {
         "libssl",
     ],
 }
+
+// Utility binary for CMVP on-site testing.
+cc_binary {
+  name: "test_fips",
+  host_supported: false,
+  defaults: [
+      "boringssl_flags",
+  ],
+  shared_libs: [
+      "libcrypto",
+  ],
+  srcs: [
+      "src/util/fipstools/cavp/test_fips.c",
+  ],
+}
