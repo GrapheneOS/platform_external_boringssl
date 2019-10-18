@@ -245,11 +245,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/x509v3/v3_sxnet.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/v3_utl.c
   ${BORINGSSL_ROOT}src/third_party/fiat/curve25519.c
-  ${BORINGSSL_ROOT}src/third_party/sike/asm/fp_generic.c
-  ${BORINGSSL_ROOT}src/third_party/sike/curve_params.c
-  ${BORINGSSL_ROOT}src/third_party/sike/fpx.c
-  ${BORINGSSL_ROOT}src/third_party/sike/isogeny.c
-  ${BORINGSSL_ROOT}src/third_party/sike/sike.c
 )
 set(ssl_sources
   ${BORINGSSL_ROOT}src/ssl/bio_ssl.cc
@@ -393,7 +388,6 @@ set(crypto_sources_ios_aarch64
   ${BORINGSSL_ROOT}ios-aarch64/crypto/fipsmodule/sha512-armv8.S
   ${BORINGSSL_ROOT}ios-aarch64/crypto/fipsmodule/vpaes-armv8.S
   ${BORINGSSL_ROOT}ios-aarch64/crypto/test/trampoline-armv8.S
-  ${BORINGSSL_ROOT}ios-aarch64/crypto/third_party/sike/asm/fp-armv8.S
 )
 set(crypto_sources_ios_arm
   ${BORINGSSL_ROOT}ios-arm/crypto/chacha/chacha-armv4.S
@@ -420,7 +414,6 @@ set(crypto_sources_linux_aarch64
   ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/sha512-armv8.S
   ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/vpaes-armv8.S
   ${BORINGSSL_ROOT}linux-aarch64/crypto/test/trampoline-armv8.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/third_party/sike/asm/fp-armv8.S
 )
 set(crypto_sources_linux_arm
   ${BORINGSSL_ROOT}linux-arm/crypto/chacha/chacha-armv4.S
@@ -479,7 +472,6 @@ set(crypto_sources_linux_x86_64
   ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/x86_64-mont.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/x86_64-mont5.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/test/trampoline-x86_64.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/third_party/sike/asm/fp-x86_64.S
   ${BORINGSSL_ROOT}src/crypto/hrss/asm/poly_rq_mul.S
 )
 set(crypto_sources_mac_x86
@@ -519,7 +511,6 @@ set(crypto_sources_mac_x86_64
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/x86_64-mont.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/x86_64-mont5.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/test/trampoline-x86_64.S
-  ${BORINGSSL_ROOT}mac-x86_64/crypto/third_party/sike/asm/fp-x86_64.S
 )
 set(crypto_sources_win_x86
   ${BORINGSSL_ROOT}win-x86/crypto/chacha/chacha-x86.asm
@@ -558,5 +549,4 @@ set(crypto_sources_win_x86_64
   ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/x86_64-mont.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/x86_64-mont5.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/test/trampoline-x86_64.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/third_party/sike/asm/fp-x86_64.asm
 )
