@@ -91,6 +91,7 @@ cc_object {
     ],
     sanitize: {
         address: false,
+        hwaddress: false,
     },
     target: {
         android: {
@@ -336,15 +337,15 @@ cc_test {
 
 // Utility binary for CMVP on-site testing.
 cc_binary {
-  name: "test_fips",
-  host_supported: false,
-  defaults: [
-      "boringssl_flags",
-  ],
-  shared_libs: [
-      "libcrypto",
-  ],
-  srcs: [
-      "src/util/fipstools/cavp/test_fips.c",
-  ],
+    name: "test_fips",
+    host_supported: false,
+    defaults: [
+        "boringssl_flags",
+    ],
+    shared_libs: [
+        "libcrypto",
+    ],
+    srcs: [
+        "src/util/fipstools/cavp/test_fips.c",
+    ],
 }
