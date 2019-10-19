@@ -244,18 +244,12 @@ cc_defaults {
         "src/crypto/x509v3/v3_sxnet.c",
         "src/crypto/x509v3/v3_utl.c",
         "src/third_party/fiat/curve25519.c",
-        "src/third_party/sike/asm/fp_generic.c",
-        "src/third_party/sike/curve_params.c",
-        "src/third_party/sike/fpx.c",
-        "src/third_party/sike/isogeny.c",
-        "src/third_party/sike/sike.c",
     ],
     target: {
         linux_arm64: {
             srcs: [
                 "linux-aarch64/crypto/chacha/chacha-armv8.S",
                 "linux-aarch64/crypto/test/trampoline-armv8.S",
-                "linux-aarch64/crypto/third_party/sike/asm/fp-armv8.S",
             ],
         },
         linux_arm: {
@@ -278,7 +272,6 @@ cc_defaults {
                 "linux-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.S",
                 "linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S",
                 "linux-x86_64/crypto/test/trampoline-x86_64.S",
-                "linux-x86_64/crypto/third_party/sike/asm/fp-x86_64.S",
                 "src/crypto/hrss/asm/poly_rq_mul.S",
             ],
         },
