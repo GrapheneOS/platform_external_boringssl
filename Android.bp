@@ -70,12 +70,6 @@ cc_defaults {
     },
 
     local_include_dirs: ["src/crypto"],
-
-    arch: {
-        arm64: {
-            clang_asflags: ["-march=armv8-a+crypto"],
-        },
-    },
 }
 
 cc_object {
