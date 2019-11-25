@@ -99,6 +99,18 @@ cc_object {
             ],
             linker_script: "src/crypto/fipsmodule/fips_shared.lds",
         },
+        // Temporary hack to let BoringSSL build with a new compiler.
+        // This doesn't enable HWASAN unconditionally, it just causes
+        // BoringSSL's asm code to unconditionally use a HWASAN-compatible
+        // global variable reference so that the non-HWASANified (because of
+        // sanitize: { hwaddress: false } above) code in the BCM can
+        // successfully link against the HWASANified code in the rest of
+        // BoringSSL in HWASAN builds.
+        android_arm64: {
+            asflags: [
+                "-fsanitize=hwaddress",
+            ],
+        },
     },
 }
 
