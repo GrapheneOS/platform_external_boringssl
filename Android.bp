@@ -237,6 +237,11 @@ cc_library {
         "boringssl_defaults",
         "boringssl_flags",
     ],
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
     unique_host_soname: true,
 
     shared_libs: ["libcrypto"],
