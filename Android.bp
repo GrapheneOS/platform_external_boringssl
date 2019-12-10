@@ -86,6 +86,7 @@ cc_object {
     sanitize: {
         address: false,
         hwaddress: false,
+        fuzzer: false,
     },
     target: {
         android: {
