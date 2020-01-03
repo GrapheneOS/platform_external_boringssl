@@ -1,7 +1,2 @@
-flooey@google.com
-kroot@google.com
-prb@google.com
-
-# Only if the above owners are unavailable.
-tobiast@google.com
-
+# Bug component: 684135
+include platform/external/conscrypt:/OWNERS
