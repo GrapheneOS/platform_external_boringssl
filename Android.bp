@@ -199,6 +199,7 @@ cc_library_static {
         "//hardware/interfaces/drm/1.2/vts/functional",
         "//hardware/interfaces/keymaster/3.0/vts/functional",
         "//hardware/interfaces/keymaster/4.0/vts/functional",
+        "//hardware/interfaces/keymaster/4.1/vts/functional",
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//system/core/adb",
         "//system/core/init",
