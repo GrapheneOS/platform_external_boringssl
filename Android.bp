@@ -212,6 +212,7 @@ cc_library {
 cc_library_static {
     name: "libcrypto_static",
     visibility: [
+        "//art/build/sdk",
         "//bootable/recovery/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
