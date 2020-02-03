@@ -193,7 +193,7 @@ cc_library_static {
         "//bootable/recovery/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
-        "//frameworks/ml/nn/runtime:__subpackages__",
+        "//frameworks/ml/nn:__subpackages__",
         "//hardware/interfaces/confirmationui/1.0/vts/functional",
         "//hardware/interfaces/drm/1.0/vts/functional",
         "//hardware/interfaces/drm/1.2/vts/functional",
