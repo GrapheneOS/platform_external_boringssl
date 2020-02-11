@@ -181,6 +181,11 @@ cc_library {
             },
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "test_com.android.adbd",
+    ],
 }
 
 // Static library
@@ -248,6 +253,12 @@ cc_library {
     unique_host_soname: true,
 
     shared_libs: ["libcrypto"],
+
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "test_com.android.adbd",
+    ],
 }
 
 // Tool
