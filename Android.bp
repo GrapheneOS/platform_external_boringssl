@@ -216,6 +216,11 @@ cc_library_static {
         "//system/security/keystore/tests",
         "//test/vts-testcase/security/avb",
     ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.neuralnetworks",
+        "test_com.android.neuralnetworks",
+    ],
     defaults: [
         "libcrypto_bcm_sources",
         "libcrypto_sources",
