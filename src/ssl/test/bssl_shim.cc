@@ -39,7 +39,6 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 
 #include <openssl/aead.h>
 #include <openssl/bio.h>
-#include <openssl/buf.h>
 #include <openssl/bytestring.h>
 #include <openssl/cipher.h>
 #include <openssl/crypto.h>
@@ -61,6 +60,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "Ws2_32.lib"))
 #include "../internal.h"
 #include "async_bio.h"
 #include "handshake_util.h"
+#include "mock_quic_transport.h"
 #include "packeted_bio.h"
 #include "settings_writer.h"
 #include "test_config.h"
@@ -179,6 +179,9 @@ class SocketCloser {
 static int DoRead(SSL *ssl, uint8_t *out, size_t max_out) {
   const TestConfig *config = GetTestConfig(ssl);
   TestState *test_state = GetTestState(ssl);
+  if (test_state->quic_transport) {
+    return test_state->quic_transport->ReadApplicationData(out, max_out);
+  }
   int ret;
   do {
     if (config->async) {
@@ -232,7 +235,14 @@ static int DoRead(SSL *ssl, uint8_t *out, size_t max_out) {
 // WriteAll writes |in_len| bytes from |in| to |ssl|, resolving any asynchronous
 // operations. It returns the result of the final |SSL_write| call.
 static int WriteAll(SSL *ssl, const void *in_, size_t in_len) {
+  TestState *test_state = GetTestState(ssl);
   const uint8_t *in = reinterpret_cast<const uint8_t *>(in_);
+  if (test_state->quic_transport) {
+    if (!test_state->quic_transport->WriteApplicationData(in, in_len)) {
+      return -1;
+    }
+    return in_len;
+  }
   int ret;
   do {
     ret = SSL_write(ssl, in, in_len);
@@ -670,13 +680,12 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     return false;
   }
 
-  if (config->expect_pq_experiment_signal !=
-      !!SSL_pq_experiment_signal_seen(ssl)) {
-    fprintf(stderr, "Got %sPQ experiment signal, but wanted opposite. \n",
-            SSL_pq_experiment_signal_seen(ssl) ? "" : "no ");
+  if ((config->expect_hrr && !SSL_used_hello_retry_request(ssl)) ||
+      (config->expect_no_hrr && SSL_used_hello_retry_request(ssl))) {
+    fprintf(stderr, "Got %sHRR, but wanted opposite.\n",
+            SSL_used_hello_retry_request(ssl) ? "" : "no ");
     return false;
   }
-
   return true;
 }
 
@@ -733,8 +742,13 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
     GetTestState(ssl.get())->async_bio = async_scoped.get();
     bio = std::move(async_scoped);
   }
-  SSL_set_bio(ssl.get(), bio.get(), bio.get());
-  bio.release();  // SSL_set_bio takes ownership.
+  if (config->is_quic) {
+    GetTestState(ssl.get())->quic_transport.reset(
+        new MockQuicTransport(std::move(bio), ssl.get()));
+  } else {
+    SSL_set_bio(ssl.get(), bio.get(), bio.get());
+    bio.release();  // SSL_set_bio takes ownership.
+  }
 
   bool ret = DoExchange(out_session, &ssl, config, is_resume, false, writer);
   if (!config->is_server && is_resume && config->expect_reject_early_data) {

@@ -812,6 +812,14 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_set_ec_paramgen_curve_nid(EVP_PKEY_CTX *ctx,
 // 2.5.8.1.1), but is no longer accepted.
 #define EVP_PKEY_RSA2 NID_rsa
 
+// EVP_PKEY_X448 is defined for OpenSSL compatibility, but we do not support
+// X448 and attempts to create keys will fail.
+#define EVP_PKEY_X448 NID_X448
+
+// EVP_PKEY_ED448 is defined for OpenSSL compatibility, but we do not support
+// Ed448 and attempts to create keys will fail.
+#define EVP_PKEY_ED448 NID_ED448
+
 // OpenSSL_add_all_algorithms does nothing.
 OPENSSL_EXPORT void OpenSSL_add_all_algorithms(void);
 
@@ -926,6 +934,18 @@ OPENSSL_EXPORT size_t EVP_PKEY_get1_tls_encodedpoint(const EVP_PKEY *pkey,
 
 // EVP_PKEY_base_id calls |EVP_PKEY_id|.
 OPENSSL_EXPORT int EVP_PKEY_base_id(const EVP_PKEY *pkey);
+
+// EVP_PKEY_CTX_set_rsa_pss_keygen_md returns 0.
+OPENSSL_EXPORT int EVP_PKEY_CTX_set_rsa_pss_keygen_md(EVP_PKEY_CTX *ctx,
+                                                      const EVP_MD *md);
+
+// EVP_PKEY_CTX_set_rsa_pss_keygen_saltlen returns 0.
+OPENSSL_EXPORT int EVP_PKEY_CTX_set_rsa_pss_keygen_saltlen(EVP_PKEY_CTX *ctx,
+                                                           int salt_len);
+
+// EVP_PKEY_CTX_set_rsa_pss_keygen_mgf1_md returns 0.
+OPENSSL_EXPORT int EVP_PKEY_CTX_set_rsa_pss_keygen_mgf1_md(EVP_PKEY_CTX *ctx,
+                                                           const EVP_MD *md);
 
 
 // Preprocessor compatibility section (hidden).
