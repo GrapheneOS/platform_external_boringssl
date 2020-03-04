@@ -391,7 +391,6 @@ set(crypto_sources_ios_aarch64
 )
 set(crypto_sources_ios_arm
   ${BORINGSSL_ROOT}ios-arm/crypto/chacha/chacha-armv4.S
-  ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/aes-armv4.S
   ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/aesv8-armx32.S
   ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/armv4-mont.S
   ${BORINGSSL_ROOT}ios-arm/crypto/fipsmodule/bsaes-armv7.S
@@ -417,7 +416,6 @@ set(crypto_sources_linux_aarch64
 )
 set(crypto_sources_linux_arm
   ${BORINGSSL_ROOT}linux-arm/crypto/chacha/chacha-armv4.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/aes-armv4.S
   ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/aesv8-armx32.S
   ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/armv4-mont.S
   ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/bsaes-armv7.S
@@ -434,10 +432,10 @@ set(crypto_sources_linux_arm
 set(crypto_sources_linux_ppc64le
   ${BORINGSSL_ROOT}linux-ppc64le/crypto/fipsmodule/aesp8-ppc.S
   ${BORINGSSL_ROOT}linux-ppc64le/crypto/fipsmodule/ghashp8-ppc.S
+  ${BORINGSSL_ROOT}linux-ppc64le/crypto/test/trampoline-ppc.S
 )
 set(crypto_sources_linux_x86
   ${BORINGSSL_ROOT}linux-x86/crypto/chacha/chacha-x86.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/aes-586.S
   ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/aesni-x86.S
   ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/bn-586.S
   ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/co-586.S
@@ -455,7 +453,6 @@ set(crypto_sources_linux_x86_64
   ${BORINGSSL_ROOT}linux-x86_64/crypto/chacha/chacha-x86_64.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/aes-x86_64.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/aesni-x86_64.S
   ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64.S
@@ -476,7 +473,6 @@ set(crypto_sources_linux_x86_64
 )
 set(crypto_sources_mac_x86
   ${BORINGSSL_ROOT}mac-x86/crypto/chacha/chacha-x86.S
-  ${BORINGSSL_ROOT}mac-x86/crypto/fipsmodule/aes-586.S
   ${BORINGSSL_ROOT}mac-x86/crypto/fipsmodule/aesni-x86.S
   ${BORINGSSL_ROOT}mac-x86/crypto/fipsmodule/bn-586.S
   ${BORINGSSL_ROOT}mac-x86/crypto/fipsmodule/co-586.S
@@ -494,7 +490,6 @@ set(crypto_sources_mac_x86_64
   ${BORINGSSL_ROOT}mac-x86_64/crypto/chacha/chacha-x86_64.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S
-  ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/aes-x86_64.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/aesni-x86_64.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64.S
@@ -514,7 +509,6 @@ set(crypto_sources_mac_x86_64
 )
 set(crypto_sources_win_x86
   ${BORINGSSL_ROOT}win-x86/crypto/chacha/chacha-x86.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/aes-586.asm
   ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/aesni-x86.asm
   ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/bn-586.asm
   ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/co-586.asm
@@ -532,7 +526,6 @@ set(crypto_sources_win_x86_64
   ${BORINGSSL_ROOT}win-x86_64/crypto/chacha/chacha-x86_64.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/aes-x86_64.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/aesni-x86_64.asm
   ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64.asm
