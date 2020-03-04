@@ -1239,6 +1239,11 @@ class SSLBuffer {
   uint16_t size_ = 0;
   // cap_ is how much memory beyond |buf_| + |offset_| is available.
   uint16_t cap_ = 0;
+  // inline_buf_ is a static buffer for short reads.
+  uint8_t inline_buf_[SSL3_RT_HEADER_LENGTH];
+  // buf_allocated_ is true if |buf_| points to allocated data and must be freed
+  // or false if it points into |inline_buf_|.
+  bool buf_allocated_ = false;
 };
 
 // ssl_read_buffer_extend_to extends the read buffer to the desired length. For
@@ -1351,9 +1356,11 @@ bool tls13_init_early_key_schedule(SSL_HANDSHAKE *hs, Span<const uint8_t> psk);
 bool tls13_advance_key_schedule(SSL_HANDSHAKE *hs, Span<const uint8_t> in);
 
 // tls13_set_traffic_key sets the read or write traffic keys to
-// |traffic_secret|. It returns true on success and false on error.
+// |traffic_secret|. The version and cipher suite are determined from |session|.
+// It returns true on success and false on error.
 bool tls13_set_traffic_key(SSL *ssl, enum ssl_encryption_level_t level,
                            enum evp_aead_direction_t direction,
+                           const SSL_SESSION *session,
                            Span<const uint8_t> traffic_secret);
 
 // tls13_derive_early_secret derives the early traffic secret. It returns true
@@ -1472,12 +1479,33 @@ enum tls12_server_hs_state_t {
   state12_done,
 };
 
+enum tls13_server_hs_state_t {
+  state13_select_parameters = 0,
+  state13_select_session,
+  state13_send_hello_retry_request,
+  state13_read_second_client_hello,
+  state13_send_server_hello,
+  state13_send_server_certificate_verify,
+  state13_send_server_finished,
+  state13_send_half_rtt_ticket,
+  state13_read_second_client_flight,
+  state13_process_end_of_early_data,
+  state13_read_client_certificate,
+  state13_read_client_certificate_verify,
+  state13_read_channel_id,
+  state13_read_client_finished,
+  state13_send_new_session_ticket,
+  state13_done,
+};
+
 // handback_t lists the points in the state machine where a handback can occur.
 // These are the different points at which key material is no longer needed.
 enum handback_t {
-  handback_after_session_resumption,
-  handback_after_ecdhe,
-  handback_after_handshake,
+  handback_after_session_resumption = 0,
+  handback_after_ecdhe = 1,
+  handback_after_handshake = 2,
+  handback_tls13 = 3,
+  handback_max_value = handback_tls13,
 };
 
 
@@ -1692,9 +1720,6 @@ struct SSL_HANDSHAKE {
   // needs_psk_binder is true if the ClientHello has a placeholder PSK binder to
   // be filled in.
   bool needs_psk_binder : 1;
-
-  bool received_hello_retry_request : 1;
-  bool sent_hello_retry_request : 1;
 
   // handshake_finalized is true once the handshake has completed, at which
   // point accessors should use the established state.
@@ -1914,7 +1939,8 @@ int ssl_parse_extensions(const CBS *cbs, uint8_t *out_alert,
 enum ssl_verify_result_t ssl_verify_peer_cert(SSL_HANDSHAKE *hs);
 // ssl_reverify_peer_cert verifies the peer certificate for |hs| when resuming a
 // session.
-enum ssl_verify_result_t ssl_reverify_peer_cert(SSL_HANDSHAKE *hs);
+enum ssl_verify_result_t ssl_reverify_peer_cert(SSL_HANDSHAKE *hs,
+                                                bool send_alert);
 
 enum ssl_hs_wait_t ssl_get_finished(SSL_HANDSHAKE *hs);
 bool ssl_send_finished(SSL_HANDSHAKE *hs);
@@ -1976,21 +2002,14 @@ bool tls1_choose_signature_algorithm(SSL_HANDSHAKE *hs, uint16_t *out);
 Span<const uint16_t> tls1_get_peer_verify_algorithms(const SSL_HANDSHAKE *hs);
 
 // tls12_add_verify_sigalgs adds the signature algorithms acceptable for the
-// peer signature to |out|. It returns true on success and false on error. If
-// |for_certs| is true, the potentially more restrictive list of algorithms for
-// certificates is used. Otherwise, the online signature one is used.
-bool tls12_add_verify_sigalgs(const SSL *ssl, CBB *out, bool for_certs);
+// peer signature to |out|. It returns true on success and false on error.
+bool tls12_add_verify_sigalgs(const SSL_HANDSHAKE *hs, CBB *out);
 
 // tls12_check_peer_sigalg checks if |sigalg| is acceptable for the peer
 // signature. It returns true on success and false on error, setting
 // |*out_alert| to an alert to send.
-bool tls12_check_peer_sigalg(const SSL *ssl, uint8_t *out_alert,
+bool tls12_check_peer_sigalg(const SSL_HANDSHAKE *hs, uint8_t *out_alert,
                              uint16_t sigalg);
-
-// tls12_has_different_verify_sigalgs_for_certs returns whether |ssl| has a
-// different, more restrictive, list of signature algorithms acceptable for the
-// certificate than the online signature.
-bool tls12_has_different_verify_sigalgs_for_certs(const SSL *ssl);
 
 
 // Underdocumented functions.
@@ -2093,6 +2112,9 @@ struct SSL_PROTOCOL_METHOD {
   bool (*get_message)(const SSL *ssl, SSLMessage *out);
   // next_message is called to release the current handshake message.
   void (*next_message)(SSL *ssl);
+  // has_unprocessed_handshake_data returns whether there is buffered
+  // handshake data that has not been consumed by |get_message|.
+  bool (*has_unprocessed_handshake_data)(const SSL *ssl);
   // Use the |ssl_open_handshake| wrapper.
   ssl_open_record_t (*open_handshake)(SSL *ssl, size_t *out_consumed,
                                       uint8_t *out_alert, Span<uint8_t> in);
@@ -2125,14 +2147,16 @@ struct SSL_PROTOCOL_METHOD {
   int (*flush_flight)(SSL *ssl);
   // on_handshake_complete is called when the handshake is complete.
   void (*on_handshake_complete)(SSL *ssl);
-  // set_read_state sets |ssl|'s read cipher state to |aead_ctx|. It returns
-  // true on success and false if changing the read state is forbidden at this
-  // point.
-  bool (*set_read_state)(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx);
-  // set_write_state sets |ssl|'s write cipher state to |aead_ctx|. It returns
-  // true on success and false if changing the write state is forbidden at this
-  // point.
-  bool (*set_write_state)(SSL *ssl, UniquePtr<SSLAEADContext> aead_ctx);
+  // set_read_state sets |ssl|'s read cipher state and level to |aead_ctx| and
+  // |level|. It returns true on success and false if changing the read state is
+  // forbidden at this point.
+  bool (*set_read_state)(SSL *ssl, ssl_encryption_level_t level,
+                         UniquePtr<SSLAEADContext> aead_ctx);
+  // set_write_state sets |ssl|'s write cipher state and level to |aead_ctx| and
+  // |level|. It returns true on success and false if changing the write state
+  // is forbidden at this point.
+  bool (*set_write_state)(SSL *ssl, ssl_encryption_level_t level,
+                          UniquePtr<SSLAEADContext> aead_ctx);
 };
 
 // The following wrappers call |open_*| but handle |read_shutdown| correctly.
@@ -2376,16 +2400,16 @@ struct SSL3_STATE {
   // token_binding_negotiated is set if Token Binding was negotiated.
   bool token_binding_negotiated : 1;
 
-  // pq_experimental_signal_seen is true if the peer was observed
-  // sending/echoing the post-quantum experiment signal.
-  bool pq_experiment_signal_seen : 1;
-
   // alert_dispatch is true there is an alert in |send_alert| to be sent.
   bool alert_dispatch : 1;
 
   // renegotiate_pending is whether the read half of the channel is blocked on a
   // HelloRequest.
   bool renegotiate_pending : 1;
+
+  // used_hello_retry_request is whether the handshake used a TLS 1.3
+  // HelloRetryRequest message.
+  bool used_hello_retry_request : 1;
 
   // hs_buf is the buffer of handshake data to process.
   UniquePtr<BUF_MEM> hs_buf;
@@ -2820,29 +2844,29 @@ void ssl_update_cache(SSL_HANDSHAKE *hs, int mode);
 
 void ssl_send_alert(SSL *ssl, int level, int desc);
 int ssl_send_alert_impl(SSL *ssl, int level, int desc);
-bool ssl3_get_message(const SSL *ssl, SSLMessage *out);
-ssl_open_record_t ssl3_open_handshake(SSL *ssl, size_t *out_consumed,
-                                      uint8_t *out_alert, Span<uint8_t> in);
-void ssl3_next_message(SSL *ssl);
+bool tls_get_message(const SSL *ssl, SSLMessage *out);
+ssl_open_record_t tls_open_handshake(SSL *ssl, size_t *out_consumed,
+                                     uint8_t *out_alert, Span<uint8_t> in);
+void tls_next_message(SSL *ssl);
 
-int ssl3_dispatch_alert(SSL *ssl);
-ssl_open_record_t ssl3_open_app_data(SSL *ssl, Span<uint8_t> *out,
-                                     size_t *out_consumed, uint8_t *out_alert,
-                                     Span<uint8_t> in);
-ssl_open_record_t ssl3_open_change_cipher_spec(SSL *ssl, size_t *out_consumed,
-                                               uint8_t *out_alert,
-                                               Span<uint8_t> in);
-int ssl3_write_app_data(SSL *ssl, bool *out_needs_handshake, const uint8_t *buf,
-                        int len);
+int tls_dispatch_alert(SSL *ssl);
+ssl_open_record_t tls_open_app_data(SSL *ssl, Span<uint8_t> *out,
+                                    size_t *out_consumed, uint8_t *out_alert,
+                                    Span<uint8_t> in);
+ssl_open_record_t tls_open_change_cipher_spec(SSL *ssl, size_t *out_consumed,
+                                              uint8_t *out_alert,
+                                              Span<uint8_t> in);
+int tls_write_app_data(SSL *ssl, bool *out_needs_handshake, const uint8_t *buf,
+                       int len);
 
-bool ssl3_new(SSL *ssl);
-void ssl3_free(SSL *ssl);
+bool tls_new(SSL *ssl);
+void tls_free(SSL *ssl);
 
-bool ssl3_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
-bool ssl3_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
-bool ssl3_add_message(SSL *ssl, Array<uint8_t> msg);
-bool ssl3_add_change_cipher_spec(SSL *ssl);
-int ssl3_flush_flight(SSL *ssl);
+bool tls_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
+bool tls_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
+bool tls_add_message(SSL *ssl, Array<uint8_t> msg);
+bool tls_add_change_cipher_spec(SSL *ssl);
+int tls_flush_flight(SSL *ssl);
 
 bool dtls1_init_message(SSL *ssl, CBB *cbb, CBB *body, uint8_t type);
 bool dtls1_finish_message(SSL *ssl, CBB *cbb, Array<uint8_t> *out_msg);
@@ -3292,13 +3316,6 @@ struct ssl_ctx_st {
   // protocols from the peer.
   bool allow_unknown_alpn_protos : 1;
 
-  // ed25519_enabled is whether Ed25519 is advertised in the handshake.
-  bool ed25519_enabled : 1;
-
-  // rsa_pss_rsae_certs_enabled is whether rsa_pss_rsae_* are supported by the
-  // certificate verifier.
-  bool rsa_pss_rsae_certs_enabled : 1;
-
   // false_start_allowed_without_alpn is whether False Start (if
   // |SSL_MODE_ENABLE_FALSE_START| is enabled) is allowed without ALPN.
   bool false_start_allowed_without_alpn : 1;
@@ -3314,11 +3331,6 @@ struct ssl_ctx_st {
 
   // If enable_early_data is true, early data can be sent and accepted.
   bool enable_early_data : 1;
-
-  // pq_experiment_signal indicates that an empty extension should be sent
-  // (for clients) or echoed (for servers) to indicate participation in an
-  // experiment of post-quantum key exchanges.
-  bool pq_experiment_signal : 1;
 
  private:
   ~ssl_ctx_st();

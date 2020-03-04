@@ -62,7 +62,11 @@ bool tls13_init_key_schedule(SSL_HANDSHAKE *hs, Span<const uint8_t> psk) {
     return false;
   }
 
-  hs->transcript.FreeBuffer();
+  // Handback includes the whole handshake transcript, so we cannot free the
+  // transcript buffer in the handback case.
+  if (!hs->handback) {
+    hs->transcript.FreeBuffer();
+  }
   return hkdf_extract_to_secret(hs, psk);
 }
 
@@ -135,8 +139,8 @@ static bool derive_secret(SSL_HANDSHAKE *hs, Span<uint8_t> out,
 
 bool tls13_set_traffic_key(SSL *ssl, enum ssl_encryption_level_t level,
                            enum evp_aead_direction_t direction,
+                           const SSL_SESSION *session,
                            Span<const uint8_t> traffic_secret) {
-  const SSL_SESSION *session = SSL_get_session(ssl);
   uint16_t version = ssl_session_protocol_version(session);
 
   UniquePtr<SSLAEADContext> traffic_aead;
@@ -186,17 +190,6 @@ bool tls13_set_traffic_key(SSL *ssl, enum ssl_encryption_level_t level,
     return false;
   }
 
-  if (direction == evp_aead_open) {
-    if (!ssl->method->set_read_state(ssl, std::move(traffic_aead))) {
-      return false;
-    }
-  } else {
-    if (!ssl->method->set_write_state(ssl, std::move(traffic_aead))) {
-      return false;
-    }
-  }
-
-  // Save the traffic secret.
   if (traffic_secret.size() >
           OPENSSL_ARRAY_SIZE(ssl->s3->read_traffic_secret) ||
       traffic_secret.size() >
@@ -204,16 +197,21 @@ bool tls13_set_traffic_key(SSL *ssl, enum ssl_encryption_level_t level,
     OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
     return false;
   }
+
   if (direction == evp_aead_open) {
+    if (!ssl->method->set_read_state(ssl, level, std::move(traffic_aead))) {
+      return false;
+    }
     OPENSSL_memmove(ssl->s3->read_traffic_secret, traffic_secret.data(),
                     traffic_secret.size());
     ssl->s3->read_traffic_secret_len = traffic_secret.size();
-    ssl->s3->read_level = level;
   } else {
+    if (!ssl->method->set_write_state(ssl, level, std::move(traffic_aead))) {
+      return false;
+    }
     OPENSSL_memmove(ssl->s3->write_traffic_secret, traffic_secret.data(),
                     traffic_secret.size());
     ssl->s3->write_traffic_secret_len = traffic_secret.size();
-    ssl->s3->write_level = level;
   }
 
   return true;
@@ -337,11 +335,12 @@ bool tls13_rotate_traffic_key(SSL *ssl, enum evp_aead_direction_t direction) {
                       ssl->s3->write_traffic_secret_len);
   }
 
-  const EVP_MD *digest = ssl_session_get_digest(SSL_get_session(ssl));
+  const SSL_SESSION *session = SSL_get_session(ssl);
+  const EVP_MD *digest = ssl_session_get_digest(session);
   return hkdf_expand_label(secret, digest, secret,
                            label_to_span(kTLS13LabelApplicationTraffic), {}) &&
          tls13_set_traffic_key(ssl, ssl_encryption_application, direction,
-                               secret);
+                               session, secret);
 }
 
 static const char kTLS13LabelResumption[] = "res master";
