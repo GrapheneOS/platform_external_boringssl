@@ -31,6 +31,7 @@
 #include "../internal.h"
 
 #include "aes/aes.c"
+#include "aes/aes_nohw.c"
 #include "aes/key_wrap.c"
 #include "aes/mode_wrappers.c"
 #include "bn/add.c"
@@ -83,6 +84,7 @@
 #include "modes/cfb.c"
 #include "modes/ctr.c"
 #include "modes/gcm.c"
+#include "modes/gcm_nohw.c"
 #include "modes/ofb.c"
 #include "modes/polyval.c"
 #include "rand/ctrdrbg.c"

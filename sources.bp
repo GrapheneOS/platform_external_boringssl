@@ -298,7 +298,6 @@ cc_defaults {
         },
         linux_arm: {
             srcs: [
-                "linux-arm/crypto/fipsmodule/aes-armv4.S",
                 "linux-arm/crypto/fipsmodule/aesv8-armx32.S",
                 "linux-arm/crypto/fipsmodule/armv4-mont.S",
                 "linux-arm/crypto/fipsmodule/bsaes-armv7.S",
@@ -312,7 +311,6 @@ cc_defaults {
         },
         linux_x86: {
             srcs: [
-                "linux-x86/crypto/fipsmodule/aes-586.S",
                 "linux-x86/crypto/fipsmodule/aesni-x86.S",
                 "linux-x86/crypto/fipsmodule/bn-586.S",
                 "linux-x86/crypto/fipsmodule/co-586.S",
@@ -328,7 +326,6 @@ cc_defaults {
         },
         linux_x86_64: {
             srcs: [
-                "linux-x86_64/crypto/fipsmodule/aes-x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/aesni-x86_64.S",
                 "linux-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64.S",
