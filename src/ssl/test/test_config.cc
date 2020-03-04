@@ -53,6 +53,7 @@ T *FindField(TestConfig *config, const Flag<T> (&flags)[N], const char *flag) {
 const Flag<bool> kBoolFlags[] = {
     {"-server", &TestConfig::is_server},
     {"-dtls", &TestConfig::is_dtls},
+    {"-quic", &TestConfig::is_quic},
     {"-fallback-scsv", &TestConfig::fallback_scsv},
     {"-require-any-client-certificate",
      &TestConfig::require_any_client_certificate},
@@ -127,14 +128,12 @@ const Flag<bool> kBoolFlags[] = {
     {"-no-op-extra-handshake", &TestConfig::no_op_extra_handshake},
     {"-handshake-twice", &TestConfig::handshake_twice},
     {"-allow-unknown-alpn-protos", &TestConfig::allow_unknown_alpn_protos},
-    {"-enable-ed25519", &TestConfig::enable_ed25519},
     {"-use-custom-verify-callback", &TestConfig::use_custom_verify_callback},
     {"-allow-false-start-without-alpn",
      &TestConfig::allow_false_start_without_alpn},
     {"-ignore-tls13-downgrade", &TestConfig::ignore_tls13_downgrade},
     {"-expect-tls13-downgrade", &TestConfig::expect_tls13_downgrade},
     {"-handoff", &TestConfig::handoff},
-    {"-no-rsa-pss-rsae-certs", &TestConfig::no_rsa_pss_rsae_certs},
     {"-use-ocsp-callback", &TestConfig::use_ocsp_callback},
     {"-set-ocsp-in-callback", &TestConfig::set_ocsp_in_callback},
     {"-decline-ocsp-callback", &TestConfig::decline_ocsp_callback},
@@ -151,8 +150,8 @@ const Flag<bool> kBoolFlags[] = {
     {"-key-update", &TestConfig::key_update},
     {"-expect-delegated-credential-used",
      &TestConfig::expect_delegated_credential_used},
-    {"-enable-pq-experiment-signal", &TestConfig::enable_pq_experiment_signal},
-    {"-expect-pq-experiment-signal", &TestConfig::expect_pq_experiment_signal},
+    {"-expect-hrr", &TestConfig::expect_hrr},
+    {"-expect-no-hrr", &TestConfig::expect_no_hrr},
 };
 
 const Flag<std::string> kStringFlags[] = {
@@ -305,6 +304,12 @@ bool ParseFlag(char *flag, int argc, char **argv, int *i,
     if (!skip) {
       int_vector_field->push_back(atoi(argv[*i]));
     }
+    return true;
+  }
+
+  if (strcmp(flag, "-enable-ed25519") == 0) {
+    // Old argument; ignored for split-handshake compat testing.
+    // Remove after 2020-06-01.
     return true;
   }
 
@@ -1131,6 +1136,37 @@ static enum ssl_select_cert_result_t SelectCertificateCallback(
   return ssl_select_cert_success;
 }
 
+static int SetQuicEncryptionSecrets(SSL *ssl, enum ssl_encryption_level_t level,
+                                    const uint8_t *read_secret,
+                                    const uint8_t *write_secret,
+                                    size_t secret_len) {
+  return GetTestState(ssl)->quic_transport->SetSecrets(
+      level, read_secret, write_secret, secret_len);
+}
+
+static int AddQuicHandshakeData(SSL *ssl, enum ssl_encryption_level_t level,
+                                const uint8_t *data, size_t len) {
+  return GetTestState(ssl)->quic_transport->WriteHandshakeData(level, data,
+                                                               len);
+}
+
+static int FlushQuicFlight(SSL *ssl) {
+  return GetTestState(ssl)->quic_transport->Flush();
+}
+
+static int SendQuicAlert(SSL *ssl, enum ssl_encryption_level_t level,
+                         uint8_t alert) {
+  // TODO(nharper): Support processing alerts.
+  return 0;
+}
+
+static const SSL_QUIC_METHOD g_quic_method = {
+    SetQuicEncryptionSecrets,
+    AddQuicHandshakeData,
+    FlushQuicFlight,
+    SendQuicAlert,
+};
+
 bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
   bssl::UniquePtr<SSL_CTX> ssl_ctx(
       SSL_CTX_new(is_dtls ? DTLS_method() : TLS_method()));
@@ -1140,12 +1176,6 @@ bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
 
   CRYPTO_once(&once, init_once);
   SSL_CTX_set0_buffer_pool(ssl_ctx.get(), g_pool);
-
-  // Enable TLS 1.3 for tests.
-  if (!is_dtls &&
-      !SSL_CTX_set_max_proto_version(ssl_ctx.get(), TLS1_3_VERSION)) {
-    return nullptr;
-  }
 
   std::string cipher_list = "ALL";
   if (!cipher.empty()) {
@@ -1234,13 +1264,6 @@ bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
     SSL_CTX_set_allow_unknown_alpn_protos(ssl_ctx.get(), 1);
   }
 
-  if (enable_ed25519) {
-    SSL_CTX_set_ed25519_enabled(ssl_ctx.get(), 1);
-  }
-  if (no_rsa_pss_rsae_certs) {
-    SSL_CTX_set_rsa_pss_rsae_certs_enabled(ssl_ctx.get(), 0);
-  }
-
   if (!verify_prefs.empty()) {
     std::vector<uint16_t> u16s(verify_prefs.begin(), verify_prefs.end());
     if (!SSL_CTX_set_verify_algorithm_prefs(ssl_ctx.get(), u16s.data(),
@@ -1326,8 +1349,8 @@ bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
     SSL_CTX_set_options(ssl_ctx.get(), SSL_OP_CIPHER_SERVER_PREFERENCE);
   }
 
-  if (enable_pq_experiment_signal) {
-    SSL_CTX_enable_pq_experiment_signal(ssl_ctx.get());
+  if (is_quic) {
+    SSL_CTX_set_quic_method(ssl_ctx.get(), &g_quic_method);
   }
 
   return ssl_ctx;
@@ -1361,7 +1384,7 @@ static unsigned PskClientCallback(SSL *ssl, const char *hint,
     return 0;
   }
 
-  BUF_strlcpy(out_identity, config->psk_identity.c_str(), max_identity_len);
+  OPENSSL_strlcpy(out_identity, config->psk_identity.c_str(), max_identity_len);
   OPENSSL_memcpy(out_psk, config->psk.data(), config->psk.size());
   return config->psk.size();
 }
