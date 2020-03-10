@@ -113,6 +113,17 @@ cc_object {
             ],
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "com.android.art.debug",
+        "com.android.art.release",
+        "com.android.art.testing",
+        "com.android.bluetooth.updatable",
+        "com.android.conscrypt",
+        "com.android.media",
+        "com.android.resolv",
+    ],
 }
 
 bootstrap_go_package {
@@ -184,7 +195,13 @@ cc_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
-        "test_com.android.adbd",
+        "com.android.art.debug",
+        "com.android.art.release",
+        "com.android.art.testing",
+        "com.android.bluetooth.updatable",
+        "com.android.conscrypt",
+        "com.android.media",
+        "com.android.resolv",
     ],
 }
 
@@ -219,7 +236,6 @@ cc_library_static {
     apex_available: [
         "//apex_available:platform",
         "com.android.neuralnetworks",
-        "test_com.android.neuralnetworks",
     ],
     defaults: [
         "libcrypto_bcm_sources",
@@ -262,7 +278,8 @@ cc_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
-        "test_com.android.adbd",
+        "com.android.conscrypt",
+        "com.android.resolv",
     ],
 }
 
