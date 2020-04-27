@@ -43,6 +43,7 @@ cc_binary {
         "//apex_available:platform",
         "com.android.conscrypt",
     ],
+    min_sdk_version: "29",
 }
 
 cc_binary {
