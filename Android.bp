@@ -183,6 +183,12 @@ cc_library {
             cflags: [
                 "-DBORINGSSL_FIPS",
             ],
+            sanitize: {
+                // Disable address sanitizing otherwise libcrypto will not report
+                // itself as being in FIPS mode, which causes boringssl_self_test
+                // to fail.
+                address: false,
+            },
             inject_bssl_hash: true,
             static: {
                 // Disable the static version of libcrypto, as it causes
