@@ -89,7 +89,11 @@ cc_object {
         fuzzer: false,
     },
     target: {
+        not_windows: {
+            header_libs: ["libc_headers"], // TODO(b/153662223): Clean this up.
+        },
         android: {
+            header_libs: ["libc_headers"], // TODO(b/153662223): Clean this up.
             cflags: [
                 "-DBORINGSSL_FIPS",
                 "-fPIC",
