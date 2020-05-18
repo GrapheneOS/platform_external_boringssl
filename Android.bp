@@ -317,6 +317,14 @@ cc_binary {
         darwin: {
             enabled: false,
         },
+        android: {
+            compile_multilib: "both",
+        },
+    },
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
     },
 }
 
@@ -344,6 +352,16 @@ cc_binary {
         "src/util/fipstools/cavp/cavp_test_util.cc",
         "src/util/fipstools/cavp/cavp_tlskdf_test.cc",
     ],
+    target: {
+        android: {
+            compile_multilib: "both",
+        },
+    },
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+    },
 
     shared_libs: [
         "libcrypto",
