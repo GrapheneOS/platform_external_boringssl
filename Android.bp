@@ -67,6 +67,12 @@ cc_defaults {
         host: {
             host_ldlibs: ["-lpthread"],
         },
+        android: {
+            // On FIPS builds (i.e. Android only) prevent other libraries
+            // from pre-empting symbols in libcrypto which could affect FIPS
+            // compliance and cause integrity checks to fail. See b/160231064.
+            ldflags: ["-Wl,-Bsymbolic"],
+        },
     },
 
     local_include_dirs: ["src/crypto"],
