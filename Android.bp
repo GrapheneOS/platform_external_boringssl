@@ -95,7 +95,7 @@ cc_object {
         fuzzer: false,
     },
     target: {
-        not_windows: {
+        linux_bionic: {
             header_libs: ["libc_headers"], // TODO(b/153662223): Clean this up.
         },
         android: {
