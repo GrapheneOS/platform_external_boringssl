@@ -82,21 +82,14 @@ var sdeCPUs = []string{
 	"ivb", // Ivy Bridge
 	"hsw", // Haswell
 	"bdw", // Broadwell
+	"skx", // Skylake Server
+	"skl", // Skylake Client
+	"cnl", // Cannonlake
+	"knl", // Knights Landing
 	"slt", // Saltwell
 	"slm", // Silvermont
 	"glm", // Goldmont
-	"glp", // Goldmont Plus
-	"tnt", // Tremont
-	"skl", // Skylake
-	"cnl", // Cannon Lake
-	"icl", // Ice Lake
-	"skx", // Skylake server
-	"clx", // Cascade Lake
-	"cpx", // Cooper Lake
-	"icx", // Ice Lake server
-	"knl", // Knights landing
-	"knm", // Knights mill
-	"tgl", // Tiger Lake
+	"knm", // Knights Mill
 }
 
 var armCPUs = []string{

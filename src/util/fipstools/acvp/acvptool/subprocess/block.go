@@ -26,6 +26,7 @@ type blockCipher struct {
 	algo      string
 	blockSize int
 	hasIV     bool
+	m         *Subprocess
 }
 
 type blockCipherVectorSet struct {
@@ -65,7 +66,7 @@ type blockCipherMCTResult struct {
 	IVHex         string `json:"iv,omitempty"`
 }
 
-func (b *blockCipher) Process(vectorSet []byte, m Transactable) (interface{}, error) {
+func (b *blockCipher) Process(vectorSet []byte) (interface{}, error) {
 	var parsed blockCipherVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -152,9 +153,9 @@ func (b *blockCipher) Process(vectorSet []byte, m Transactable) (interface{}, er
 				var err error
 
 				if b.hasIV {
-					result, err = m.Transact(op, 1, key, input, iv)
+					result, err = b.m.transact(op, 1, key, input, iv)
 				} else {
-					result, err = m.Transact(op, 1, key, input)
+					result, err = b.m.transact(op, 1, key, input)
 				}
 				if err != nil {
 					panic("block operation failed: " + err.Error())
@@ -179,7 +180,7 @@ func (b *blockCipher) Process(vectorSet []byte, m Transactable) (interface{}, er
 					if !b.hasIV {
 						for j := 0; j < 1000; j++ {
 							prevResult = input
-							result, err := m.Transact(op, 1, key, input)
+							result, err := b.m.transact(op, 1, key, input)
 							if err != nil {
 								panic("block operation failed")
 							}
@@ -200,7 +201,7 @@ func (b *blockCipher) Process(vectorSet []byte, m Transactable) (interface{}, er
 								}
 							}
 
-							results, err := m.Transact(op, 1, key, input, iv)
+							results, err := b.m.transact(op, 1, key, input, iv)
 							if err != nil {
 								panic("block operation failed")
 							}
