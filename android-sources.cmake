@@ -88,7 +88,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/cpu-intel.c
   ${BORINGSSL_ROOT}src/crypto/cpu-ppc64le.c
   ${BORINGSSL_ROOT}src/crypto/crypto.c
-  ${BORINGSSL_ROOT}src/crypto/curve25519/curve25519.c
   ${BORINGSSL_ROOT}src/crypto/curve25519/spake25519.c
   ${BORINGSSL_ROOT}src/crypto/dh/check.c
   ${BORINGSSL_ROOT}src/crypto/dh/dh.c
@@ -99,7 +98,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/ec_extra/ec_asn1.c
   ${BORINGSSL_ROOT}src/crypto/ec_extra/ec_derive.c
-  ${BORINGSSL_ROOT}src/crypto/ec_extra/hash_to_curve.c
   ${BORINGSSL_ROOT}src/crypto/ecdh_extra/ecdh_extra.c
   ${BORINGSSL_ROOT}src/crypto/ecdsa_extra/ecdsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/engine/engine.c
@@ -126,7 +124,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/fips_shared_support.c
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/is_fips.c
   ${BORINGSSL_ROOT}src/crypto/hkdf/hkdf.c
-  ${BORINGSSL_ROOT}src/crypto/hpke/hpke.c
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss.c
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash.c
   ${BORINGSSL_ROOT}src/crypto/mem.c
@@ -165,8 +162,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/thread_none.c
   ${BORINGSSL_ROOT}src/crypto/thread_pthread.c
   ${BORINGSSL_ROOT}src/crypto/thread_win.c
-  ${BORINGSSL_ROOT}src/crypto/trust_token/pmbtoken.c
-  ${BORINGSSL_ROOT}src/crypto/trust_token/trust_token.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_digest.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_sign.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_strex.c
@@ -249,6 +244,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/x509v3/v3_skey.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/v3_sxnet.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/v3_utl.c
+  ${BORINGSSL_ROOT}src/third_party/fiat/curve25519.c
 )
 set(ssl_sources
   ${BORINGSSL_ROOT}src/ssl/bio_ssl.cc
@@ -294,7 +290,6 @@ set(tool_sources
   ${BORINGSSL_ROOT}src/tool/client.cc
   ${BORINGSSL_ROOT}src/tool/const.cc
   ${BORINGSSL_ROOT}src/tool/digest.cc
-  ${BORINGSSL_ROOT}src/tool/fd.cc
   ${BORINGSSL_ROOT}src/tool/file.cc
   ${BORINGSSL_ROOT}src/tool/generate_ed25519.cc
   ${BORINGSSL_ROOT}src/tool/genrsa.cc
@@ -347,11 +342,9 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/md5/md5_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/modes/gcm_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/rand/ctrdrbg_test.cc
-  ${BORINGSSL_ROOT}src/crypto/fipsmodule/rand/fork_detect_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/sha/sha_test.cc
   ${BORINGSSL_ROOT}src/crypto/hkdf/hkdf_test.cc
   ${BORINGSSL_ROOT}src/crypto/hmac_extra/hmac_test.cc
-  ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test.cc
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss_test.cc
   ${BORINGSSL_ROOT}src/crypto/impl_dispatch_test.cc
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash_test.cc
@@ -372,7 +365,6 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/test/file_test_gtest.cc
   ${BORINGSSL_ROOT}src/crypto/test/gtest_main.cc
   ${BORINGSSL_ROOT}src/crypto/thread_test.cc
-  ${BORINGSSL_ROOT}src/crypto/trust_token/trust_token_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_time_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509v3/tab_test.cc
