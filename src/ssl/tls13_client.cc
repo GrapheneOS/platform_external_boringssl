@@ -75,24 +75,20 @@ static bool close_early_data(SSL_HANDSHAKE *hs, ssl_encryption_level_t level) {
   // We do not currently implement DTLS 1.3 and, in QUIC, the caller handles
   // 0-RTT data, so we can skip installing 0-RTT keys and act as if there is one
   // write level. If we implement DTLS 1.3, we'll need to model this better.
-  if (ssl->quic_method == nullptr) {
-    if (level == ssl_encryption_initial) {
-      bssl::UniquePtr<SSLAEADContext> null_ctx =
-          SSLAEADContext::CreateNullCipher(SSL_is_dtls(ssl));
-      if (!null_ctx ||
-          !ssl->method->set_write_state(ssl, ssl_encryption_initial,
-                                        std::move(null_ctx),
-                                        /*secret_for_quic=*/{})) {
-        return false;
-      }
-      ssl->s3->aead_write_ctx->SetVersionIfNullCipher(ssl->version);
-    } else {
-      assert(level == ssl_encryption_handshake);
-      if (!tls13_set_traffic_key(ssl, ssl_encryption_handshake, evp_aead_seal,
-                                 hs->new_session.get(),
-                                 hs->client_handshake_secret())) {
-        return false;
-      }
+  if (level == ssl_encryption_initial) {
+    bssl::UniquePtr<SSLAEADContext> null_ctx =
+        SSLAEADContext::CreateNullCipher(SSL_is_dtls(ssl));
+    if (!null_ctx || !ssl->method->set_write_state(ssl, ssl_encryption_initial,
+                                                   std::move(null_ctx))) {
+      return false;
+    }
+    ssl->s3->aead_write_ctx->SetVersionIfNullCipher(ssl->version);
+  } else {
+    assert(level == ssl_encryption_handshake);
+    if (!tls13_set_traffic_key(ssl, ssl_encryption_handshake, evp_aead_seal,
+                               hs->new_session.get(),
+                               hs->client_handshake_secret())) {
+      return false;
     }
   }
 
@@ -441,26 +437,23 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
 
   if (!tls13_advance_key_schedule(hs, dhe_secret) ||
       !ssl_hash_message(hs, msg) ||
-      !tls13_derive_handshake_secrets(hs)) {
+      !tls13_derive_handshake_secrets(hs) ||
+      !tls13_set_traffic_key(ssl, ssl_encryption_handshake, evp_aead_open,
+                             hs->new_session.get(),
+                             hs->server_handshake_secret())) {
     return ssl_hs_error;
   }
 
-  // If currently sending early data over TCP, we defer installing client
-  // traffic keys to when the early data stream is closed. See
-  // |close_early_data|. Note if the server has already rejected 0-RTT via
-  // HelloRetryRequest, |in_early_data| is already false.
-  if (!hs->in_early_data || ssl->quic_method != nullptr) {
+  // If currently sending early data, we defer installing client traffic keys to
+  // when the early data stream is closed. See |close_early_data|. Note if the
+  // server has already rejected 0-RTT via HelloRetryRequest, |in_early_data| is
+  // already false.
+  if (!hs->in_early_data) {
     if (!tls13_set_traffic_key(ssl, ssl_encryption_handshake, evp_aead_seal,
                                hs->new_session.get(),
                                hs->client_handshake_secret())) {
       return ssl_hs_error;
     }
-  }
-
-  if (!tls13_set_traffic_key(ssl, ssl_encryption_handshake, evp_aead_open,
-                             hs->new_session.get(),
-                             hs->server_handshake_secret())) {
-    return ssl_hs_error;
   }
 
   ssl->method->next_message(ssl);
@@ -810,12 +803,12 @@ static enum ssl_hs_wait_t do_complete_second_flight(SSL_HANDSHAKE *hs) {
   }
 
   // Derive the final keys and enable them.
-  if (!tls13_set_traffic_key(ssl, ssl_encryption_application, evp_aead_seal,
-                             hs->new_session.get(),
-                             hs->client_traffic_secret_0()) ||
-      !tls13_set_traffic_key(ssl, ssl_encryption_application, evp_aead_open,
+  if (!tls13_set_traffic_key(ssl, ssl_encryption_application, evp_aead_open,
                              hs->new_session.get(),
                              hs->server_traffic_secret_0()) ||
+      !tls13_set_traffic_key(ssl, ssl_encryption_application, evp_aead_seal,
+                             hs->new_session.get(),
+                             hs->client_traffic_secret_0()) ||
       !tls13_derive_resumption_secret(hs)) {
     return ssl_hs_error;
   }
@@ -931,43 +924,26 @@ bool tls13_process_new_session_ticket(SSL *ssl, const SSLMessage &msg) {
     return true;
   }
 
-  CBS body = msg.body;
-  UniquePtr<SSL_SESSION> session = tls13_create_session_with_ticket(ssl, &body);
-  if (!session) {
-    return false;
-  }
-
-  if ((ssl->session_ctx->session_cache_mode & SSL_SESS_CACHE_CLIENT) &&
-      ssl->session_ctx->new_session_cb != NULL &&
-      ssl->session_ctx->new_session_cb(ssl, session.get())) {
-    // |new_session_cb|'s return value signals that it took ownership.
-    session.release();
-  }
-
-  return true;
-}
-
-UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
   UniquePtr<SSL_SESSION> session = SSL_SESSION_dup(
       ssl->s3->established_session.get(), SSL_SESSION_INCLUDE_NONAUTH);
   if (!session) {
-    return nullptr;
+    return false;
   }
 
   ssl_session_rebase_time(ssl, session.get());
 
   uint32_t server_timeout;
-  CBS ticket_nonce, ticket, extensions;
-  if (!CBS_get_u32(body, &server_timeout) ||
-      !CBS_get_u32(body, &session->ticket_age_add) ||
-      !CBS_get_u8_length_prefixed(body, &ticket_nonce) ||
-      !CBS_get_u16_length_prefixed(body, &ticket) ||
+  CBS body = msg.body, ticket_nonce, ticket, extensions;
+  if (!CBS_get_u32(&body, &server_timeout) ||
+      !CBS_get_u32(&body, &session->ticket_age_add) ||
+      !CBS_get_u8_length_prefixed(&body, &ticket_nonce) ||
+      !CBS_get_u16_length_prefixed(&body, &ticket) ||
       !session->ticket.CopyFrom(ticket) ||
-      !CBS_get_u16_length_prefixed(body, &extensions) ||
-      CBS_len(body) != 0) {
+      !CBS_get_u16_length_prefixed(&body, &extensions) ||
+      CBS_len(&body) != 0) {
     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
     OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
-    return nullptr;
+    return false;
   }
 
   // Cap the renewable lifetime by the server advertised value. This avoids
@@ -977,7 +953,7 @@ UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
   }
 
   if (!tls13_derive_session_psk(session.get(), ticket_nonce)) {
-    return nullptr;
+    return false;
   }
 
   // Parse out the extensions.
@@ -992,7 +968,7 @@ UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
                             OPENSSL_ARRAY_SIZE(ext_types),
                             1 /* ignore unknown */)) {
     ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
-    return nullptr;
+    return false;
   }
 
   if (have_early_data) {
@@ -1000,7 +976,7 @@ UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
         CBS_len(&early_data) != 0) {
       ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
       OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
-      return nullptr;
+      return false;
     }
 
     // QUIC does not use the max_early_data_size parameter and always sets it to
@@ -1009,7 +985,7 @@ UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
         session->ticket_max_early_data != 0xffffffff) {
       ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
       OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
-      return nullptr;
+      return false;
     }
   }
 
@@ -1021,7 +997,14 @@ UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
   session->ticket_age_add_valid = true;
   session->not_resumable = false;
 
-  return session;
+  if ((ssl->session_ctx->session_cache_mode & SSL_SESS_CACHE_CLIENT) &&
+      ssl->session_ctx->new_session_cb != NULL &&
+      ssl->session_ctx->new_session_cb(ssl, session.get())) {
+    // |new_session_cb|'s return value signals that it took ownership.
+    session.release();
+  }
+
+  return true;
 }
 
 BSSL_NAMESPACE_END

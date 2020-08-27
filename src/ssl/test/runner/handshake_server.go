@@ -299,9 +299,6 @@ func (hs *serverHandshakeState) readClientHello() error {
 		}
 	}
 
-	if config.Bugs.MockQUICTransport != nil && len(hs.clientHello.sessionId) > 0 {
-		return fmt.Errorf("tls: QUIC client did not disable compatibility mode")
-	}
 	if config.Bugs.ExpectNoTLS12Session {
 		if len(hs.clientHello.sessionId) > 0 && c.vers >= VersionTLS13 {
 			return fmt.Errorf("tls: client offered an unexpected session ID")
@@ -624,7 +621,7 @@ ResendHelloRetryRequest:
 		}
 
 		if hs.clientHello.hasEarlyData {
-			c.setSkipEarlyData()
+			c.skipEarlyData = true
 		}
 
 		// Read new ClientHello.
@@ -740,7 +737,7 @@ ResendHelloRetryRequest:
 				c.input = nil
 			}
 		} else {
-			c.setSkipEarlyData()
+			c.skipEarlyData = true
 		}
 	}
 
@@ -991,7 +988,7 @@ ResendHelloRetryRequest:
 	}
 	c.flushHandshake()
 
-	if encryptedExtensions.extensions.hasEarlyData && !c.shouldSkipEarlyData() {
+	if encryptedExtensions.extensions.hasEarlyData && !c.skipEarlyData {
 		for _, expectedMsg := range config.Bugs.ExpectLateEarlyData {
 			if err := c.readRecord(recordTypeApplicationData); err != nil {
 				return err
@@ -1025,7 +1022,7 @@ ResendHelloRetryRequest:
 	}
 
 	// Read end_of_early_data.
-	if encryptedExtensions.extensions.hasEarlyData && config.Bugs.MockQUICTransport == nil {
+	if encryptedExtensions.extensions.hasEarlyData {
 		msg, err := c.readHandshake()
 		if err != nil {
 			return err

@@ -406,8 +406,7 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
         (ssl->session->session_id_length == 0 &&
          ssl->session->ticket.empty()) ||
         ssl->session->not_resumable ||
-        !ssl_session_is_time_valid(ssl, ssl->session.get()) ||
-        (ssl->quic_method != nullptr) != ssl->session->is_quic) {
+        !ssl_session_is_time_valid(ssl, ssl->session.get())) {
       ssl_set_session(ssl, NULL);
     }
   }
@@ -416,20 +415,17 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
     return ssl_hs_error;
   }
 
-  // Never send a session ID in QUIC. QUIC uses TLS 1.3 at a minimum and
-  // disables TLS 1.3 middlebox compatibility mode.
-  if (ssl->quic_method == nullptr) {
-    if (ssl->session != nullptr && !ssl->s3->initial_handshake_complete &&
-        ssl->session->session_id_length > 0) {
-      hs->session_id_len = ssl->session->session_id_length;
-      OPENSSL_memcpy(hs->session_id, ssl->session->session_id,
-                     hs->session_id_len);
-    } else if (hs->max_version >= TLS1_3_VERSION) {
-      // Initialize a random session ID.
-      hs->session_id_len = sizeof(hs->session_id);
-      if (!RAND_bytes(hs->session_id, hs->session_id_len)) {
-        return ssl_hs_error;
-      }
+  if (ssl->session != nullptr &&
+      !ssl->s3->initial_handshake_complete &&
+      ssl->session->session_id_length > 0) {
+    hs->session_id_len = ssl->session->session_id_length;
+    OPENSSL_memcpy(hs->session_id, ssl->session->session_id,
+                   hs->session_id_len);
+  } else if (hs->max_version >= TLS1_3_VERSION) {
+    // Initialize a random session ID.
+    hs->session_id_len = sizeof(hs->session_id);
+    if (!RAND_bytes(hs->session_id, hs->session_id_len)) {
+      return ssl_hs_error;
     }
   }
 
@@ -465,6 +461,11 @@ static enum ssl_hs_wait_t do_enter_early_data(SSL_HANDSHAKE *hs) {
       !tls13_derive_early_secret(hs)) {
     return ssl_hs_error;
   }
+  if (ssl->quic_method == nullptr &&
+      !tls13_set_traffic_key(ssl, ssl_encryption_early_data, evp_aead_seal,
+                             ssl->session.get(), hs->early_traffic_secret())) {
+    return ssl_hs_error;
+  }
 
   // Stash the early data session, so connection properties may be queried out
   // of it.
@@ -495,9 +496,7 @@ static enum ssl_hs_wait_t do_early_reverify_server_certificate(SSL_HANDSHAKE *hs
 
   // Defer releasing the 0-RTT key to after certificate reverification, so the
   // QUIC implementation does not accidentally write data too early.
-  if (!tls13_set_traffic_key(hs->ssl, ssl_encryption_early_data, evp_aead_seal,
-                             hs->early_session.get(),
-                             hs->early_traffic_secret())) {
+  if (!tls13_set_early_secret_for_quic(hs)) {
     return ssl_hs_error;
   }
 
@@ -1268,10 +1267,10 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
   uint32_t alg_k = hs->new_cipher->algorithm_mkey;
   uint32_t alg_a = hs->new_cipher->algorithm_auth;
   if (ssl_cipher_uses_certificate_auth(hs->new_cipher)) {
-    const CRYPTO_BUFFER *leaf =
+    CRYPTO_BUFFER *leaf =
         sk_CRYPTO_BUFFER_value(hs->new_session->certs.get(), 0);
     CBS leaf_cbs;
-    CRYPTO_BUFFER_init_CBS(leaf, &leaf_cbs);
+    CBS_init(&leaf_cbs, CRYPTO_BUFFER_data(leaf), CRYPTO_BUFFER_len(leaf));
 
     // Check the key usage matches the cipher suite. We do this unconditionally
     // for non-RSA certificates. In particular, it's needed to distinguish ECDH
