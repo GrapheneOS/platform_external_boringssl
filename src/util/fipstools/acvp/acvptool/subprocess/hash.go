@@ -60,18 +60,19 @@ type hashPrimitive struct {
 	algo string
 	// size is the number of bytes of digest that the hash produces.
 	size int
+	m    *Subprocess
 }
 
 // hash uses the subprocess to hash msg and returns the digest.
-func (h *hashPrimitive) hash(msg []byte, m Transactable) []byte {
-	result, err := m.Transact(h.algo, 1, msg)
+func (h *hashPrimitive) hash(msg []byte) []byte {
+	result, err := h.m.transact(h.algo, 1, msg)
 	if err != nil {
 		panic("hash operation failed: " + err.Error())
 	}
 	return result[0]
 }
 
-func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (interface{}, error) {
+func (h *hashPrimitive) Process(vectorSet []byte) (interface{}, error) {
 	var parsed hashTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -100,7 +101,7 @@ func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (interface{}, 
 			case "AFT":
 				response.Tests = append(response.Tests, hashTestResponse{
 					ID:        test.ID,
-					DigestHex: hex.EncodeToString(h.hash(msg, m)),
+					DigestHex: hex.EncodeToString(h.hash(msg)),
 				})
 
 			case "MCT":
@@ -117,7 +118,7 @@ func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (interface{}, 
 					copy(buf[h.size:], msg)
 					copy(buf[2*h.size:], msg)
 					for j := 0; j < 1000; j++ {
-						digest = h.hash(buf, m)
+						digest = h.hash(buf)
 						copy(buf, buf[h.size:])
 						copy(buf[2*h.size:], digest)
 					}
