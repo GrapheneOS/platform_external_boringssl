@@ -157,15 +157,12 @@ ___
 }
 
 $code .= <<___;
-#include <openssl/arm_arch.h>
-
 .text
 
 .global	gcm_init_neon
 .type	gcm_init_neon,%function
 .align	4
 gcm_init_neon:
-	AARCH64_VALID_CALL_TARGET
 	// This function is adapted from gcm_init_v8. xC2 is t3.
 	ld1	{$t1.2d}, [x1]			// load H
 	movi	$t3.16b, #0xe1
@@ -190,7 +187,6 @@ gcm_init_neon:
 .type	gcm_gmult_neon,%function
 .align	4
 gcm_gmult_neon:
-	AARCH64_VALID_CALL_TARGET
 	ld1	{$INlo.16b}, [$Xi]		// load Xi
 	ld1	{$Hlo.1d}, [$Htbl], #8		// load twisted H
 	ld1	{$Hhi.1d}, [$Htbl]
@@ -209,7 +205,6 @@ gcm_gmult_neon:
 .type	gcm_ghash_neon,%function
 .align	4
 gcm_ghash_neon:
-	AARCH64_VALID_CALL_TARGET
 	ld1	{$Xl.16b}, [$Xi]		// load Xi
 	ld1	{$Hlo.1d}, [$Htbl], #8		// load twisted H
 	ld1	{$Hhi.1d}, [$Htbl]
