@@ -27,7 +27,6 @@
 #include <openssl/mem.h>
 
 #include "internal.h"
-#include "fork_detect.h"
 #include "../../internal.h"
 #include "../delocate.h"
 
@@ -58,7 +57,6 @@ static const unsigned kReseedInterval = 4096;
 // rand_thread_state contains the per-thread state for the RNG.
 struct rand_thread_state {
   CTR_DRBG_STATE drbg;
-  uint64_t fork_generation;
   // calls is the number of generate calls made on |drbg| since it was last
   // (re)seeded. This is bound by |kReseedInterval|.
   unsigned calls;
@@ -127,9 +125,11 @@ static void rand_thread_state_free(void *state_in) {
 
 #if defined(OPENSSL_X86_64) && !defined(OPENSSL_NO_ASM) && \
     !defined(BORINGSSL_UNSAFE_DETERMINISTIC_MODE)
-// rdrand should only be called if either |have_rdrand| or |have_fast_rdrand|
-// returned true.
-static int rdrand(uint8_t *buf, const size_t len) {
+static int hwrand(uint8_t *buf, const size_t len) {
+  if (!have_rdrand()) {
+    return 0;
+  }
+
   const size_t len_multiple8 = len & ~7;
   if (!CRYPTO_rdrand_multiple8_buf(buf, len_multiple8)) {
     return 0;
@@ -157,7 +157,7 @@ static int rdrand(uint8_t *buf, const size_t len) {
 
 #else
 
-static int rdrand(uint8_t *buf, size_t len) {
+static int hwrand(uint8_t *buf, size_t len) {
   return 0;
 }
 
@@ -168,8 +168,7 @@ static int rdrand(uint8_t *buf, size_t len) {
 static void rand_get_seed(struct rand_thread_state *state,
                           uint8_t seed[CTR_DRBG_ENTROPY_LEN]) {
   if (!state->last_block_valid) {
-    if (!have_rdrand() ||
-        !rdrand(state->last_block, sizeof(state->last_block))) {
+    if (!hwrand(state->last_block, sizeof(state->last_block))) {
       CRYPTO_sysrand_for_seed(state->last_block, sizeof(state->last_block));
     }
     state->last_block_valid = 1;
@@ -180,8 +179,8 @@ static void rand_get_seed(struct rand_thread_state *state,
 #define FIPS_OVERREAD 10
   uint8_t entropy[CTR_DRBG_ENTROPY_LEN * FIPS_OVERREAD];
 
-  int used_rdrand = have_rdrand() && rdrand(entropy, sizeof(entropy));
-  if (!used_rdrand) {
+  int used_hwrand = hwrand(entropy, sizeof(entropy));
+  if (!used_hwrand) {
     CRYPTO_sysrand_for_seed(entropy, sizeof(entropy));
   }
 
@@ -216,7 +215,7 @@ static void rand_get_seed(struct rand_thread_state *state,
 #if defined(OPENSSL_URANDOM)
   // If we used RDRAND, also opportunistically read from the system. This avoids
   // solely relying on the hardware once the entropy pool has been initialized.
-  if (used_rdrand) {
+  if (used_hwrand) {
     CRYPTO_sysrand_if_available(entropy, CTR_DRBG_ENTROPY_LEN);
     for (size_t i = 0; i < CTR_DRBG_ENTROPY_LEN; i++) {
       seed[i] ^= entropy[i];
@@ -242,31 +241,20 @@ void RAND_bytes_with_additional_data(uint8_t *out, size_t out_len,
     return;
   }
 
-  const uint64_t fork_generation = CRYPTO_get_fork_generation();
-
   // Additional data is mixed into every CTR-DRBG call to protect, as best we
   // can, against forks & VM clones. We do not over-read this information and
   // don't reseed with it so, from the point of view of FIPS, this doesn't
   // provide “prediction resistance”. But, in practice, it does.
   uint8_t additional_data[32];
-  // Intel chips have fast RDRAND instructions while, in other cases, RDRAND can
-  // be _slower_ than a system call.
-  if (!have_fast_rdrand() ||
-      !rdrand(additional_data, sizeof(additional_data))) {
+  if (!hwrand(additional_data, sizeof(additional_data))) {
     // Without a hardware RNG to save us from address-space duplication, the OS
     // entropy is used. This can be expensive (one read per |RAND_bytes| call)
-    // and so is disabled when we have fork detection, or if the application has
-    // promised not to fork.
-    if (fork_generation != 0 || rand_fork_unsafe_buffering_enabled()) {
+    // and so can be disabled by applications that we have ensured don't fork
+    // and aren't at risk of VM cloning.
+    if (!rand_fork_unsafe_buffering_enabled()) {
+      CRYPTO_sysrand(additional_data, sizeof(additional_data));
+    } else {
       OPENSSL_memset(additional_data, 0, sizeof(additional_data));
-    } else if (!have_rdrand()) {
-      // No alternative so block for OS entropy.
-      CRYPTO_sysrand(additional_data, sizeof(additional_data));
-    } else if (!CRYPTO_sysrand_if_available(additional_data,
-                                            sizeof(additional_data)) &&
-               !rdrand(additional_data, sizeof(additional_data))) {
-      // RDRAND failed: block for OS entropy.
-      CRYPTO_sysrand(additional_data, sizeof(additional_data));
     }
   }
 
@@ -295,7 +283,6 @@ void RAND_bytes_with_additional_data(uint8_t *out, size_t out_len,
       abort();
     }
     state->calls = 0;
-    state->fork_generation = fork_generation;
 
 #if defined(BORINGSSL_FIPS)
     if (state != &stack_state) {
@@ -312,8 +299,7 @@ void RAND_bytes_with_additional_data(uint8_t *out, size_t out_len,
 #endif
   }
 
-  if (state->calls >= kReseedInterval ||
-      state->fork_generation != fork_generation) {
+  if (state->calls >= kReseedInterval) {
     uint8_t seed[CTR_DRBG_ENTROPY_LEN];
     rand_get_seed(state, seed);
 #if defined(BORINGSSL_FIPS)
@@ -331,7 +317,6 @@ void RAND_bytes_with_additional_data(uint8_t *out, size_t out_len,
       abort();
     }
     state->calls = 0;
-    state->fork_generation = fork_generation;
   } else {
 #if defined(BORINGSSL_FIPS)
     CRYPTO_STATIC_MUTEX_lock_read(thread_states_list_lock_bss_get());

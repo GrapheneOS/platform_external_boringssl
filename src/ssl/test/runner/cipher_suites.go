@@ -16,8 +16,6 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"hash"
-
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // a keyAgreement implements the client and server side of a TLS key agreement
@@ -307,7 +305,7 @@ func (x *xorNonceAEAD) Open(out, nonce, plaintext, additionalData []byte) ([]byt
 }
 
 func aeadCHACHA20POLY1305(version uint16, key, fixedNonce []byte) *tlsAead {
-	aead, err := chacha20poly1305.New(key)
+	aead, err := newChaCha20Poly1305(key)
 	if err != nil {
 		panic(err)
 	}

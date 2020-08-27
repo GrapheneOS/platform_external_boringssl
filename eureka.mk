@@ -86,7 +86,6 @@ crypto_sources := \
   src/crypto/cpu-intel.c\
   src/crypto/cpu-ppc64le.c\
   src/crypto/crypto.c\
-  src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\
   src/crypto/dh/check.c\
   src/crypto/dh/dh.c\
@@ -97,7 +96,6 @@ crypto_sources := \
   src/crypto/dsa/dsa_asn1.c\
   src/crypto/ec_extra/ec_asn1.c\
   src/crypto/ec_extra/ec_derive.c\
-  src/crypto/ec_extra/hash_to_curve.c\
   src/crypto/ecdh_extra/ecdh_extra.c\
   src/crypto/ecdsa_extra/ecdsa_asn1.c\
   src/crypto/engine/engine.c\
@@ -124,7 +122,6 @@ crypto_sources := \
   src/crypto/fipsmodule/fips_shared_support.c\
   src/crypto/fipsmodule/is_fips.c\
   src/crypto/hkdf/hkdf.c\
-  src/crypto/hpke/hpke.c\
   src/crypto/hrss/hrss.c\
   src/crypto/lhash/lhash.c\
   src/crypto/mem.c\
@@ -163,8 +160,6 @@ crypto_sources := \
   src/crypto/thread_none.c\
   src/crypto/thread_pthread.c\
   src/crypto/thread_win.c\
-  src/crypto/trust_token/pmbtoken.c\
-  src/crypto/trust_token/trust_token.c\
   src/crypto/x509/a_digest.c\
   src/crypto/x509/a_sign.c\
   src/crypto/x509/a_strex.c\
@@ -247,6 +242,7 @@ crypto_sources := \
   src/crypto/x509v3/v3_skey.c\
   src/crypto/x509v3/v3_sxnet.c\
   src/crypto/x509v3/v3_utl.c\
+  src/third_party/fiat/curve25519.c\
 
 ssl_sources := \
   src/ssl/bio_ssl.cc\
@@ -292,7 +288,6 @@ tool_sources := \
   src/tool/client.cc\
   src/tool/const.cc\
   src/tool/digest.cc\
-  src/tool/fd.cc\
   src/tool/file.cc\
   src/tool/generate_ed25519.cc\
   src/tool/genrsa.cc\
