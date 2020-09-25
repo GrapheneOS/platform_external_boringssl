@@ -66,11 +66,12 @@ MODULE_ASMFLAGS += $(MODULE_STATIC_ARMCAP)
 
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES))
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_C_INCLUDES := src/crypto src/include
 
-GLOBAL_INCLUDES += $(addprefix $(LOCAL_DIR)/,$(LOCAL_C_INCLUDES))
+MODULE_INCLUDES += $(LOCAL_DIR)/src/crypto
 
-MODULE_DEPS := \
-	lib/openssl-stubs \
+MODULE_EXPORT_INCLUDES += $(LOCAL_DIR)/src/include
 
-include make/module.mk
+MODULE_LIBRARY_DEPS += \
+	trusty/user/base/lib/openssl-stubs \
+
+include make/library.mk
