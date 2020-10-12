@@ -491,50 +491,6 @@ const (
 	npn  = 2
 )
 
-// connectionExpectations contains connection-level test expectations to check
-// on the runner side.
-type connectionExpectations struct {
-	// version, if non-zero, specifies the TLS version that must be negotiated.
-	version uint16
-	// cipher, if non-zero, specifies the TLS cipher suite that should be
-	// negotiated.
-	cipher uint16
-	// channelID controls whether the connection should have negotiated a
-	// Channel ID with channelIDKey.
-	channelID bool
-	// tokenBinding controls whether the connection should have negotiated Token
-	// Binding.
-	tokenBinding bool
-	// tokenBindingParam is the Token Binding parameter that should have been
-	// negotiated (if tokenBinding is true).
-	tokenBindingParam uint8
-	// nextProto controls whether the connection should negotiate a next
-	// protocol via NPN or ALPN.
-	nextProto string
-	// noNextProto, if true, means that no next protocol should be negotiated.
-	noNextProto bool
-	// nextProtoType, if non-zero, is the next protocol negotiation mechanism.
-	nextProtoType int
-	// srtpProtectionProfile is the DTLS-SRTP profile that should be negotiated.
-	// If zero, none should be negotiated.
-	srtpProtectionProfile uint16
-	// ocspResponse, if not nil, is the OCSP response to be received.
-	ocspResponse []uint8
-	// sctList, if not nil, is the SCT list to be received.
-	sctList []uint8
-	// peerSignatureAlgorithm, if not zero, is the signature algorithm that the
-	// peer should have used in the handshake.
-	peerSignatureAlgorithm signatureAlgorithm
-	// curveID, if not zero, is the curve that the handshake should have used.
-	curveID CurveID
-	// peerCertificate, if not nil, is the certificate chain the peer is
-	// expected to send.
-	peerCertificate *Certificate
-	// quicTransportParams contains the QUIC transport parameters that are to be
-	// sent by the peer.
-	quicTransportParams []byte
-}
-
 type testCase struct {
 	testType      testType
 	protocol      protocol
@@ -545,12 +501,46 @@ type testCase struct {
 	// expectedLocalError, if not empty, contains a substring that must be
 	// found in the local error.
 	expectedLocalError string
-	// expectations contains test expectations for the initial
-	// connection.
-	expectations connectionExpectations
-	// resumeExpectations, if non-nil, contains test expectations for the
-	// resumption connection. If nil, |expectations| is used.
-	resumeExpectations *connectionExpectations
+	// expectedVersion, if non-zero, specifies the TLS version that must be
+	// negotiated.
+	expectedVersion uint16
+	// expectedResumeVersion, if non-zero, specifies the TLS version that
+	// must be negotiated on resumption. If zero, expectedVersion is used.
+	expectedResumeVersion uint16
+	// expectedCipher, if non-zero, specifies the TLS cipher suite that
+	// should be negotiated.
+	expectedCipher uint16
+	// expectChannelID controls whether the connection should have
+	// negotiated a Channel ID with channelIDKey.
+	expectChannelID bool
+	// expectTokenBinding controls whether the connection should have
+	// negotiated Token Binding.
+	expectTokenBinding bool
+	// expectedTokenBindingParam is the Token Binding parameter that should
+	// have been negotiated (if expectTokenBinding is true).
+	expectedTokenBindingParam uint8
+	// expectedNextProto controls whether the connection should
+	// negotiate a next protocol via NPN or ALPN.
+	expectedNextProto string
+	// expectNoNextProto, if true, means that no next protocol should be
+	// negotiated.
+	expectNoNextProto bool
+	// expectedNextProtoType, if non-zero, is the expected next
+	// protocol negotiation mechanism.
+	expectedNextProtoType int
+	// expectedSRTPProtectionProfile is the DTLS-SRTP profile that
+	// should be negotiated. If zero, none should be negotiated.
+	expectedSRTPProtectionProfile uint16
+	// expectedOCSPResponse, if not nil, is the expected OCSP response to be received.
+	expectedOCSPResponse []uint8
+	// expectedSCTList, if not nil, is the expected SCT list to be received.
+	expectedSCTList []uint8
+	// expectedPeerSignatureAlgorithm, if not zero, is the signature
+	// algorithm that the peer should have used in the handshake.
+	expectedPeerSignatureAlgorithm signatureAlgorithm
+	// expectedCurveID, if not zero, is the curve that the handshake should
+	// have used.
+	expectedCurveID CurveID
 	// messageLen is the length, in bytes, of the test message that will be
 	// sent.
 	messageLen int
@@ -649,11 +639,17 @@ type testCase struct {
 	// expectMessageDropped, if true, means the test message is expected to
 	// be dropped by the client rather than echoed back.
 	expectMessageDropped bool
+	// expectPeerCertificate, if not nil, is the certificate chain the peer
+	// is expected to send.
+	expectPeerCertificate *Certificate
 	// shimPrefix is the prefix that the shim will send to the server.
 	shimPrefix string
 	// resumeShimPrefix is the prefix that the shim will send to the server on a
 	// resumption.
 	resumeShimPrefix string
+	// expectedQUICTransportParams contains the QUIC transport
+	// parameters that are expected to be sent by the peer.
+	expectedQUICTransportParams []byte
 	// exportTrafficSecrets, if true, configures the test to export the TLS 1.3
 	// traffic secrets and confirms that they match.
 	exportTrafficSecrets bool
@@ -823,23 +819,26 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 		return err
 	}
 
-	expectations := &test.expectations
-	if isResume && test.resumeExpectations != nil {
-		expectations = test.resumeExpectations
+	// TODO(davidben): move all per-connection expectations into a dedicated
+	// expectations struct that can be specified separately for the two
+	// legs.
+	expectedVersion := test.expectedVersion
+	if isResume && test.expectedResumeVersion != 0 {
+		expectedVersion = test.expectedResumeVersion
 	}
 	connState := tlsConn.ConnectionState()
-	if vers := connState.Version; expectations.version != 0 && vers != expectations.version {
-		return fmt.Errorf("got version %x, expected %x", vers, expectations.version)
+	if vers := connState.Version; expectedVersion != 0 && vers != expectedVersion {
+		return fmt.Errorf("got version %x, expected %x", vers, expectedVersion)
 	}
 
-	if cipher := connState.CipherSuite; expectations.cipher != 0 && cipher != expectations.cipher {
-		return fmt.Errorf("got cipher %x, expected %x", cipher, expectations.cipher)
+	if cipher := connState.CipherSuite; test.expectedCipher != 0 && cipher != test.expectedCipher {
+		return fmt.Errorf("got cipher %x, expected %x", cipher, test.expectedCipher)
 	}
 	if didResume := connState.DidResume; isResume && didResume == test.expectResumeRejected {
 		return fmt.Errorf("didResume is %t, but we expected the opposite", didResume)
 	}
 
-	if expectations.channelID {
+	if test.expectChannelID {
 		channelID := connState.ChannelID
 		if channelID == nil {
 			return fmt.Errorf("no channel ID negotiated")
@@ -853,68 +852,68 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 		return fmt.Errorf("channel ID unexpectedly negotiated")
 	}
 
-	if expectations.tokenBinding {
+	if test.expectTokenBinding {
 		if !connState.TokenBindingNegotiated {
 			return errors.New("no Token Binding negotiated")
 		}
-		if connState.TokenBindingParam != expectations.tokenBindingParam {
-			return fmt.Errorf("expected param %02x, but got %02x", expectations.tokenBindingParam, connState.TokenBindingParam)
+		if connState.TokenBindingParam != test.expectedTokenBindingParam {
+			return fmt.Errorf("expected param %02x, but got %02x", test.expectedTokenBindingParam, connState.TokenBindingParam)
 		}
 	} else if connState.TokenBindingNegotiated {
 		return errors.New("Token Binding unexpectedly negotiated")
 	}
 
-	if expected := expectations.nextProto; expected != "" {
+	if expected := test.expectedNextProto; expected != "" {
 		if actual := connState.NegotiatedProtocol; actual != expected {
 			return fmt.Errorf("next proto mismatch: got %s, wanted %s", actual, expected)
 		}
 	}
 
-	if expectations.noNextProto {
+	if test.expectNoNextProto {
 		if actual := connState.NegotiatedProtocol; actual != "" {
 			return fmt.Errorf("got unexpected next proto %s", actual)
 		}
 	}
 
-	if expectations.nextProtoType != 0 {
-		if (expectations.nextProtoType == alpn) != connState.NegotiatedProtocolFromALPN {
+	if test.expectedNextProtoType != 0 {
+		if (test.expectedNextProtoType == alpn) != connState.NegotiatedProtocolFromALPN {
 			return fmt.Errorf("next proto type mismatch")
 		}
 	}
 
-	if p := connState.SRTPProtectionProfile; p != expectations.srtpProtectionProfile {
-		return fmt.Errorf("SRTP profile mismatch: got %d, wanted %d", p, expectations.srtpProtectionProfile)
+	if p := connState.SRTPProtectionProfile; p != test.expectedSRTPProtectionProfile {
+		return fmt.Errorf("SRTP profile mismatch: got %d, wanted %d", p, test.expectedSRTPProtectionProfile)
 	}
 
-	if expectations.ocspResponse != nil && !bytes.Equal(expectations.ocspResponse, connState.OCSPResponse) {
-		return fmt.Errorf("OCSP Response mismatch: got %x, wanted %x", connState.OCSPResponse, expectations.ocspResponse)
+	if test.expectedOCSPResponse != nil && !bytes.Equal(test.expectedOCSPResponse, tlsConn.OCSPResponse()) {
+		return fmt.Errorf("OCSP Response mismatch: got %x, wanted %x", tlsConn.OCSPResponse(), test.expectedOCSPResponse)
 	}
 
-	if expectations.sctList != nil && !bytes.Equal(expectations.sctList, connState.SCTList) {
+	if test.expectedSCTList != nil && !bytes.Equal(test.expectedSCTList, connState.SCTList) {
 		return fmt.Errorf("SCT list mismatch")
 	}
 
-	if expected := expectations.peerSignatureAlgorithm; expected != 0 && expected != connState.PeerSignatureAlgorithm {
+	if expected := test.expectedPeerSignatureAlgorithm; expected != 0 && expected != connState.PeerSignatureAlgorithm {
 		return fmt.Errorf("expected peer to use signature algorithm %04x, but got %04x", expected, connState.PeerSignatureAlgorithm)
 	}
 
-	if expected := expectations.curveID; expected != 0 && expected != connState.CurveID {
+	if expected := test.expectedCurveID; expected != 0 && expected != connState.CurveID {
 		return fmt.Errorf("expected peer to use curve %04x, but got %04x", expected, connState.CurveID)
 	}
 
-	if expectations.peerCertificate != nil {
-		if len(connState.PeerCertificates) != len(expectations.peerCertificate.Certificate) {
-			return fmt.Errorf("expected peer to send %d certificates, but got %d", len(connState.PeerCertificates), len(expectations.peerCertificate.Certificate))
+	if test.expectPeerCertificate != nil {
+		if len(connState.PeerCertificates) != len(test.expectPeerCertificate.Certificate) {
+			return fmt.Errorf("expected peer to send %d certificates, but got %d", len(connState.PeerCertificates), len(test.expectPeerCertificate.Certificate))
 		}
 		for i, cert := range connState.PeerCertificates {
-			if !bytes.Equal(cert.Raw, expectations.peerCertificate.Certificate[i]) {
+			if !bytes.Equal(cert.Raw, test.expectPeerCertificate.Certificate[i]) {
 				return fmt.Errorf("peer certificate %d did not match", i+1)
 			}
 		}
 	}
 
-	if len(expectations.quicTransportParams) > 0 {
-		if !bytes.Equal(expectations.quicTransportParams, connState.QUICTransportParams) {
+	if len(test.expectedQUICTransportParams) > 0 {
+		if !bytes.Equal(test.expectedQUICTransportParams, connState.QUICTransportParams) {
 			return errors.New("Peer did not send expected QUIC transport params")
 		}
 	}
@@ -1229,7 +1228,7 @@ func runTest(statusChan chan statusMsg, test *testCase, shimPath string, mallocN
 			continue
 		}
 
-		if test.config.MaxVersion == 0 && test.config.MinVersion == 0 && test.expectations.version == 0 {
+		if test.config.MaxVersion == 0 && test.config.MinVersion == 0 && test.expectedVersion == 0 {
 			panic(fmt.Sprintf("The name of test %q suggests that it's version specific, but min/max version in the Config is %x/%x. One of them should probably be %x", test.name, test.config.MinVersion, test.config.MaxVersion, ver.version))
 		}
 	}
@@ -1275,10 +1274,7 @@ func runTest(statusChan chan statusMsg, test *testCase, shimPath string, mallocN
 			if test.resumeConfig != nil {
 				test.resumeConfig.QUICTransportParams = []byte{1, 2}
 			}
-			test.expectations.quicTransportParams = []byte{3, 4}
-			if test.resumeExpectations != nil {
-				test.resumeExpectations.quicTransportParams = []byte{3, 4}
-			}
+			test.expectedQUICTransportParams = []byte{3, 4}
 			flags = append(flags,
 				[]string{
 					"-quic-transport-params",
@@ -1298,12 +1294,8 @@ func runTest(statusChan chan statusMsg, test *testCase, shimPath string, mallocN
 			if test.resumeConfig != nil {
 				test.resumeConfig.NextProtos = []string{"foo"}
 			}
-			test.expectations.nextProto = "foo"
-			test.expectations.nextProtoType = alpn
-			if test.resumeExpectations != nil {
-				test.resumeExpectations.nextProto = "foo"
-				test.resumeExpectations.nextProtoType = alpn
-			}
+			test.expectedNextProto = "foo"
+			test.expectedNextProtoType = alpn
 		}
 	}
 
@@ -1890,9 +1882,7 @@ read alert 1 0
 					SkipCertificateVerify: true,
 				},
 			},
-			expectations: connectionExpectations{
-				peerCertificate: &rsaChainCertificate,
-			},
+			expectPeerCertificate: &rsaChainCertificate,
 			flags: []string{
 				"-require-any-client-certificate",
 			},
@@ -2027,9 +2017,7 @@ read alert 1 0
 					FragmentClientVersion:    true,
 				},
 			},
-			expectations: connectionExpectations{
-				version: VersionTLS13,
-			},
+			expectedVersion: VersionTLS13,
 		},
 		{
 			testType:      serverTest,
@@ -3408,7 +3396,7 @@ read alert 1 0
 	// Servers should reject QUIC client hellos that have a legacy
 	// session ID.
 	testCases = append(testCases, testCase{
-		name:     "QUICCompatibilityMode",
+		name: "QUICCompatibilityMode",
 		testType: serverTest,
 		protocol: quic,
 		config: Config{
@@ -3417,7 +3405,7 @@ read alert 1 0
 				CompatModeWithQUIC: true,
 			},
 		},
-		shouldFail:    true,
+		shouldFail: true,
 		expectedError: ":UNEXPECTED_COMPATIBILITY_MODE:",
 	})
 }
@@ -3892,10 +3880,8 @@ func addCipherSuiteTests() {
 				MaxVersion:   VersionTLS12,
 				CipherSuites: t.ciphers,
 			},
-			flags: []string{"-cipher", negotiationTestCiphers},
-			expectations: connectionExpectations{
-				cipher: t.expected,
-			},
+			flags:          []string{"-cipher", negotiationTestCiphers},
+			expectedCipher: t.expected,
 		})
 	}
 }
@@ -4188,9 +4174,7 @@ func addClientAuthTests() {
 				MaxVersion: ver.version,
 				ChannelID:  channelIDKey,
 			},
-			expectations: connectionExpectations{
-				channelID: true,
-			},
+			expectChannelID: true,
 			flags: []string{
 				"-enable-channel-id",
 				"-verify-peer-if-no-obc",
@@ -5060,9 +5044,7 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 			config: Config{
 				MaxVersion: vers.version,
 			},
-			expectations: connectionExpectations{
-				ocspResponse: testOCSPResponse,
-			},
+			expectedOCSPResponse: testOCSPResponse,
 			flags: []string{
 				"-ocsp-response",
 				base64.StdEncoding.EncodeToString(testOCSPResponse),
@@ -5135,9 +5117,7 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 			config: Config{
 				MaxVersion: vers.version,
 			},
-			expectations: connectionExpectations{
-				ocspResponse: testOCSPResponse,
-			},
+			expectedOCSPResponse: testOCSPResponse,
 			flags: []string{
 				"-use-ocsp-callback",
 				"-set-ocsp-in-callback",
@@ -5156,9 +5136,7 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 			config: Config{
 				MaxVersion: vers.version,
 			},
-			expectations: connectionExpectations{
-				ocspResponse: []byte{},
-			},
+			expectedOCSPResponse: []byte{},
 			flags: []string{
 				"-use-ocsp-callback",
 				"-decline-ocsp-callback",
@@ -5519,12 +5497,10 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 				MaxVersion: VersionTLS12,
 				NextProtos: []string{"foo"},
 			},
-			flags:         []string{"-select-next-proto", "foo"},
-			resumeSession: true,
-			expectations: connectionExpectations{
-				nextProto:     "foo",
-				nextProtoType: npn,
-			},
+			flags:                 []string{"-select-next-proto", "foo"},
+			resumeSession:         true,
+			expectedNextProto:     "foo",
+			expectedNextProtoType: npn,
 		})
 		tests = append(tests, testCase{
 			testType: serverTest,
@@ -5537,11 +5513,9 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 				"-advertise-npn", "\x03foo\x03bar\x03baz",
 				"-expect-next-proto", "bar",
 			},
-			resumeSession: true,
-			expectations: connectionExpectations{
-				nextProto:     "bar",
-				nextProtoType: npn,
-			},
+			resumeSession:         true,
+			expectedNextProto:     "bar",
+			expectedNextProtoType: npn,
 		})
 
 		// Client does False Start and negotiates NPN.
@@ -5645,12 +5619,10 @@ read alert 1 0
 				"-send-channel-id", path.Join(*resourceDir, channelIDKeyFile),
 				"-select-next-proto", "foo",
 			},
-			resumeSession: true,
-			expectations: connectionExpectations{
-				channelID:     true,
-				nextProto:     "foo",
-				nextProtoType: npn,
-			},
+			resumeSession:         true,
+			expectChannelID:       true,
+			expectedNextProto:     "foo",
+			expectedNextProtoType: npn,
 		})
 		tests = append(tests, testCase{
 			testType: serverTest,
@@ -5666,12 +5638,10 @@ read alert 1 0
 				"-advertise-npn", "\x03foo\x03bar\x03baz",
 				"-expect-next-proto", "bar",
 			},
-			resumeSession: true,
-			expectations: connectionExpectations{
-				channelID:     true,
-				nextProto:     "bar",
-				nextProtoType: npn,
-			},
+			resumeSession:         true,
+			expectChannelID:       true,
+			expectedNextProto:     "bar",
+			expectedNextProtoType: npn,
 		})
 
 		// Bidirectional shutdown with the runner initiating.
@@ -5698,11 +5668,9 @@ read alert 1 0
 					MaxVersion:       ver.version,
 					RequestChannelID: true,
 				},
-				flags:         []string{"-send-channel-id", path.Join(*resourceDir, channelIDKeyFile)},
-				resumeSession: true,
-				expectations: connectionExpectations{
-					channelID: true,
-				},
+				flags:           []string{"-send-channel-id", path.Join(*resourceDir, channelIDKeyFile)},
+				resumeSession:   true,
+				expectChannelID: true,
 			})
 
 			// Server accepts a Channel ID.
@@ -5717,10 +5685,8 @@ read alert 1 0
 					"-expect-channel-id",
 					base64.StdEncoding.EncodeToString(channelIDBytes),
 				},
-				resumeSession: true,
-				expectations: connectionExpectations{
-					channelID: true,
-				},
+				resumeSession:   true,
+				expectChannelID: true,
 			})
 
 			tests = append(tests, testCase{
@@ -5748,13 +5714,11 @@ read alert 1 0
 						CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 						ChannelID:    channelIDKey,
 					},
-					expectations: connectionExpectations{
-						channelID: false,
-					},
-					flags: []string{"-enable-channel-id"},
+					expectChannelID: false,
+					flags:           []string{"-enable-channel-id"},
 				})
 
-				// Sanity-check setting expectations.channelID false works.
+				// Sanity-check setting expectChannelID false works.
 				tests = append(tests, testCase{
 					testType: serverTest,
 					name:     "ChannelID-ECDHE-" + ver.name,
@@ -5763,9 +5727,7 @@ read alert 1 0
 						CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
 						ChannelID:    channelIDKey,
 					},
-					expectations: connectionExpectations{
-						channelID: false,
-					},
+					expectChannelID:    false,
 					flags:              []string{"-enable-channel-id"},
 					shouldFail:         true,
 					expectedLocalError: "channel ID unexpectedly negotiated",
@@ -6056,10 +6018,8 @@ func addVersionNegotiationTests() {
 							ExpectInitialRecordVersion: clientVers,
 						},
 					},
-					flags: flags,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:           flags,
+					expectedVersion: expectedVersion,
 				})
 				testCases = append(testCases, testCase{
 					protocol: protocol,
@@ -6071,10 +6031,8 @@ func addVersionNegotiationTests() {
 							ExpectInitialRecordVersion: clientVers,
 						},
 					},
-					flags: flags2,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:           flags2,
+					expectedVersion: expectedVersion,
 				})
 
 				testCases = append(testCases, testCase{
@@ -6087,10 +6045,8 @@ func addVersionNegotiationTests() {
 							ExpectInitialRecordVersion: serverVers,
 						},
 					},
-					flags: flags,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:           flags,
+					expectedVersion: expectedVersion,
 				})
 				testCases = append(testCases, testCase{
 					protocol: protocol,
@@ -6102,10 +6058,8 @@ func addVersionNegotiationTests() {
 							ExpectInitialRecordVersion: serverVers,
 						},
 					},
-					flags: flags2,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:           flags2,
+					expectedVersion: expectedVersion,
 				})
 			}
 		}
@@ -6126,9 +6080,7 @@ func addVersionNegotiationTests() {
 						IgnoreTLS13DowngradeRandom: true,
 					},
 				},
-				expectations: connectionExpectations{
-					version: vers.version,
-				},
+				expectedVersion: vers.version,
 			})
 		}
 	}
@@ -6169,9 +6121,7 @@ func addVersionNegotiationTests() {
 				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 	})
 
 	testCases = append(testCases, testCase{
@@ -6185,9 +6135,7 @@ func addVersionNegotiationTests() {
 			},
 		},
 		// The extension takes precedence over the ClientHello version.
-		expectations: connectionExpectations{
-			version: VersionTLS11,
-		},
+		expectedVersion: VersionTLS11,
 	})
 
 	testCases = append(testCases, testCase{
@@ -6201,9 +6149,7 @@ func addVersionNegotiationTests() {
 			},
 		},
 		// The extension takes precedence over the ClientHello version.
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 	})
 
 	// Test that TLS 1.2 isn't negotiated by the supported_versions extension in
@@ -6231,9 +6177,7 @@ func addVersionNegotiationTests() {
 				SendSupportedVersions: []uint16{VersionTLS12, VersionTLS13},
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS13,
-		},
+		expectedVersion: VersionTLS13,
 	})
 
 	// Test for version tolerance.
@@ -6247,9 +6191,7 @@ func addVersionNegotiationTests() {
 				IgnoreTLS13DowngradeRandom: true,
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 	})
 	testCases = append(testCases, testCase{
 		testType: serverTest,
@@ -6263,9 +6205,7 @@ func addVersionNegotiationTests() {
 		},
 		// TLS 1.3 must be negotiated with the supported_versions
 		// extension, not ClientHello.version.
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 	})
 	testCases = append(testCases, testCase{
 		testType: serverTest,
@@ -6278,9 +6218,7 @@ func addVersionNegotiationTests() {
 				SendClientVersion: 0x0400,
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS13,
-		},
+		expectedVersion: VersionTLS13,
 	})
 
 	testCases = append(testCases, testCase{
@@ -6293,9 +6231,7 @@ func addVersionNegotiationTests() {
 				OmitSupportedVersions: true,
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 	})
 	testCases = append(testCases, testCase{
 		protocol: dtls,
@@ -6307,9 +6243,7 @@ func addVersionNegotiationTests() {
 				OmitSupportedVersions: true,
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 	})
 
 	// Test that versions below 3.0 are rejected.
@@ -6370,9 +6304,7 @@ func addVersionNegotiationTests() {
 					NegotiateVersion: test.version,
 				},
 			},
-			expectations: connectionExpectations{
-				version: test.version,
-			},
+			expectedVersion:    test.version,
 			shouldFail:         true,
 			expectedError:      ":TLS13_DOWNGRADE:",
 			expectedLocalError: "remote error: illegal parameter",
@@ -6387,9 +6319,7 @@ func addVersionNegotiationTests() {
 					NegotiateVersion: test.version,
 				},
 			},
-			expectations: connectionExpectations{
-				version: test.version,
-			},
+			expectedVersion: test.version,
 			flags: []string{
 				"-ignore-tls13-downgrade",
 				"-expect-tls13-downgrade",
@@ -6405,9 +6335,7 @@ func addVersionNegotiationTests() {
 					SendSupportedVersions: []uint16{test.version},
 				},
 			},
-			expectations: connectionExpectations{
-				version: test.version,
-			},
+			expectedVersion:    test.version,
 			shouldFail:         true,
 			expectedLocalError: test.clientShimError,
 		})
@@ -6424,9 +6352,7 @@ func addVersionNegotiationTests() {
 				AlertBeforeFalseStartTest: alertAccessDenied,
 			},
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 		flags: []string{
 			"-false-start",
 			"-advertise-alpn", "\x03foo",
@@ -6521,10 +6447,8 @@ func addMinimumVersionTests() {
 							IgnorePeerCipherPreferences: shouldFail,
 						},
 					},
-					flags: flags,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:              flags,
+					expectedVersion:    expectedVersion,
 					shouldFail:         shouldFail,
 					expectedError:      expectedError,
 					expectedLocalError: expectedLocalError,
@@ -6543,10 +6467,8 @@ func addMinimumVersionTests() {
 							IgnorePeerCipherPreferences: shouldFail,
 						},
 					},
-					flags: flags2,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:              flags2,
+					expectedVersion:    expectedVersion,
 					shouldFail:         shouldFail,
 					expectedError:      expectedError,
 					expectedLocalError: expectedLocalError,
@@ -6559,10 +6481,8 @@ func addMinimumVersionTests() {
 					config: Config{
 						MaxVersion: runnerVers.version,
 					},
-					flags: flags,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:              flags,
+					expectedVersion:    expectedVersion,
 					shouldFail:         shouldFail,
 					expectedError:      expectedError,
 					expectedLocalError: expectedLocalError,
@@ -6574,10 +6494,8 @@ func addMinimumVersionTests() {
 					config: Config{
 						MaxVersion: runnerVers.version,
 					},
-					flags: flags2,
-					expectations: connectionExpectations{
-						version: expectedVersion,
-					},
+					flags:              flags2,
+					expectedVersion:    expectedVersion,
 					shouldFail:         shouldFail,
 					expectedError:      expectedError,
 					expectedLocalError: expectedLocalError,
@@ -6705,11 +6623,9 @@ func addExtensionTests() {
 				"-advertise-alpn", "\x03foo\x03bar\x03baz",
 				"-expect-alpn", "foo",
 			},
-			expectations: connectionExpectations{
-				nextProto:     "foo",
-				nextProtoType: alpn,
-			},
-			resumeSession: true,
+			expectedNextProto:     "foo",
+			expectedNextProtoType: alpn,
+			resumeSession:         true,
 		})
 		testCases = append(testCases, testCase{
 			testType: clientTest,
@@ -6753,11 +6669,9 @@ func addExtensionTests() {
 				"-expect-advertised-alpn", "\x03foo\x03bar\x03baz",
 				"-select-alpn", "foo",
 			},
-			expectations: connectionExpectations{
-				nextProto:     "foo",
-				nextProtoType: alpn,
-			},
-			resumeSession: true,
+			expectedNextProto:     "foo",
+			expectedNextProtoType: alpn,
+			resumeSession:         true,
 		})
 		testCases = append(testCases, testCase{
 			testType: serverTest,
@@ -6766,11 +6680,9 @@ func addExtensionTests() {
 				MaxVersion: ver.version,
 				NextProtos: []string{"foo", "bar", "baz"},
 			},
-			flags: []string{"-decline-alpn"},
-			expectations: connectionExpectations{
-				noNextProto: true,
-			},
-			resumeSession: true,
+			flags:             []string{"-decline-alpn"},
+			expectNoNextProto: true,
+			resumeSession:     true,
 		})
 		// Test that the server implementation catches itself if the
 		// callback tries to return an invalid empty ALPN protocol.
@@ -6806,11 +6718,9 @@ func addExtensionTests() {
 				"-select-alpn", "foo",
 				"-async",
 			},
-			expectations: connectionExpectations{
-				nextProto:     "foo",
-				nextProtoType: alpn,
-			},
-			resumeSession: true,
+			expectedNextProto:     "foo",
+			expectedNextProtoType: alpn,
+			resumeSession:         true,
 		})
 
 		var emptyString string
@@ -6863,11 +6773,9 @@ func addExtensionTests() {
 					"-select-alpn", "foo",
 					"-advertise-npn", "\x03foo\x03bar\x03baz",
 				},
-				expectations: connectionExpectations{
-					nextProto:     "foo",
-					nextProtoType: alpn,
-				},
-				resumeSession: true,
+				expectedNextProto:     "foo",
+				expectedNextProtoType: alpn,
+				resumeSession:         true,
 			})
 			testCases = append(testCases, testCase{
 				testType: serverTest,
@@ -6884,11 +6792,9 @@ func addExtensionTests() {
 					"-select-alpn", "foo",
 					"-advertise-npn", "\x03foo\x03bar\x03baz",
 				},
-				expectations: connectionExpectations{
-					nextProto:     "foo",
-					nextProtoType: alpn,
-				},
-				resumeSession: true,
+				expectedNextProto:     "foo",
+				expectedNextProtoType: alpn,
+				resumeSession:         true,
 			})
 
 			// Test that negotiating both NPN and ALPN is forbidden.
@@ -7003,10 +6909,8 @@ func addExtensionTests() {
 				TokenBindingParams:  []byte{0, 1, 2},
 				TokenBindingVersion: maxTokenBindingVersion,
 			},
-			expectations: connectionExpectations{
-				tokenBinding:      true,
-				tokenBindingParam: 2,
-			},
+			expectTokenBinding:        true,
+			expectedTokenBindingParam: 2,
 			flags: []string{
 				"-token-binding-params",
 				base64.StdEncoding.EncodeToString([]byte{2, 1, 0}),
@@ -7054,10 +6958,8 @@ func addExtensionTests() {
 				TokenBindingParams:  []byte{0, 1, 2},
 				TokenBindingVersion: maxTokenBindingVersion + 1,
 			},
-			expectations: connectionExpectations{
-				tokenBinding:      true,
-				tokenBindingParam: 2,
-			},
+			expectTokenBinding:        true,
+			expectedTokenBindingParam: 2,
 			flags: []string{
 				"-token-binding-params",
 				base64.StdEncoding.EncodeToString([]byte{2, 1, 0}),
@@ -7092,10 +6994,8 @@ func addExtensionTests() {
 				TokenBindingParams:  []byte{0, 1, 2, 2},
 				TokenBindingVersion: maxTokenBindingVersion,
 			},
-			expectations: connectionExpectations{
-				tokenBinding:      true,
-				tokenBindingParam: 2,
-			},
+			expectTokenBinding:        true,
+			expectedTokenBindingParam: 2,
 			flags: []string{
 				"-token-binding-params",
 				base64.StdEncoding.EncodeToString([]byte{2, 1, 0}),
@@ -7361,11 +7261,9 @@ func addExtensionTests() {
 					TokenBindingVersion: maxTokenBindingVersion,
 					MaxEarlyDataSize:    16384,
 				},
-				resumeSession: true,
-				expectations: connectionExpectations{
-					tokenBinding:      true,
-					tokenBindingParam: 2,
-				},
+				resumeSession:             true,
+				expectTokenBinding:        true,
+				expectedTokenBindingParam: 2,
 				flags: []string{
 					"-enable-early-data",
 					"-expect-ticket-supports-early-data",
@@ -7395,10 +7293,8 @@ func addExtensionTests() {
 					"-expect-quic-transport-params",
 					base64.StdEncoding.EncodeToString([]byte{1, 2}),
 				},
-				expectations: connectionExpectations{
-					quicTransportParams: []byte{3, 4},
-				},
-				skipTransportParamsConfig: true,
+				expectedQUICTransportParams: []byte{3, 4},
+				skipTransportParamsConfig:   true,
 			})
 			testCases = append(testCases, testCase{
 				testType: clientTest,
@@ -7432,10 +7328,8 @@ func addExtensionTests() {
 					"-expect-quic-transport-params",
 					base64.StdEncoding.EncodeToString([]byte{1, 2}),
 				},
-				expectations: connectionExpectations{
-					quicTransportParams: []byte{3, 4},
-				},
-				skipTransportParamsConfig: true,
+				expectedQUICTransportParams: []byte{3, 4},
+				skipTransportParamsConfig:   true,
 			})
 			testCases = append(testCases, testCase{
 				testType: serverTest,
@@ -7449,12 +7343,10 @@ func addExtensionTests() {
 					"-quic-transport-params",
 					base64.StdEncoding.EncodeToString([]byte{3, 4}),
 				},
-				expectations: connectionExpectations{
-					quicTransportParams: []byte{3, 4},
-				},
-				shouldFail:                true,
-				expectedError:             ":MISSING_EXTENSION:",
-				skipTransportParamsConfig: true,
+				expectedQUICTransportParams: []byte{3, 4},
+				shouldFail:                  true,
+				expectedError:               ":MISSING_EXTENSION:",
+				skipTransportParamsConfig:   true,
 			})
 		}
 		testCases = append(testCases, testCase{
@@ -7620,9 +7512,7 @@ func addExtensionTests() {
 					"-srtp-profiles",
 					"SRTP_AES128_CM_SHA1_80:SRTP_AES128_CM_SHA1_32",
 				},
-				expectations: connectionExpectations{
-					srtpProtectionProfile: SRTP_AES128_CM_HMAC_SHA1_80,
-				},
+				expectedSRTPProtectionProfile: SRTP_AES128_CM_HMAC_SHA1_80,
 			})
 			testCases = append(testCases, testCase{
 				protocol: dtls,
@@ -7636,9 +7526,7 @@ func addExtensionTests() {
 					"-srtp-profiles",
 					"SRTP_AES128_CM_SHA1_80:SRTP_AES128_CM_SHA1_32",
 				},
-				expectations: connectionExpectations{
-					srtpProtectionProfile: SRTP_AES128_CM_HMAC_SHA1_80,
-				},
+				expectedSRTPProtectionProfile: SRTP_AES128_CM_HMAC_SHA1_80,
 			})
 			// Test that the MKI is ignored.
 			testCases = append(testCases, testCase{
@@ -7656,9 +7544,7 @@ func addExtensionTests() {
 					"-srtp-profiles",
 					"SRTP_AES128_CM_SHA1_80:SRTP_AES128_CM_SHA1_32",
 				},
-				expectations: connectionExpectations{
-					srtpProtectionProfile: SRTP_AES128_CM_HMAC_SHA1_80,
-				},
+				expectedSRTPProtectionProfile: SRTP_AES128_CM_HMAC_SHA1_80,
 			})
 			// Test that SRTP isn't negotiated on the server if there were
 			// no matching profiles.
@@ -7674,9 +7560,7 @@ func addExtensionTests() {
 					"-srtp-profiles",
 					"SRTP_AES128_CM_SHA1_80:SRTP_AES128_CM_SHA1_32",
 				},
-				expectations: connectionExpectations{
-					srtpProtectionProfile: 0,
-				},
+				expectedSRTPProtectionProfile: 0,
 			})
 			// Test that the server returning an invalid SRTP profile is
 			// flagged as an error by the client.
@@ -7745,10 +7629,8 @@ func addExtensionTests() {
 				"-signed-cert-timestamps",
 				base64.StdEncoding.EncodeToString(testSCTList),
 			},
-			expectations: connectionExpectations{
-				sctList: testSCTList,
-			},
-			resumeSession: true,
+			expectedSCTList: testSCTList,
+			resumeSession:   true,
 		})
 
 		emptySCTListCert := *testCerts[0].cert
@@ -8078,12 +7960,8 @@ func addResumptionVersionTests() {
 								ExpectNoTLS13PSK: sessionVers.version < VersionTLS13,
 							},
 						},
-						expectations: connectionExpectations{
-							version: sessionVers.version,
-						},
-						resumeExpectations: &connectionExpectations{
-							version: resumeVers.version,
-						},
+						expectedVersion:       sessionVers.version,
+						expectedResumeVersion: resumeVers.version,
 					})
 				} else {
 					testCases = append(testCases, testCase{
@@ -8093,20 +7971,16 @@ func addResumptionVersionTests() {
 						config: Config{
 							MaxVersion: sessionVers.version,
 						},
-						expectations: connectionExpectations{
-							version: sessionVers.version,
-						},
+						expectedVersion: sessionVers.version,
 						resumeConfig: &Config{
 							MaxVersion: resumeVers.version,
 							Bugs: ProtocolBugs{
 								AcceptAnySession: true,
 							},
 						},
-						resumeExpectations: &connectionExpectations{
-							version: resumeVers.version,
-						},
-						shouldFail:    true,
-						expectedError: ":OLD_SESSION_VERSION_NOT_RETURNED:",
+						expectedResumeVersion: resumeVers.version,
+						shouldFail:            true,
+						expectedError:         ":OLD_SESSION_VERSION_NOT_RETURNED:",
 					})
 				}
 
@@ -8117,17 +7991,13 @@ func addResumptionVersionTests() {
 					config: Config{
 						MaxVersion: sessionVers.version,
 					},
-					expectations: connectionExpectations{
-						version: sessionVers.version,
-					},
+					expectedVersion: sessionVers.version,
 					resumeConfig: &Config{
 						MaxVersion: resumeVers.version,
 					},
-					newSessionsOnResume:  true,
-					expectResumeRejected: true,
-					resumeExpectations: &connectionExpectations{
-						version: resumeVers.version,
-					},
+					newSessionsOnResume:   true,
+					expectResumeRejected:  true,
+					expectedResumeVersion: resumeVers.version,
 				})
 
 				testCases = append(testCases, testCase{
@@ -8138,9 +8008,7 @@ func addResumptionVersionTests() {
 					config: Config{
 						MaxVersion: sessionVers.version,
 					},
-					expectations: connectionExpectations{
-						version: sessionVers.version,
-					},
+					expectedVersion:      sessionVers.version,
 					expectResumeRejected: sessionVers != resumeVers,
 					resumeConfig: &Config{
 						MaxVersion: resumeVers.version,
@@ -8148,9 +8016,7 @@ func addResumptionVersionTests() {
 							SendBothTickets: true,
 						},
 					},
-					resumeExpectations: &connectionExpectations{
-						version: resumeVers.version,
-					},
+					expectedResumeVersion: resumeVers.version,
 				})
 
 				// Repeat the test using session IDs, rather than tickets.
@@ -8164,17 +8030,13 @@ func addResumptionVersionTests() {
 							MaxVersion:             sessionVers.version,
 							SessionTicketsDisabled: true,
 						},
-						expectations: connectionExpectations{
-							version: sessionVers.version,
-						},
+						expectedVersion:      sessionVers.version,
 						expectResumeRejected: sessionVers != resumeVers,
 						resumeConfig: &Config{
 							MaxVersion:             resumeVers.version,
 							SessionTicketsDisabled: true,
 						},
-						resumeExpectations: &connectionExpectations{
-							version: resumeVers.version,
-						},
+						expectedResumeVersion: resumeVers.version,
 					})
 				}
 			}
@@ -9263,12 +9125,10 @@ func addSignatureAlgorithmTests() {
 						"-key-file", path.Join(*resourceDir, getShimKey(alg.cert)),
 						"-enable-all-curves",
 					},
-					shouldFail:         shouldFail,
-					expectedError:      signError,
-					expectedLocalError: signLocalError,
-					expectations: connectionExpectations{
-						peerSignatureAlgorithm: alg.id,
-					},
+					shouldFail:                     shouldFail,
+					expectedError:                  signError,
+					expectedLocalError:             signLocalError,
+					expectedPeerSignatureAlgorithm: alg.id,
 				}
 
 				// Test that the shim will select the algorithm when configured to only
@@ -9286,9 +9146,7 @@ func addSignatureAlgorithmTests() {
 						"-enable-all-curves",
 						"-signing-prefs", strconv.Itoa(int(alg.id)),
 					},
-					expectations: connectionExpectations{
-						peerSignatureAlgorithm: alg.id,
-					},
+					expectedPeerSignatureAlgorithm: alg.id,
 				}
 
 				if testType == serverTest {
@@ -9470,9 +9328,7 @@ func addSignatureAlgorithmTests() {
 			"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
 			"-key-file", path.Join(*resourceDir, rsaKeyFile),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA384,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPKCS1WithSHA384,
 	})
 
 	testCases = append(testCases, testCase{
@@ -9491,9 +9347,7 @@ func addSignatureAlgorithmTests() {
 			"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
 			"-key-file", path.Join(*resourceDir, rsaKeyFile),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPSSWithSHA384,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPSSWithSHA384,
 	})
 
 	testCases = append(testCases, testCase{
@@ -9508,9 +9362,7 @@ func addSignatureAlgorithmTests() {
 				signatureECDSAWithSHA1,
 			},
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA384,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPKCS1WithSHA384,
 	})
 
 	testCases = append(testCases, testCase{
@@ -9525,9 +9377,7 @@ func addSignatureAlgorithmTests() {
 				signatureECDSAWithSHA1,
 			},
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPSSWithSHA384,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPSSWithSHA384,
 	})
 
 	// Test that signature verification takes the key type into account.
@@ -9846,9 +9696,7 @@ func addSignatureAlgorithmTests() {
 			"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA256)),
 			"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA1)),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
 	})
 	testCases = append(testCases, testCase{
 		name: "Agree-Digest-SHA1",
@@ -9866,9 +9714,7 @@ func addSignatureAlgorithmTests() {
 			"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA256)),
 			"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA1)),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA1,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPKCS1WithSHA1,
 	})
 	testCases = append(testCases, testCase{
 		name: "Agree-Digest-Default",
@@ -9886,9 +9732,7 @@ func addSignatureAlgorithmTests() {
 			"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
 			"-key-file", path.Join(*resourceDir, rsaKeyFile),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
 	})
 
 	// Test that the signing preference list may include extra algorithms
@@ -9910,9 +9754,7 @@ func addSignatureAlgorithmTests() {
 			"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA256)),
 			"-signing-prefs", strconv.Itoa(int(fakeSigAlg2)),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
-		},
+		expectedPeerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
 	})
 
 	// In TLS 1.2 and below, ECDSA uses the curve list rather than the
@@ -9985,9 +9827,7 @@ func addSignatureAlgorithmTests() {
 			"-cert-file", path.Join(*resourceDir, ecdsaP256CertificateFile),
 			"-key-file", path.Join(*resourceDir, ecdsaP256KeyFile),
 		},
-		expectations: connectionExpectations{
-			peerSignatureAlgorithm: signatureECDSAWithP256AndSHA256,
-		},
+		expectedPeerSignatureAlgorithm: signatureECDSAWithP256AndSHA256,
 	})
 
 	// RSASSA-PSS with SHA-512 is too large for 1024-bit RSA. Test that the
@@ -10771,9 +10611,7 @@ func addCurveTests() {
 					"-enable-all-curves",
 					"-expect-curve-id", strconv.Itoa(int(curve.id)),
 				},
-				expectations: connectionExpectations{
-					curveID: curve.id,
-				},
+				expectedCurveID: curve.id,
 			})
 			testCases = append(testCases, testCase{
 				testType: serverTest,
@@ -10791,9 +10629,7 @@ func addCurveTests() {
 					"-enable-all-curves",
 					"-expect-curve-id", strconv.Itoa(int(curve.id)),
 				},
-				expectations: connectionExpectations{
-					curveID: curve.id,
-				},
+				expectedCurveID: curve.id,
 			})
 
 			if curve.id != CurveX25519 && !isPqGroup(curve.id) {
@@ -10900,9 +10736,7 @@ func addCurveTests() {
 			},
 			CurvePreferences: []CurveID{CurveP224},
 		},
-		expectations: connectionExpectations{
-			cipher: TLS_RSA_WITH_AES_128_GCM_SHA256,
-		},
+		expectedCipher: TLS_RSA_WITH_AES_128_GCM_SHA256,
 	})
 
 	// The client must reject bogus curves and disabled curves.
@@ -11392,10 +11226,8 @@ func addSessionTicketTests() {
 				SendPSKKeyExchangeModes: []byte{0x1a, pskDHEKEMode, 0x2a},
 			},
 		},
-		resumeSession: true,
-		expectations: connectionExpectations{
-			version: VersionTLS13,
-		},
+		resumeSession:         true,
+		expectedResumeVersion: VersionTLS13,
 	})
 
 	// Test that the server does not send session tickets with no matching key exchange mode.
@@ -13032,10 +12864,8 @@ func addTLS13HandshakeTests() {
 			DefaultCurves:    []CurveID{},
 			CurvePreferences: []CurveID{CurveX25519},
 		},
-		expectations: connectionExpectations{
-			curveID: CurveX25519,
-		},
-		flags: []string{"-expect-hrr"},
+		expectedCurveID: CurveX25519,
+		flags:           []string{"-expect-hrr"},
 	})
 
 	testCases = append(testCases, testCase{
@@ -13048,10 +12878,8 @@ func addTLS13HandshakeTests() {
 		},
 		// Although the ClientHello did not predict our preferred curve,
 		// we always select it whether it is predicted or not.
-		expectations: connectionExpectations{
-			curveID: CurveX25519,
-		},
-		flags: []string{"-expect-hrr"},
+		expectedCurveID: CurveX25519,
+		flags:           []string{"-expect-hrr"},
 	})
 
 	testCases = append(testCases, testCase{
@@ -14055,10 +13883,8 @@ func addTLS13HandshakeTests() {
 			MaxEarlyDataSize: 16384,
 			RequestChannelID: true,
 		},
-		resumeSession: true,
-		expectations: connectionExpectations{
-			channelID: true,
-		},
+		resumeSession:      true,
+		expectChannelID:    true,
 		shouldFail:         true,
 		expectedError:      ":UNEXPECTED_EXTENSION_ON_EARLY_DATA:",
 		expectedLocalError: "remote error: illegal parameter",
@@ -14082,10 +13908,8 @@ func addTLS13HandshakeTests() {
 				AlwaysRejectEarlyData: true,
 			},
 		},
-		resumeSession: true,
-		expectations: connectionExpectations{
-			channelID: true,
-		},
+		resumeSession:   true,
+		expectChannelID: true,
 		flags: []string{
 			"-enable-early-data",
 			"-expect-ticket-supports-early-data",
@@ -14128,10 +13952,8 @@ func addTLS13HandshakeTests() {
 				ExpectEarlyDataAccepted: false,
 			},
 		},
-		resumeSession: true,
-		expectations: connectionExpectations{
-			channelID: true,
-		},
+		resumeSession:   true,
+		expectChannelID: true,
 		flags: []string{
 			"-enable-early-data",
 			"-expect-reject-early-data",
@@ -14154,10 +13976,8 @@ func addTLS13HandshakeTests() {
 				ExpectHalfRTTData:       [][]byte{{254, 253, 252, 251}},
 			},
 		},
-		resumeSession: true,
-		expectations: connectionExpectations{
-			channelID: false,
-		},
+		resumeSession:   true,
+		expectChannelID: false,
 		flags: []string{
 			"-enable-early-data",
 			"-on-resume-expect-accept-early-data",
@@ -14313,9 +14133,7 @@ func addTLS13HandshakeTests() {
 				SkipCertificateVerify: true,
 			},
 		},
-		expectations: connectionExpectations{
-			peerCertificate: &rsaChainCertificate,
-		},
+		expectPeerCertificate: &rsaChainCertificate,
 		flags: []string{
 			"-cert-file", path.Join(*resourceDir, rsaChainCertificateFile),
 			"-key-file", path.Join(*resourceDir, rsaChainKeyFile),
@@ -14336,9 +14154,7 @@ func addTLS13HandshakeTests() {
 				SkipCertificateVerify: true,
 			},
 		},
-		expectations: connectionExpectations{
-			peerCertificate: &rsaChainCertificate,
-		},
+		expectPeerCertificate: &rsaChainCertificate,
 		flags: []string{
 			"-cert-file", path.Join(*resourceDir, rsaChainCertificateFile),
 			"-key-file", path.Join(*resourceDir, rsaChainKeyFile),
@@ -14351,11 +14167,9 @@ func addTLS13HandshakeTests() {
 	// If the client or server has 0-RTT enabled but disabled TLS 1.3, it should
 	// report a reason of protocol_version.
 	testCases = append(testCases, testCase{
-		testType: clientTest,
-		name:     "EarlyDataEnabled-Client-MaxTLS12",
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		testType:        clientTest,
+		name:            "EarlyDataEnabled-Client-MaxTLS12",
+		expectedVersion: VersionTLS12,
 		flags: []string{
 			"-enable-early-data",
 			"-max-version", strconv.Itoa(VersionTLS12),
@@ -14363,11 +14177,9 @@ func addTLS13HandshakeTests() {
 		},
 	})
 	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "EarlyDataEnabled-Server-MaxTLS12",
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		testType:        serverTest,
+		name:            "EarlyDataEnabled-Server-MaxTLS12",
+		expectedVersion: VersionTLS12,
 		flags: []string{
 			"-enable-early-data",
 			"-max-version", strconv.Itoa(VersionTLS12),
@@ -14385,9 +14197,7 @@ func addTLS13HandshakeTests() {
 		config: Config{
 			MaxVersion: VersionTLS12,
 		},
-		expectations: connectionExpectations{
-			version: VersionTLS12,
-		},
+		expectedVersion: VersionTLS12,
 		flags: []string{
 			"-enable-early-data",
 			"-expect-early-data-reason", "protocol_version",
@@ -14558,9 +14368,7 @@ func addTLS13CipherPreferenceTests() {
 		flags: []string{
 			"-curves", strconv.Itoa(int(CurveCECPQ2)),
 		},
-		expectations: connectionExpectations{
-			cipher: TLS_AES_256_GCM_SHA384,
-		},
+		expectedCipher: TLS_AES_256_GCM_SHA384,
 	})
 	// ... but when CECPQ2 isn't being used, the client's preference controls.
 	testCases = append(testCases, testCase{
@@ -14576,9 +14384,7 @@ func addTLS13CipherPreferenceTests() {
 		flags: []string{
 			"-curves", strconv.Itoa(int(CurveX25519)),
 		},
-		expectations: connectionExpectations{
-			cipher: TLS_AES_128_GCM_SHA256,
-		},
+		expectedCipher: TLS_AES_128_GCM_SHA256,
 	})
 
 	// Test that CECPQ2 continues to honor AES vs ChaCha20 logic.
@@ -14748,9 +14554,7 @@ func addCertificateTests() {
 				Certificates: []Certificate{rsaChainCertificate},
 				ClientAuth:   RequireAnyClientCert,
 			},
-			expectations: connectionExpectations{
-				peerCertificate: &rsaChainCertificate,
-			},
+			expectPeerCertificate: &rsaChainCertificate,
 			flags: []string{
 				"-cert-file", path.Join(*resourceDir, rsaChainCertificateFile),
 				"-key-file", path.Join(*resourceDir, rsaChainKeyFile),
@@ -14766,9 +14570,7 @@ func addCertificateTests() {
 				MaxVersion:   ver.version,
 				Certificates: []Certificate{rsaChainCertificate},
 			},
-			expectations: connectionExpectations{
-				peerCertificate: &rsaChainCertificate,
-			},
+			expectPeerCertificate: &rsaChainCertificate,
 			flags: []string{
 				"-cert-file", path.Join(*resourceDir, rsaChainCertificateFile),
 				"-key-file", path.Join(*resourceDir, rsaChainKeyFile),
@@ -15700,10 +15502,8 @@ func addJDK11WorkaroundTests() {
 					ExpectJDK11DowngradeRandom: t.isJDK11,
 				},
 			},
-			expectations: connectionExpectations{
-				version: expectedVersion,
-			},
-			flags: []string{"-jdk11-workaround"},
+			expectedVersion: expectedVersion,
+			flags:           []string{"-jdk11-workaround"},
 		})
 
 		// With the workaround disabled, we always negotiate TLS 1.3.
@@ -15718,9 +15518,7 @@ func addJDK11WorkaroundTests() {
 					ExpectJDK11DowngradeRandom: false,
 				},
 			},
-			expectations: connectionExpectations{
-				version: VersionTLS13,
-			},
+			expectedVersion: VersionTLS13,
 		})
 
 		// If the server does not support TLS 1.3, the workaround should
@@ -15737,9 +15535,7 @@ func addJDK11WorkaroundTests() {
 					ExpectJDK11DowngradeRandom: false,
 				},
 			},
-			expectations: connectionExpectations{
-				version: VersionTLS12,
-			},
+			expectedVersion: VersionTLS12,
 			flags: []string{
 				"-jdk11-workaround",
 				"-max-version", strconv.Itoa(VersionTLS12),

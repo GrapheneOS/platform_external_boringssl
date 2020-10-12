@@ -172,7 +172,8 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
 
   uint8_t alert = SSL_AD_DECODE_ERROR;
   if (!ssl_parse_extensions(&extensions, &alert, ext_types,
-                            /*ignore_unknown=*/false)) {
+                            OPENSSL_ARRAY_SIZE(ext_types),
+                            0 /* reject unknown */)) {
     ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
     return ssl_hs_error;
   }
@@ -337,7 +338,8 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
 
   uint8_t alert = SSL_AD_DECODE_ERROR;
   if (!ssl_parse_extensions(&extensions, &alert, ext_types,
-                            /*ignore_unknown=*/false)) {
+                            OPENSSL_ARRAY_SIZE(ext_types),
+                            0 /* reject unknown */)) {
     ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
     return ssl_hs_error;
   }
@@ -566,7 +568,8 @@ static enum ssl_hs_wait_t do_read_certificate_request(SSL_HANDSHAKE *hs) {
       !CBS_get_u16_length_prefixed(&body, &extensions) ||
       CBS_len(&body) != 0 ||
       !ssl_parse_extensions(&extensions, &alert, ext_types,
-                            /*ignore_unknown=*/true) ||
+                            OPENSSL_ARRAY_SIZE(ext_types),
+                            1 /* accept unknown */) ||
       (have_ca && CBS_len(&ca) == 0) ||
       !have_sigalgs ||
       !CBS_get_u16_length_prefixed(&sigalgs,
@@ -986,7 +989,8 @@ UniquePtr<SSL_SESSION> tls13_create_session_with_ticket(SSL *ssl, CBS *body) {
 
   uint8_t alert = SSL_AD_DECODE_ERROR;
   if (!ssl_parse_extensions(&extensions, &alert, ext_types,
-                            /*ignore_unknown=*/true)) {
+                            OPENSSL_ARRAY_SIZE(ext_types),
+                            1 /* ignore unknown */)) {
     ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
     return nullptr;
   }

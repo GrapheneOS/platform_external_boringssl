@@ -40,11 +40,13 @@ extern "C" {
 // PMBTokens and P-384.
 OPENSSL_EXPORT const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v1(void);
 
-// TRUST_TOKEN_experiment_v2_voprf is an experimental Trust Tokens protocol
-// using VOPRFs and P-384 with up to 6 keys, without RR verification.
+// TRUST_TOKEN_experiment_v2_pp is an experimental Trust Tokens protocol using
+// PMBTokens (with no private metadata) and P-384 with up to 6 keys, without RR
+// verification.
 //
 // This version is incomplete and should not be used.
-OPENSSL_EXPORT const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_voprf(void);
+// TODO(svaldez): Update to use the PrivacyPass primitive
+OPENSSL_EXPORT const TRUST_TOKEN_METHOD *TRUST_TOKEN_experiment_v2_pp(void);
 
 // TRUST_TOKEN_experiment_v2_pmb is an experimental Trust Tokens protocol using
 // PMBTokens and P-384 with up to 3 keys, without RR verification.
@@ -163,8 +165,12 @@ OPENSSL_EXPORT int TRUST_TOKEN_CLIENT_begin_redemption(
 // |*out_rr| and |*out_rr_len| (respectively, |*out_sig| and |*out_sig_len|)
 // to a newly-allocated buffer containing the SRR (respectively, the SRR
 // signature). In other versions, it sets |*out_rr| and |*out_rr_len|
-// to a newly-allocated buffer containing |response| and leaves all validation
-// to the caller. It returns one on success or zero on failure.
+// (respectively, |*out_sig| and |*out_sig_len|) to a newly-allocated buffer
+// containing the SRR (respectively, the SRR signature). It returns one on
+// success or zero on failure.
+//
+// TODO(svaldez): Return the entire response in |*out_rr| and omit |*out_sig| in
+// non-|TRUST_TOKEN_experiment_v1| versions.
 OPENSSL_EXPORT int TRUST_TOKEN_CLIENT_finish_redemption(
     TRUST_TOKEN_CLIENT *ctx, uint8_t **out_rr, size_t *out_rr_len,
     uint8_t **out_sig, size_t *out_sig_len, const uint8_t *response,
