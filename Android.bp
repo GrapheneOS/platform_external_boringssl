@@ -126,8 +126,8 @@ cc_object {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
+        "com.android.art",
         "com.android.art.debug",
-        "com.android.art.release",
         "com.android.art.testing",
         "com.android.bluetooth.updatable",
         "com.android.conscrypt",
@@ -212,8 +212,8 @@ cc_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
+        "com.android.art",
         "com.android.art.debug",
-        "com.android.art.release",
         "com.android.art.testing",
         "com.android.bluetooth.updatable",
         "com.android.conscrypt",
