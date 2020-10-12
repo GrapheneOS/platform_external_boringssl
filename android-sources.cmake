@@ -167,7 +167,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/thread_win.c
   ${BORINGSSL_ROOT}src/crypto/trust_token/pmbtoken.c
   ${BORINGSSL_ROOT}src/crypto/trust_token/trust_token.c
-  ${BORINGSSL_ROOT}src/crypto/trust_token/voprf.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_digest.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_sign.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_strex.c
