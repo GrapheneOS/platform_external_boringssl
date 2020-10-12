@@ -20,9 +20,7 @@
 
 #include "fork_detect.h"
 
-// Android-changed: Don't compile fork_detect() for Trusty.
-// TODO(prb): Remove when better fix lands upstream.
-#if defined(OPENSSL_LINUX) && !defined(OPENSSL_TRUSTY)
+#if defined(OPENSSL_LINUX)
 #include <sys/mman.h>
 #include <unistd.h>
 #include <stdlib.h>
