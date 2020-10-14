@@ -7,23 +7,24 @@ rm -Rf src
 git clone https://boringssl.googlesource.com/boringssl src
 cd src
 new_revision=$(git show -s --pretty=%H)
+msgfile=$(mktemp)
 
 echo "external/boringssl: Sync to ${new_revision}.
 
 This includes the following changes:
 
 https://boringssl.googlesource.com/boringssl/+log/${old_revision}..${new_revision}
-" > ../BORINGSSL_LAST_MERGE
+" > $msgfile
 
 # Just pull out commit titles and any Update-Note paragraphs for AOSP commit summary
 git log --format='format:* %s%n%n%b' ${old_revision}..${new_revision} \
   | awk -v RS='' -v ORS='\n' '/^Update-Note/ {print} /^\*/ {print}' \
-  >> ../BORINGSSL_LAST_MERGE
+  >> $msgfile
 
 
 cd ..
 echo "
-Test: atest CtsLibcoreTestCases CtsLibcoreTestCases" >> BORINGSSL_LAST_MERGE
+Test: atest CtsLibcoreTestCases CtsLibcoreOkHttpTestCases" >> $msgfile
 echo ${new_revision} > BORINGSSL_REVISION
 
 rm -Rf src/.git
@@ -34,4 +35,5 @@ python src/util/generate_build_files.py android android-cmake eureka
 cp src/LICENSE NOTICE
 
 git add .
-git commit -F BORINGSSL_LAST_MERGE
+git commit -F $msgfile
+rm -f $msgfile
