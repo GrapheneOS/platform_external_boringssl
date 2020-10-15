@@ -524,16 +524,18 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     }
   }
 
-  if (!config->is_server) {
-    const uint8_t *alpn_proto;
-    unsigned alpn_proto_len;
-    SSL_get0_alpn_selected(ssl, &alpn_proto, &alpn_proto_len);
-    if (alpn_proto_len != config->expect_alpn.size() ||
-        OPENSSL_memcmp(alpn_proto, config->expect_alpn.data(),
-                       alpn_proto_len) != 0) {
-      fprintf(stderr, "negotiated alpn proto mismatch\n");
-      return false;
-    }
+  // On the server, the protocol selected in the ALPN callback must be echoed
+  // out of |SSL_get0_alpn_selected|. On the client, it should report what the
+  // test expected.
+  const std::string &expect_alpn =
+      config->is_server ? config->select_alpn : config->expect_alpn;
+  const uint8_t *alpn_proto;
+  unsigned alpn_proto_len;
+  SSL_get0_alpn_selected(ssl, &alpn_proto, &alpn_proto_len);
+  if (alpn_proto_len != expect_alpn.size() ||
+      OPENSSL_memcmp(alpn_proto, expect_alpn.data(), alpn_proto_len) != 0) {
+    fprintf(stderr, "negotiated alpn proto mismatch\n");
+    return false;
   }
 
   if (!config->expect_quic_transport_params.empty() && expect_handshake_done) {
@@ -802,6 +804,12 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
   }
 
   if (!ret) {
+    // Print the |SSL_get_error| code. Otherwise, some failures are silent and
+    // hard to debug.
+    int ssl_err = SSL_get_error(ssl.get(), -1);
+    if (ssl_err != SSL_ERROR_NONE) {
+      fprintf(stderr, "SSL error: %s\n", SSL_error_description(ssl_err));
+    }
     return false;
   }
 
