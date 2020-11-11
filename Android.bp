@@ -13,6 +13,7 @@ build = ["sources.bp"]
 cc_defaults {
     name: "boringssl_flags",
     vendor_available: true,
+    product_available: true,
 
     cflags: [
         "-fvisibility=hidden",
@@ -174,6 +175,7 @@ cc_library {
     name: "libcrypto",
     visibility: ["//visibility:public"],
     vendor_available: true,
+    product_available: true,
     native_bridge_supported: true,
     vndk: {
         enabled: true,
@@ -280,6 +282,7 @@ cc_library {
     visibility: ["//visibility:public"],
     recovery_available: true,
     vendor_available: true,
+    product_available: true,
     native_bridge_supported: true,
     vndk: {
         enabled: true,
