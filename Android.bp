@@ -136,6 +136,7 @@ cc_object {
         "com.android.conscrypt",
         "com.android.media",
         "com.android.resolv",
+        "com.android.virt",
     ],
     min_sdk_version: "29",
 }
@@ -223,6 +224,7 @@ cc_library {
         "com.android.conscrypt",
         "com.android.media",
         "com.android.resolv",
+        "com.android.virt",
     ],
     min_sdk_version: "29",
 }
