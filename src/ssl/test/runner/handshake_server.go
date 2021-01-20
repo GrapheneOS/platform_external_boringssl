@@ -403,6 +403,14 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
+	if config.Bugs.ExpectClientECH && hs.clientHello.clientECH == nil {
+		return errors.New("tls: expected client to send ClientECH")
+	}
+
+	if hs.clientHello.clientECH != nil && len(config.Bugs.SendECHRetryConfigs) > 0 {
+		encryptedExtensions.extensions.echRetryConfigs = config.Bugs.SendECHRetryConfigs
+	}
+
 	// Select the cipher suite.
 	var preferenceList, supportedList []uint16
 	if config.PreferServerCipherSuites {
@@ -718,7 +726,10 @@ ResendHelloRetryRequest:
 	// Decide whether or not to accept early data.
 	if !sendHelloRetryRequest && hs.clientHello.hasEarlyData {
 		if !config.Bugs.AlwaysRejectEarlyData && hs.sessionState != nil {
-			if hs.sessionState.cipherSuite == hs.suite.id && c.clientProtocol == string(hs.sessionState.earlyALPN) {
+			if hs.sessionState.cipherSuite == hs.suite.id &&
+				c.clientProtocol == string(hs.sessionState.earlyALPN) &&
+				c.hasApplicationSettings == hs.sessionState.hasApplicationSettings &&
+				bytes.Equal(c.localApplicationSettings, hs.sessionState.localApplicationSettings) {
 				encryptedExtensions.extensions.hasEarlyData = true
 			}
 			if config.Bugs.AlwaysAcceptEarlyData {
@@ -729,8 +740,14 @@ ResendHelloRetryRequest:
 			earlyTrafficSecret := hs.finishedHash.deriveSecret(earlyTrafficLabel)
 			c.earlyExporterSecret = hs.finishedHash.deriveSecret(earlyExporterLabel)
 
+			// Applications are implicit with early data.
+			if !config.Bugs.SendApplicationSettingsWithEarlyData {
+				encryptedExtensions.extensions.hasApplicationSettings = false
+				encryptedExtensions.extensions.applicationSettings = nil
+			}
+
 			sessionCipher := cipherSuiteFromID(hs.sessionState.cipherSuite)
-			if err := c.useInTrafficSecret(c.wireVersion, sessionCipher, earlyTrafficSecret); err != nil {
+			if err := c.useInTrafficSecret(encryptionEarlyData, c.wireVersion, sessionCipher, earlyTrafficSecret); err != nil {
 				return err
 			}
 
@@ -837,7 +854,7 @@ ResendHelloRetryRequest:
 
 	// Switch to handshake traffic keys.
 	serverHandshakeTrafficSecret := hs.finishedHash.deriveSecret(serverHandshakeTrafficLabel)
-	c.useOutTrafficSecret(c.wireVersion, hs.suite, serverHandshakeTrafficSecret)
+	c.useOutTrafficSecret(encryptionHandshake, c.wireVersion, hs.suite, serverHandshakeTrafficSecret)
 	// Derive handshake traffic read key, but don't switch yet.
 	clientHandshakeTrafficSecret := hs.finishedHash.deriveSecret(clientHandshakeTrafficLabel)
 
@@ -1021,7 +1038,7 @@ ResendHelloRetryRequest:
 
 	// Switch to application data keys on write. In particular, any alerts
 	// from the client certificate are sent over these keys.
-	c.useOutTrafficSecret(c.wireVersion, hs.suite, serverTrafficSecret)
+	c.useOutTrafficSecret(encryptionApplication, c.wireVersion, hs.suite, serverTrafficSecret)
 
 	// Send 0.5-RTT messages.
 	for _, halfRTTMsg := range config.Bugs.SendHalfRTTData {
@@ -1046,8 +1063,31 @@ ResendHelloRetryRequest:
 	}
 
 	// Switch input stream to handshake traffic keys.
-	if err := c.useInTrafficSecret(c.wireVersion, hs.suite, clientHandshakeTrafficSecret); err != nil {
+	if err := c.useInTrafficSecret(encryptionHandshake, c.wireVersion, hs.suite, clientHandshakeTrafficSecret); err != nil {
 		return err
+	}
+
+	// If we sent an ALPS extension, the client must respond with one.
+	if encryptedExtensions.extensions.hasApplicationSettings {
+		msg, err := c.readHandshake()
+		if err != nil {
+			return err
+		}
+		clientEncryptedExtensions, ok := msg.(*clientEncryptedExtensionsMsg)
+		if !ok {
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(clientEncryptedExtensions, msg)
+		}
+		hs.writeClientHash(clientEncryptedExtensions.marshal())
+
+		if !clientEncryptedExtensions.hasApplicationSettings {
+			c.sendAlert(alertMissingExtension)
+			return errors.New("tls: client didn't provide application settings")
+		}
+		c.peerApplicationSettings = clientEncryptedExtensions.applicationSettings
+	} else if encryptedExtensions.extensions.hasEarlyData {
+		// 0-RTT sessions carry application settings over.
+		c.peerApplicationSettings = hs.sessionState.peerApplicationSettings
 	}
 
 	// If we requested a client certificate, then the client must send a
@@ -1152,7 +1192,7 @@ ResendHelloRetryRequest:
 	hs.writeClientHash(clientFinished.marshal())
 
 	// Switch to application data keys on read.
-	if err := c.useInTrafficSecret(c.wireVersion, hs.suite, clientTrafficSecret); err != nil {
+	if err := c.useInTrafficSecret(encryptionApplication, c.wireVersion, hs.suite, clientTrafficSecret); err != nil {
 		return err
 	}
 
@@ -1367,6 +1407,26 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 			c.clientProtocol = selectedProto
 			c.usedALPN = true
 		}
+
+		var alpsAllowed bool
+		if c.vers >= VersionTLS13 {
+			for _, proto := range hs.clientHello.alpsProtocols {
+				if proto == c.clientProtocol {
+					alpsAllowed = true
+					break
+				}
+			}
+		}
+		if c.config.Bugs.AlwaysNegotiateApplicationSettings {
+			alpsAllowed = true
+		}
+		if settings, ok := c.config.ApplicationSettings[c.clientProtocol]; ok && alpsAllowed {
+			c.hasApplicationSettings = true
+			c.localApplicationSettings = settings
+			// Note these fields may later be cleared we accept 0-RTT.
+			serverExtensions.hasApplicationSettings = true
+			serverExtensions.applicationSettings = settings
+		}
 	}
 
 	if len(c.config.Bugs.SendALPN) > 0 {
@@ -1389,7 +1449,16 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 
 	if len(hs.clientHello.quicTransportParams) > 0 {
 		c.quicTransportParams = hs.clientHello.quicTransportParams
+	}
+	if c.config.QUICTransportParamsUseLegacyCodepoint.IncludeStandard() {
 		serverExtensions.quicTransportParams = c.config.QUICTransportParams
+	}
+
+	if len(hs.clientHello.quicTransportParamsLegacy) > 0 {
+		c.quicTransportParamsLegacy = hs.clientHello.quicTransportParamsLegacy
+	}
+	if c.config.QUICTransportParamsUseLegacyCodepoint.IncludeLegacy() {
+		serverExtensions.quicTransportParamsLegacy = c.config.QUICTransportParams
 	}
 
 	if c.vers < VersionTLS13 || config.Bugs.NegotiateEMSAtAllVersions {
@@ -1415,7 +1484,7 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 		serverExtensions.tokenBindingVersion = config.TokenBindingVersion
 	}
 
-	if len(hs.clientHello.tokenBindingParams) > 0 && (!hs.clientHello.extendedMasterSecret || hs.clientHello.secureRenegotiation == nil) {
+	if c.vers < VersionTLS13 && len(hs.clientHello.tokenBindingParams) > 0 && (!hs.clientHello.extendedMasterSecret || hs.clientHello.secureRenegotiation == nil) {
 		return errors.New("client sent Token Binding without EMS and/or RI")
 	}
 

@@ -12,6 +12,7 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -26,17 +27,24 @@
 #include <openssl/aead.h>
 #include <openssl/aes.h>
 #include <openssl/bn.h>
+#include <openssl/cipher.h>
 #include <openssl/cmac.h>
+#include <openssl/dh.h>
 #include <openssl/digest.h>
 #include <openssl/ec.h>
 #include <openssl/ec_key.h>
+#include <openssl/ecdh.h>
 #include <openssl/ecdsa.h>
+#include <openssl/err.h>
 #include <openssl/hmac.h>
 #include <openssl/obj.h>
+#include <openssl/rsa.h>
 #include <openssl/sha.h>
 #include <openssl/span.h>
 
+#include "../../../../crypto/fipsmodule/ec/internal.h"
 #include "../../../../crypto/fipsmodule/rand/internal.h"
+#include "../../../../crypto/fipsmodule/tls/internal.h"
 
 static constexpr size_t kMaxArgs = 8;
 static constexpr size_t kMaxArgLength = (1 << 20);
@@ -84,7 +92,7 @@ static bool WriteReply(int fd, Args... args) {
   for (size_t i = 0; i < spans.size(); i++) {
     const auto &span = spans[i];
     nums[i + 1] = span.size();
-    if (span.size() == 0) {
+    if (span.empty()) {
       continue;
     }
 
@@ -160,6 +168,13 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
         }]
       },
       {
+        "algorithm": "SHA2-512/256",
+        "revision": "1.0",
+        "messageLength": [{
+          "min": 0, "max": 65528, "increment": 8
+        }]
+      },
+      {
         "algorithm": "SHA-1",
         "revision": "1.0",
         "messageLength": [{
@@ -199,9 +214,9 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
           "min": 0, "max": 256, "increment": 8
         }],
         "aadLen": [{
-          "min": 0, "max": 256, "increment": 8
+          "min": 0, "max": 320, "increment": 8
         }],
-        "tagLen": [128],
+        "tagLen": [32, 64, 96, 104, 112, 120, 128],
         "ivLen": [96],
         "ivGen": "external"
       },
@@ -233,7 +248,7 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
         "keyLen": [
             128, 192, 256
         ],
-        "payloadLen": [{"min": 8, "max": 1024, "increment": 8}]
+        "payloadLen": [{"min": 8, "max": 4096, "increment": 8}]
       },
       {
         "algorithm": "ACVP-AES-CCM",
@@ -249,6 +264,20 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
         "ivLen": [104],
         "tagLen": [32],
         "aadLen": [{"min": 0, "max": 1024, "increment": 8}]
+      },
+      {
+        "algorithm": "ACVP-TDES-ECB",
+        "revision": "1.0",
+        "direction": ["encrypt", "decrypt"],
+        "keyLen": [192],
+        "keyingOption": [1]
+      },
+      {
+        "algorithm": "ACVP-TDES-CBC",
+        "revision": "1.0",
+        "direction": ["encrypt", "decrypt"],
+        "keyLen": [192],
+        "keyingOption": [1]
       },
       {
         "algorithm": "HMAC-SHA-1",
@@ -381,6 +410,286 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
         }]
       },
       {
+        "algorithm": "RSA",
+        "mode": "keyGen",
+        "revision": "FIPS186-4",
+        "infoGeneratedByServer": true,
+        "pubExpMode": "fixed",
+        "fixedPubExp": "010001",
+        "keyFormat": "standard",
+        "capabilities": [{
+          "randPQ": "B.3.3",
+          "properties": [{
+            "modulo": 2048,
+            "primeTest": [
+              "tblC2"
+            ]
+          },{
+            "modulo": 3072,
+            "primeTest": [
+              "tblC2"
+            ]
+          },{
+            "modulo": 4096,
+            "primeTest": [
+              "tblC2"
+            ]
+          }]
+        }]
+      },
+      {
+        "algorithm": "RSA",
+        "mode": "sigGen",
+        "revision": "FIPS186-4",
+        "capabilities": [{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 2048,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 3072,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 4096,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pss",
+          "properties": [{
+            "modulo": 2048,
+            "hashPair": [{
+              "hashAlg": "SHA2-224",
+              "saltLen": 28
+            }, {
+              "hashAlg": "SHA2-256",
+              "saltLen": 32
+            }, {
+              "hashAlg": "SHA2-384",
+              "saltLen": 48
+            }, {
+              "hashAlg": "SHA2-512",
+              "saltLen": 64
+            }, {
+              "hashAlg": "SHA-1",
+              "saltLen": 20
+            }]
+          }]
+        },{
+          "sigType": "pss",
+          "properties": [{
+            "modulo": 3072,
+            "hashPair": [{
+              "hashAlg": "SHA2-224",
+              "saltLen": 28
+            }, {
+              "hashAlg": "SHA2-256",
+              "saltLen": 32
+            }, {
+              "hashAlg": "SHA2-384",
+              "saltLen": 48
+            }, {
+              "hashAlg": "SHA2-512",
+              "saltLen": 64
+            }, {
+              "hashAlg": "SHA-1",
+              "saltLen": 20
+            }]
+          }]
+        },{
+          "sigType": "pss",
+          "properties": [{
+            "modulo": 4096,
+            "hashPair": [{
+              "hashAlg": "SHA2-224",
+              "saltLen": 28
+            }, {
+              "hashAlg": "SHA2-256",
+              "saltLen": 32
+            }, {
+              "hashAlg": "SHA2-384",
+              "saltLen": 48
+            }, {
+              "hashAlg": "SHA2-512",
+              "saltLen": 64
+            }, {
+              "hashAlg": "SHA-1",
+              "saltLen": 20
+            }]
+          }]
+        }]
+      },
+      {
+        "algorithm": "RSA",
+        "mode": "sigVer",
+        "revision": "FIPS186-4",
+        "pubExpMode": "fixed",
+        "fixedPubExp": "010001",
+        "capabilities": [{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 1024,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 2048,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 3072,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pkcs1v1.5",
+          "properties": [{
+            "modulo": 4096,
+            "hashPair": [{
+              "hashAlg": "SHA2-224"
+            }, {
+              "hashAlg": "SHA2-256"
+            }, {
+              "hashAlg": "SHA2-384"
+            }, {
+              "hashAlg": "SHA2-512"
+            }, {
+              "hashAlg": "SHA-1"
+            }]
+          }]
+        },{
+          "sigType": "pss",
+          "properties": [{
+            "modulo": 2048,
+            "hashPair": [{
+              "hashAlg": "SHA2-224",
+              "saltLen": 28
+            }, {
+              "hashAlg": "SHA2-256",
+              "saltLen": 32
+            }, {
+              "hashAlg": "SHA2-384",
+              "saltLen": 48
+            }, {
+              "hashAlg": "SHA2-512",
+              "saltLen": 64
+            }, {
+              "hashAlg": "SHA-1",
+              "saltLen": 20
+            }]
+          }]
+        },{
+          "sigType": "pss",
+          "properties": [{
+            "modulo": 3072,
+            "hashPair": [{
+              "hashAlg": "SHA2-224",
+              "saltLen": 28
+            }, {
+              "hashAlg": "SHA2-256",
+              "saltLen": 32
+            }, {
+              "hashAlg": "SHA2-384",
+              "saltLen": 48
+            }, {
+              "hashAlg": "SHA2-512",
+              "saltLen": 64
+            }, {
+              "hashAlg": "SHA-1",
+              "saltLen": 20
+            }]
+          }]
+        },{
+          "sigType": "pss",
+          "properties": [{
+            "modulo": 4096,
+            "hashPair": [{
+              "hashAlg": "SHA2-224",
+              "saltLen": 28
+            }, {
+              "hashAlg": "SHA2-256",
+              "saltLen": 32
+            }, {
+              "hashAlg": "SHA2-384",
+              "saltLen": 48
+            }, {
+              "hashAlg": "SHA2-512",
+              "saltLen": 64
+            }, {
+              "hashAlg": "SHA-1",
+              "saltLen": 20
+            }]
+          }]
+        }]
+      },
+      {
         "algorithm": "CMAC-AES",
         "revision": "1.0",
         "capabilities": [{
@@ -397,6 +706,67 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
             "increment": 8
           }]
         }]
+      },
+      {
+        "algorithm": "kdf-components",
+        "revision": "1.0",
+        "mode": "tls",
+        "tlsVersion": [
+          "v1.0/1.1",
+          "v1.2"
+        ],
+        "hashAlg": [
+          "SHA2-256",
+          "SHA2-384",
+          "SHA2-512"
+        ]
+      },
+      {
+        "algorithm": "KAS-ECC-SSC",
+        "revision": "Sp800-56Ar3",
+        "scheme": {
+          "ephemeralUnified": {
+            "kasRole": [
+              "initiator",
+              "responder"
+            ]
+          }
+        },
+        "domainParameterGenerationMethods": [
+          "P-224",
+          "P-256",
+          "P-384",
+          "P-521"
+        ]
+      },
+      {
+        "algorithm": "KAS-FFC",
+        "revision": "1.0",
+        "mode": "Component",
+        "function": [
+          "keyPairGen"
+        ],
+        "scheme": {
+          "dhEphem": {
+            "kasRole": [
+              "initiator"
+            ],
+            "noKdfNoKc": {
+              "parameterSet": {
+                "fb": {
+                  "hashAlg": [
+                    "SHA2-256"
+                  ]
+                },
+                "fc": {
+                  "hashAlg": [
+                    "SHA2-256"
+                  ]
+                }
+              }
+            }
+          }
+        }
       }
     ])";
   return WriteReply(
@@ -413,6 +783,27 @@ static bool Hash(const Span<const uint8_t> args[]) {
   return WriteReply(STDOUT_FILENO, Span<const uint8_t>(digest));
 }
 
+static uint32_t GetIterations(const Span<const uint8_t> iterations_bytes) {
+  uint32_t iterations;
+  if (iterations_bytes.size() != sizeof(iterations)) {
+    fprintf(stderr,
+            "Expected %u-byte input for number of iterations, but found %u "
+            "bytes.\n",
+            static_cast<unsigned>(sizeof(iterations)),
+            static_cast<unsigned>(iterations_bytes.size()));
+    abort();
+  }
+
+  memcpy(&iterations, iterations_bytes.data(), sizeof(iterations));
+  if (iterations == 0 || iterations == UINT32_MAX) {
+    fprintf(stderr, "Invalid number of iterations: %x.\n",
+            static_cast<unsigned>(iterations));
+    abort();
+  }
+
+  return iterations;
+}
+
 template <int (*SetKey)(const uint8_t *key, unsigned bits, AES_KEY *out),
           void (*Block)(const uint8_t *in, uint8_t *out, const AES_KEY *key)>
 static bool AES(const Span<const uint8_t> args[]) {
@@ -423,13 +814,22 @@ static bool AES(const Span<const uint8_t> args[]) {
   if (args[1].size() % AES_BLOCK_SIZE != 0) {
     return false;
   }
+  std::vector<uint8_t> result(args[1].begin(), args[1].end());
+  const uint32_t iterations = GetIterations(args[2]);
 
-  std::vector<uint8_t> out;
-  out.resize(args[1].size());
-  for (size_t i = 0; i < args[1].size(); i += AES_BLOCK_SIZE) {
-    Block(args[1].data() + i, &out[i], &key);
+  std::vector<uint8_t> prev_result;
+  for (uint32_t j = 0; j < iterations; j++) {
+    if (j == iterations - 1) {
+      prev_result = result;
+    }
+
+    for (size_t i = 0; i < args[1].size(); i += AES_BLOCK_SIZE) {
+      Block(result.data() + i, result.data() + i, &key);
+    }
   }
-  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(out));
+
+  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(result),
+                    Span<const uint8_t>(prev_result));
 }
 
 template <int (*SetKey)(const uint8_t *key, unsigned bits, AES_KEY *out),
@@ -439,21 +839,56 @@ static bool AES_CBC(const Span<const uint8_t> args[]) {
   if (SetKey(args[0].data(), args[0].size() * 8, &key) != 0) {
     return false;
   }
-  if (args[1].size() % AES_BLOCK_SIZE != 0 ||
+  if (args[1].size() % AES_BLOCK_SIZE != 0 || args[1].empty() ||
       args[2].size() != AES_BLOCK_SIZE) {
     return false;
   }
-  uint8_t iv[AES_BLOCK_SIZE];
-  memcpy(iv, args[2].data(), AES_BLOCK_SIZE);
+  std::vector<uint8_t> input(args[1].begin(), args[1].end());
+  std::vector<uint8_t> iv(args[2].begin(), args[2].end());
+  const uint32_t iterations = GetIterations(args[3]);
 
-  std::vector<uint8_t> out;
-  out.resize(args[1].size());
-  AES_cbc_encrypt(args[1].data(), out.data(), args[1].size(), &key, iv,
-                  Direction);
-  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(out));
+  std::vector<uint8_t> result(input.size());
+  std::vector<uint8_t> prev_result, prev_input;
+
+  for (uint32_t j = 0; j < iterations; j++) {
+    prev_result = result;
+    if (j > 0) {
+      if (Direction == AES_ENCRYPT) {
+        iv = result;
+      } else {
+        iv = prev_input;
+      }
+    }
+
+    // AES_cbc_encrypt will mutate the given IV, but we need it later.
+    uint8_t iv_copy[AES_BLOCK_SIZE];
+    memcpy(iv_copy, iv.data(), sizeof(iv_copy));
+    AES_cbc_encrypt(input.data(), result.data(), input.size(), &key, iv_copy,
+                    Direction);
+
+    if (Direction == AES_DECRYPT) {
+      prev_input = input;
+    }
+
+    if (j == 0) {
+      input = iv;
+    } else {
+      input = prev_result;
+    }
+  }
+
+  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(result),
+                    Span<const uint8_t>(prev_result));
 }
 
 static bool AES_CTR(const Span<const uint8_t> args[]) {
+  static const uint32_t kOneIteration = 1;
+  if (args[3].size() != sizeof(kOneIteration) ||
+      memcmp(args[3].data(), &kOneIteration, sizeof(kOneIteration))) {
+    fprintf(stderr, "Only a single iteration supported with AES-CTR\n");
+    return false;
+  }
+
   AES_KEY key;
   if (AES_set_encrypt_key(args[0].data(), args[0].size() * 8, &key) != 0) {
     return false;
@@ -463,6 +898,10 @@ static bool AES_CTR(const Span<const uint8_t> args[]) {
   }
   uint8_t iv[AES_BLOCK_SIZE];
   memcpy(iv, args[2].data(), AES_BLOCK_SIZE);
+  if (GetIterations(args[3]) != 1) {
+    fprintf(stderr, "Multiple iterations of AES-CTR is not supported.\n");
+    return false;
+  }
 
   std::vector<uint8_t> out;
   out.resize(args[1].size());
@@ -720,6 +1159,118 @@ static bool AESPaddedKeyWrapOpen(const Span<const uint8_t> args[]) {
                     Span<const uint8_t>(out));
 }
 
+template <bool Encrypt>
+static bool TDES(const Span<const uint8_t> args[]) {
+  const EVP_CIPHER *cipher = EVP_des_ede3();
+
+  if (args[0].size() != 24) {
+    fprintf(stderr, "Bad key length %u for 3DES.\n",
+            static_cast<unsigned>(args[0].size()));
+    return false;
+  }
+  bssl::ScopedEVP_CIPHER_CTX ctx;
+  if (!EVP_CipherInit_ex(ctx.get(), cipher, nullptr, args[0].data(), nullptr,
+                         Encrypt ? 1 : 0) ||
+      !EVP_CIPHER_CTX_set_padding(ctx.get(), 0)) {
+    return false;
+  }
+
+  if (args[1].size() % 8) {
+    fprintf(stderr, "Bad input length %u for 3DES.\n",
+            static_cast<unsigned>(args[1].size()));
+    return false;
+  }
+  std::vector<uint8_t> result(args[1].begin(), args[1].end());
+
+  const uint32_t iterations = GetIterations(args[2]);
+  std::vector<uint8_t> prev_result, prev_prev_result;
+
+  for (uint32_t j = 0; j < iterations; j++) {
+    if (j == iterations - 1) {
+      prev_result = result;
+    } else if (iterations >= 2 && j == iterations - 2) {
+      prev_prev_result = result;
+    }
+
+    int out_len;
+    if (!EVP_CipherUpdate(ctx.get(), result.data(), &out_len, result.data(),
+                          result.size()) ||
+        out_len != static_cast<int>(result.size())) {
+      return false;
+    }
+  }
+
+  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(result),
+                    Span<const uint8_t>(prev_result),
+                    Span<const uint8_t>(prev_prev_result));
+}
+
+template <bool Encrypt>
+static bool TDES_CBC(const Span<const uint8_t> args[]) {
+  const EVP_CIPHER *cipher = EVP_des_ede3_cbc();
+
+  if (args[0].size() != 24) {
+    fprintf(stderr, "Bad key length %u for 3DES.\n",
+            static_cast<unsigned>(args[0].size()));
+    return false;
+  }
+
+  if (args[1].size() % 8 || args[1].size() == 0) {
+    fprintf(stderr, "Bad input length %u for 3DES.\n",
+            static_cast<unsigned>(args[1].size()));
+    return false;
+  }
+  std::vector<uint8_t> input(args[1].begin(), args[1].end());
+
+  if (args[2].size() != EVP_CIPHER_iv_length(cipher)) {
+    fprintf(stderr, "Bad IV length %u for 3DES.\n",
+            static_cast<unsigned>(args[2].size()));
+    return false;
+  }
+  std::vector<uint8_t> iv(args[2].begin(), args[2].end());
+  const uint32_t iterations = GetIterations(args[3]);
+
+  std::vector<uint8_t> result(input.size());
+  std::vector<uint8_t> prev_result, prev_prev_result;
+  bssl::ScopedEVP_CIPHER_CTX ctx;
+  if (!EVP_CipherInit_ex(ctx.get(), cipher, nullptr, args[0].data(), iv.data(),
+                         Encrypt ? 1 : 0) ||
+      !EVP_CIPHER_CTX_set_padding(ctx.get(), 0)) {
+    return false;
+  }
+
+  for (uint32_t j = 0; j < iterations; j++) {
+    prev_prev_result = prev_result;
+    prev_result = result;
+
+    int out_len, out_len2;
+    if (!EVP_CipherInit_ex(ctx.get(), nullptr, nullptr, nullptr, iv.data(),
+                           -1) ||
+        !EVP_CipherUpdate(ctx.get(), result.data(), &out_len, input.data(),
+                          input.size()) ||
+        !EVP_CipherFinal_ex(ctx.get(), result.data() + out_len, &out_len2) ||
+        (out_len + out_len2) != static_cast<int>(result.size())) {
+      return false;
+    }
+
+    if (Encrypt) {
+      if (j == 0) {
+        input = iv;
+      } else {
+        input = prev_result;
+      }
+      iv = result;
+    } else {
+      iv = input;
+      input = result;
+    }
+  }
+
+  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(result),
+                    Span<const uint8_t>(prev_result),
+                    Span<const uint8_t>(prev_prev_result));
+}
+
 template <const EVP_MD *HashFunc()>
 static bool HMAC(const Span<const uint8_t> args[]) {
   const EVP_MD *const md = HashFunc();
@@ -950,6 +1501,269 @@ static bool CMAC_AES(const Span<const uint8_t> args[]) {
   return WriteReply(STDOUT_FILENO, Span<const uint8_t>(mac, mac_len));
 }
 
+static std::map<unsigned, bssl::UniquePtr<RSA>>& CachedRSAKeys() {
+  static std::map<unsigned, bssl::UniquePtr<RSA>> keys;
+  return keys;
+}
+
+static RSA* GetRSAKey(unsigned bits) {
+  auto it = CachedRSAKeys().find(bits);
+  if (it != CachedRSAKeys().end()) {
+    return it->second.get();
+  }
+
+  bssl::UniquePtr<RSA> key(RSA_new());
+  if (!RSA_generate_key_fips(key.get(), bits, nullptr)) {
+    abort();
+  }
+
+  RSA *const ret = key.get();
+  CachedRSAKeys().emplace(static_cast<unsigned>(bits), std::move(key));
+
+  return ret;
+}
+
+static bool RSAKeyGen(const Span<const uint8_t> args[]) {
+  uint32_t bits;
+  if (args[0].size() != sizeof(bits)) {
+    return false;
+  }
+  memcpy(&bits, args[0].data(), sizeof(bits));
+
+  bssl::UniquePtr<RSA> key(RSA_new());
+  if (!RSA_generate_key_fips(key.get(), bits, nullptr)) {
+    fprintf(stderr, "RSA_generate_key_fips failed for modulus length %u.\n",
+            bits);
+    return false;
+  }
+
+  const BIGNUM *n, *e, *d, *p, *q;
+  RSA_get0_key(key.get(), &n, &e, &d);
+  RSA_get0_factors(key.get(), &p, &q);
+
+  if (!WriteReply(STDOUT_FILENO, BIGNUMBytes(e), BIGNUMBytes(p), BIGNUMBytes(q),
+                  BIGNUMBytes(n), BIGNUMBytes(d))) {
+    return false;
+  }
+
+  CachedRSAKeys().emplace(static_cast<unsigned>(bits), std::move(key));
+  return true;
+}
+
+template<const EVP_MD *(MDFunc)(), bool UsePSS>
+static bool RSASigGen(const Span<const uint8_t> args[]) {
+  uint32_t bits;
+  if (args[0].size() != sizeof(bits)) {
+    return false;
+  }
+  memcpy(&bits, args[0].data(), sizeof(bits));
+  const Span<const uint8_t> msg = args[1];
+
+  RSA *const key = GetRSAKey(bits);
+  const EVP_MD *const md = MDFunc();
+  uint8_t digest_buf[EVP_MAX_MD_SIZE];
+  unsigned digest_len;
+  if (!EVP_Digest(msg.data(), msg.size(), digest_buf, &digest_len, md, NULL)) {
+    return false;
+  }
+
+  std::vector<uint8_t> sig(RSA_size(key));
+  size_t sig_len;
+  if (UsePSS) {
+    if (!RSA_sign_pss_mgf1(key, &sig_len, sig.data(), sig.size(), digest_buf,
+                           digest_len, md, md, -1)) {
+      return false;
+    }
+  } else {
+    unsigned sig_len_u;
+    if (!RSA_sign(EVP_MD_type(md), digest_buf, digest_len, sig.data(),
+                  &sig_len_u, key)) {
+      return false;
+    }
+    sig_len = sig_len_u;
+  }
+
+  sig.resize(sig_len);
+
+  return WriteReply(STDOUT_FILENO, BIGNUMBytes(RSA_get0_n(key)),
+                    BIGNUMBytes(RSA_get0_e(key)), sig);
+}
+
+template<const EVP_MD *(MDFunc)(), bool UsePSS>
+static bool RSASigVer(const Span<const uint8_t> args[]) {
+  const Span<const uint8_t> n_bytes = args[0];
+  const Span<const uint8_t> e_bytes = args[1];
+  const Span<const uint8_t> msg = args[2];
+  const Span<const uint8_t> sig = args[3];
+
+  BIGNUM *n = BN_new();
+  BIGNUM *e = BN_new();
+  bssl::UniquePtr<RSA> key(RSA_new());
+  if (!BN_bin2bn(n_bytes.data(), n_bytes.size(), n) ||
+      !BN_bin2bn(e_bytes.data(), e_bytes.size(), e) ||
+      !RSA_set0_key(key.get(), n, e, /*d=*/nullptr)) {
+    return false;
+  }
+
+  const EVP_MD *const md = MDFunc();
+  uint8_t digest_buf[EVP_MAX_MD_SIZE];
+  unsigned digest_len;
+  if (!EVP_Digest(msg.data(), msg.size(), digest_buf, &digest_len, md, NULL)) {
+    return false;
+  }
+
+  uint8_t ok;
+  if (UsePSS) {
+    ok = RSA_verify_pss_mgf1(key.get(), digest_buf, digest_len, md, md, -1,
+                             sig.data(), sig.size());
+  } else {
+    ok = RSA_verify(EVP_MD_type(md), digest_buf, digest_len, sig.data(),
+                    sig.size(), key.get());
+  }
+  ERR_clear_error();
+
+  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(&ok, 1));
+}
+
+template<const EVP_MD *(MDFunc)()>
+static bool TLSKDF(const Span<const uint8_t> args[]) {
+  const Span<const uint8_t> out_len_bytes = args[0];
+  const Span<const uint8_t> secret = args[1];
+  const Span<const uint8_t> label = args[2];
+  const Span<const uint8_t> seed1 = args[3];
+  const Span<const uint8_t> seed2 = args[4];
+  const EVP_MD *md = MDFunc();
+
+  uint32_t out_len;
+  if (out_len_bytes.size() != sizeof(out_len)) {
+    return 0;
+  }
+  memcpy(&out_len, out_len_bytes.data(), sizeof(out_len));
+
+  std::vector<uint8_t> out(static_cast<size_t>(out_len));
+  if (!CRYPTO_tls1_prf(md, out.data(), out.size(), secret.data(), secret.size(),
+                       reinterpret_cast<const char *>(label.data()),
+                       label.size(), seed1.data(), seed1.size(), seed2.data(),
+                       seed2.size())) {
+    return 0;
+  }
+
+  return WriteReply(STDOUT_FILENO, out);
+}
+
+template <int Nid>
+static bool ECDH(const Span<const uint8_t> args[]) {
+  bssl::UniquePtr<BIGNUM> their_x(BytesToBIGNUM(args[0]));
+  bssl::UniquePtr<BIGNUM> their_y(BytesToBIGNUM(args[1]));
+  const Span<const uint8_t> private_key = args[2];
+
+  bssl::UniquePtr<EC_KEY> ec_key(EC_KEY_new_by_curve_name(Nid));
+  bssl::UniquePtr<BN_CTX> ctx(BN_CTX_new());
+
+  const EC_GROUP *const group = EC_KEY_get0_group(ec_key.get());
+  bssl::UniquePtr<EC_POINT> their_point(EC_POINT_new(group));
+  if (!EC_POINT_set_affine_coordinates_GFp(
+          group, their_point.get(), their_x.get(), their_y.get(), ctx.get())) {
+    fprintf(stderr, "Invalid peer point for ECDH.\n");
+    return false;
+  }
+
+  if (!private_key.empty()) {
+    bssl::UniquePtr<BIGNUM> our_k(BytesToBIGNUM(private_key));
+    if (!EC_KEY_set_private_key(ec_key.get(), our_k.get())) {
+      fprintf(stderr, "EC_KEY_set_private_key failed.\n");
+      return false;
+    }
+
+    bssl::UniquePtr<EC_POINT> our_pub(EC_POINT_new(group));
+    if (!EC_POINT_mul(group, our_pub.get(), our_k.get(), nullptr, nullptr,
+                      ctx.get()) ||
+        !EC_KEY_set_public_key(ec_key.get(), our_pub.get())) {
+      fprintf(stderr, "Calculating public key failed.\n");
+      return false;
+    }
+  } else if (!EC_KEY_generate_key_fips(ec_key.get())) {
+    fprintf(stderr, "EC_KEY_generate_key_fips failed.\n");
+    return false;
+  }
+
+  // The output buffer is one larger than |EC_MAX_BYTES| so that truncation
+  // can be detected.
+  std::vector<uint8_t> output(EC_MAX_BYTES + 1);
+  const int out_len =
+      ECDH_compute_key(output.data(), output.size(), their_point.get(),
+                       ec_key.get(), /*kdf=*/nullptr);
+  if (out_len < 0) {
+    fprintf(stderr, "ECDH_compute_key failed.\n");
+    return false;
+  } else if (static_cast<size_t>(out_len) == output.size()) {
+    fprintf(stderr, "ECDH_compute_key output may have been truncated.\n");
+    return false;
+  }
+  output.resize(static_cast<size_t>(out_len));
+
+  const EC_POINT *pub = EC_KEY_get0_public_key(ec_key.get());
+  bssl::UniquePtr<BIGNUM> x(BN_new());
+  bssl::UniquePtr<BIGNUM> y(BN_new());
+  if (!EC_POINT_get_affine_coordinates_GFp(group, pub, x.get(), y.get(),
+                                           ctx.get())) {
+    fprintf(stderr, "EC_POINT_get_affine_coordinates_GFp failed.\n");
+    return false;
+  }
+
+  return WriteReply(STDOUT_FILENO, BIGNUMBytes(x.get()), BIGNUMBytes(y.get()),
+                    output);
+}
+
+template<const EVP_MD* (*HashFunc)()>
+static bool FFDH(const Span<const uint8_t> args[]) {
+  bssl::UniquePtr<BIGNUM> p(BytesToBIGNUM(args[0]));
+  bssl::UniquePtr<BIGNUM> q(BytesToBIGNUM(args[1]));
+  bssl::UniquePtr<BIGNUM> g(BytesToBIGNUM(args[2]));
+  bssl::UniquePtr<BIGNUM> their_pub(BytesToBIGNUM(args[3]));
+  const Span<const uint8_t> private_key_span = args[4];
+  const Span<const uint8_t> public_key_span = args[5];
+
+  bssl::UniquePtr<DH> dh(DH_new());
+  if (!DH_set0_pqg(dh.get(), p.get(), q.get(), g.get())) {
+    fprintf(stderr, "DH_set0_pqg failed.\n");
+    return 0;
+  }
+
+  // DH_set0_pqg took ownership of these values.
+  p.release();
+  q.release();
+  g.release();
+
+  if (!private_key_span.empty()) {
+    bssl::UniquePtr<BIGNUM> private_key(BytesToBIGNUM(private_key_span));
+    bssl::UniquePtr<BIGNUM> public_key(BytesToBIGNUM(public_key_span));
+
+    if (!DH_set0_key(dh.get(), public_key.get(), private_key.get())) {
+      fprintf(stderr, "DH_set0_key failed.\n");
+      return 0;
+    }
+
+    // DH_set0_key took ownership of these values.
+    public_key.release();
+    private_key.release();
+  } else if (!DH_generate_key(dh.get())) {
+    fprintf(stderr, "DH_generate_key failed.\n");
+    return false;
+  }
+
+  uint8_t digest[EVP_MAX_MD_SIZE];
+  size_t digest_len;
+  if (!DH_compute_key_hashed(dh.get(), digest, &digest_len, sizeof(digest),
+                             their_pub.get(), HashFunc())) {
+    fprintf(stderr, "DH_compute_key_hashed failed.\n");
+    return false;
+  }
+
+  return WriteReply(STDOUT_FILENO, BIGNUMBytes(DH_get0_pub_key(dh.get())),
+                    Span<const uint8_t>(digest, digest_len));
+}
+
 static constexpr struct {
   const char name[kMaxNameLength + 1];
   uint8_t expected_args;
@@ -959,14 +1773,15 @@ static constexpr struct {
     {"SHA-1", 1, Hash<SHA1, SHA_DIGEST_LENGTH>},
     {"SHA2-224", 1, Hash<SHA224, SHA224_DIGEST_LENGTH>},
     {"SHA2-256", 1, Hash<SHA256, SHA256_DIGEST_LENGTH>},
-    {"SHA2-384", 1, Hash<SHA384, SHA256_DIGEST_LENGTH>},
+    {"SHA2-384", 1, Hash<SHA384, SHA384_DIGEST_LENGTH>},
     {"SHA2-512", 1, Hash<SHA512, SHA512_DIGEST_LENGTH>},
-    {"AES/encrypt", 2, AES<AES_set_encrypt_key, AES_encrypt>},
-    {"AES/decrypt", 2, AES<AES_set_decrypt_key, AES_decrypt>},
-    {"AES-CBC/encrypt", 3, AES_CBC<AES_set_encrypt_key, AES_ENCRYPT>},
-    {"AES-CBC/decrypt", 3, AES_CBC<AES_set_decrypt_key, AES_DECRYPT>},
-    {"AES-CTR/encrypt", 3, AES_CTR},
-    {"AES-CTR/decrypt", 3, AES_CTR},
+    {"SHA2-512/256", 1, Hash<SHA512_256, SHA512_256_DIGEST_LENGTH>},
+    {"AES/encrypt", 3, AES<AES_set_encrypt_key, AES_encrypt>},
+    {"AES/decrypt", 3, AES<AES_set_decrypt_key, AES_decrypt>},
+    {"AES-CBC/encrypt", 4, AES_CBC<AES_set_encrypt_key, AES_ENCRYPT>},
+    {"AES-CBC/decrypt", 4, AES_CBC<AES_set_decrypt_key, AES_DECRYPT>},
+    {"AES-CTR/encrypt", 4, AES_CTR},
+    {"AES-CTR/decrypt", 4, AES_CTR},
     {"AES-GCM/seal", 5, AEADSeal<AESGCMSetup>},
     {"AES-GCM/open", 5, AEADOpen<AESGCMSetup>},
     {"AES-KW/seal", 5, AESKeyWrapSeal},
@@ -975,6 +1790,10 @@ static constexpr struct {
     {"AES-KWP/open", 5, AESPaddedKeyWrapOpen},
     {"AES-CCM/seal", 5, AEADSeal<AESCCMSetup>},
     {"AES-CCM/open", 5, AEADOpen<AESCCMSetup>},
+    {"3DES-ECB/encrypt", 3, TDES<true>},
+    {"3DES-ECB/decrypt", 3, TDES<false>},
+    {"3DES-CBC/encrypt", 4, TDES_CBC<true>},
+    {"3DES-CBC/decrypt", 4, TDES_CBC<false>},
     {"HMAC-SHA-1", 2, HMAC<EVP_sha1>},
     {"HMAC-SHA2-224", 2, HMAC<EVP_sha224>},
     {"HMAC-SHA2-256", 2, HMAC<EVP_sha256>},
@@ -986,6 +1805,36 @@ static constexpr struct {
     {"ECDSA/sigGen", 4, ECDSASigGen},
     {"ECDSA/sigVer", 7, ECDSASigVer},
     {"CMAC-AES", 3, CMAC_AES},
+    {"RSA/keyGen", 1, RSAKeyGen},
+    {"RSA/sigGen/SHA2-224/pkcs1v1.5", 2, RSASigGen<EVP_sha224, false>},
+    {"RSA/sigGen/SHA2-256/pkcs1v1.5", 2, RSASigGen<EVP_sha256, false>},
+    {"RSA/sigGen/SHA2-384/pkcs1v1.5", 2, RSASigGen<EVP_sha384, false>},
+    {"RSA/sigGen/SHA2-512/pkcs1v1.5", 2, RSASigGen<EVP_sha512, false>},
+    {"RSA/sigGen/SHA-1/pkcs1v1.5", 2, RSASigGen<EVP_sha1, false>},
+    {"RSA/sigGen/SHA2-224/pss", 2, RSASigGen<EVP_sha224, true>},
+    {"RSA/sigGen/SHA2-256/pss", 2, RSASigGen<EVP_sha256, true>},
+    {"RSA/sigGen/SHA2-384/pss", 2, RSASigGen<EVP_sha384, true>},
+    {"RSA/sigGen/SHA2-512/pss", 2, RSASigGen<EVP_sha512, true>},
+    {"RSA/sigGen/SHA-1/pss", 2, RSASigGen<EVP_sha1, true>},
+    {"RSA/sigVer/SHA2-224/pkcs1v1.5", 4, RSASigVer<EVP_sha224, false>},
+    {"RSA/sigVer/SHA2-256/pkcs1v1.5", 4, RSASigVer<EVP_sha256, false>},
+    {"RSA/sigVer/SHA2-384/pkcs1v1.5", 4, RSASigVer<EVP_sha384, false>},
+    {"RSA/sigVer/SHA2-512/pkcs1v1.5", 4, RSASigVer<EVP_sha512, false>},
+    {"RSA/sigVer/SHA-1/pkcs1v1.5", 4, RSASigVer<EVP_sha1, false>},
+    {"RSA/sigVer/SHA2-224/pss", 4, RSASigVer<EVP_sha224, true>},
+    {"RSA/sigVer/SHA2-256/pss", 4, RSASigVer<EVP_sha256, true>},
+    {"RSA/sigVer/SHA2-384/pss", 4, RSASigVer<EVP_sha384, true>},
+    {"RSA/sigVer/SHA2-512/pss", 4, RSASigVer<EVP_sha512, true>},
+    {"RSA/sigVer/SHA-1/pss", 4, RSASigVer<EVP_sha1, true>},
+    {"TLSKDF/1.0/SHA-1", 5, TLSKDF<EVP_md5_sha1>},
+    {"TLSKDF/1.2/SHA2-256", 5, TLSKDF<EVP_sha256>},
+    {"TLSKDF/1.2/SHA2-384", 5, TLSKDF<EVP_sha384>},
+    {"TLSKDF/1.2/SHA2-512", 5, TLSKDF<EVP_sha512>},
+    {"ECDH/P-224", 3, ECDH<NID_secp224r1>},
+    {"ECDH/P-256", 3, ECDH<NID_X9_62_prime256v1>},
+    {"ECDH/P-384", 3, ECDH<NID_secp384r1>},
+    {"ECDH/P-521", 3, ECDH<NID_secp521r1>},
+    {"FFDH/SHA2-256", 6, FFDH<EVP_sha256>},
 };
 
 int main() {
