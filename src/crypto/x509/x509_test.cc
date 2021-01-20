@@ -244,6 +244,14 @@ moZWgjHvB2W9Ckn7sDqsPB+U2tyX0joDdQEyuiMECDY8oQ==
 -----END RSA PRIVATE KEY-----
 )";
 
+static const char kP256Key[] = R"(
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBw8IcnrUoEqc3VnJ
+TYlodwi1b8ldMHcO6NHJzgqLtGqhRANCAATmK2niv2Wfl74vHg2UikzVl2u3qR4N
+Rvvdqakendy6WgHn1peoChj5w8SjHlbifINI2xYaHPUdfvGULUvPciLB
+-----END PRIVATE KEY-----
+)";
+
 // kCRLTestRoot is a test root certificate. It has private key:
 //
 //     -----BEGIN RSA PRIVATE KEY-----
@@ -461,6 +469,20 @@ piMlrwIaaPcHURqjUDBOMB0GA1UdDgQWBBSi7Ht5X58kra/dqHpA9T+WPX/7tTAf
 BgNVHSMEGDAWgBSi7Ht5X58kra/dqHpA9T+WPX/7tTAMBgNVHRMEBTADAQH/MAcG
 AytlcAUAA0EA70uefNocdJohkKPNROKVyBuBD3LXMyvmdTklsaxSRY3PcZdOohlr
 recgVPpVS7B+d9g4EwtZXIh4lodTBDHBBw==
+-----END CERTIFICATE-----
+)";
+
+// kX25519 is the example X25519 certificate from
+// https://tools.ietf.org/html/rfc8410#section-10.2
+static const char kX25519Cert[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBLDCB36ADAgECAghWAUdKKo3DMDAFBgMrZXAwGTEXMBUGA1UEAwwOSUVURiBUZX
+N0IERlbW8wHhcNMTYwODAxMTIxOTI0WhcNNDAxMjMxMjM1OTU5WjAZMRcwFQYDVQQD
+DA5JRVRGIFRlc3QgRGVtbzAqMAUGAytlbgMhAIUg8AmJMKdUdIt93LQ+91oNvzoNJj
+ga9OukqY6qm05qo0UwQzAPBgNVHRMBAf8EBTADAQEAMA4GA1UdDwEBAAQEAwIDCDAg
+BgNVHQ4BAQAEFgQUmx9e7e0EM4Xk97xiPFl1uQvIuzswBQYDK2VwA0EAryMB/t3J5v
+/BzKc9dNZIpDmAgs3babFOTQbs+BolzlDUwsPrdGxO3YNGhW7Ibz3OGhhlxXrCe1Cg
+w1AH9efZBw==
 -----END CERTIFICATE-----
 )";
 
@@ -1466,6 +1488,40 @@ TEST(X509Test, TestEd25519BadParameters) {
   ERR_clear_error();
 }
 
+TEST(X509Test, TestX25519) {
+  bssl::UniquePtr<X509> cert(CertFromPEM(kX25519Cert));
+  ASSERT_TRUE(cert);
+
+  bssl::UniquePtr<EVP_PKEY> pkey(X509_get_pubkey(cert.get()));
+  ASSERT_TRUE(pkey);
+
+  EXPECT_EQ(EVP_PKEY_id(pkey.get()), EVP_PKEY_X25519);
+
+  constexpr uint8_t kExpectedPublicValue[] = {
+      0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54, 0x74, 0x8b, 0x7d,
+      0xdc, 0xb4, 0x3e, 0xf7, 0x5a, 0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38,
+      0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e, 0xaa, 0x9b, 0x4e, 0x6a,
+  };
+  uint8_t public_value[sizeof(kExpectedPublicValue)];
+  size_t public_value_size = sizeof(public_value);
+  ASSERT_TRUE(EVP_PKEY_get_raw_public_key(pkey.get(), public_value,
+                                          &public_value_size));
+  EXPECT_EQ(Bytes(kExpectedPublicValue),
+            Bytes(public_value, public_value_size));
+}
+
+static bssl::UniquePtr<X509> ReencodeCertificate(X509 *cert) {
+  uint8_t *der = nullptr;
+  int len = i2d_X509(cert, &der);
+  bssl::UniquePtr<uint8_t> free_der(der);
+  if (len <= 0) {
+    return nullptr;
+  }
+
+  const uint8_t *inp = der;
+  return bssl::UniquePtr<X509>(d2i_X509(nullptr, &inp, len));
+}
+
 static bool SignatureRoundTrips(EVP_MD_CTX *md_ctx, EVP_PKEY *pkey) {
   // Make a certificate like signed with |md_ctx|'s settings.'
   bssl::UniquePtr<X509> cert(CertFromPEM(kLeafPEM));
@@ -1475,7 +1531,14 @@ static bool SignatureRoundTrips(EVP_MD_CTX *md_ctx, EVP_PKEY *pkey) {
 
   // Ensure that |pkey| may still be used to verify the resulting signature. All
   // settings in |md_ctx| must have been serialized appropriately.
-  return !!X509_verify(cert.get(), pkey);
+  if (!X509_verify(cert.get(), pkey)) {
+    return false;
+  }
+
+  // Re-encode the certificate. X509 objects contain a cached TBSCertificate
+  // encoding and |X509_sign_ctx| should have refreshed that cache.
+  bssl::UniquePtr<X509> copy = ReencodeCertificate(cert.get());
+  return copy && X509_verify(copy.get(), pkey);
 }
 
 TEST(X509Test, RSASign) {
@@ -1495,6 +1558,99 @@ TEST(X509Test, RSASign) {
   ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING));
   ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_mgf1_md(pkey_ctx, EVP_sha512()));
   ASSERT_TRUE(SignatureRoundTrips(md_ctx.get(), pkey.get()));
+
+  // RSA-PSS with salt length matching hash length should work when passing in
+  // -1 or the value explicitly.
+  md_ctx.Reset();
+  ASSERT_TRUE(EVP_DigestSignInit(md_ctx.get(), &pkey_ctx, EVP_sha256(), NULL,
+                                 pkey.get()));
+  ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING));
+  ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, -1));
+  ASSERT_TRUE(SignatureRoundTrips(md_ctx.get(), pkey.get()));
+
+  md_ctx.Reset();
+  ASSERT_TRUE(EVP_DigestSignInit(md_ctx.get(), &pkey_ctx, EVP_sha256(), NULL,
+                                 pkey.get()));
+  ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING));
+  ASSERT_TRUE(EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, 32));
+  ASSERT_TRUE(SignatureRoundTrips(md_ctx.get(), pkey.get()));
+}
+
+// Test the APIs for manually signing a certificate.
+TEST(X509Test, RSASignManual) {
+  const int kSignatureNID = NID_sha384WithRSAEncryption;
+  const EVP_MD *kSignatureHash = EVP_sha384();
+
+  bssl::UniquePtr<EVP_PKEY> pkey(PrivateKeyFromPEM(kRSAKey));
+  ASSERT_TRUE(pkey);
+  bssl::UniquePtr<X509_ALGOR> algor(X509_ALGOR_new());
+  ASSERT_TRUE(algor);
+  ASSERT_TRUE(X509_ALGOR_set0(algor.get(), OBJ_nid2obj(kSignatureNID),
+                              V_ASN1_NULL, nullptr));
+
+  // Test certificates made both from other certificates and |X509_new|, in case
+  // there are bugs in filling in fields from different states. (Parsed
+  // certificate contain a TBSCertificate cache, and |X509_new| initializes
+  // fields based on complex ASN.1 template logic.)
+  for (bool new_cert : {true, false}) {
+    SCOPED_TRACE(new_cert);
+
+    bssl::UniquePtr<X509> cert;
+    if (new_cert) {
+      cert.reset(X509_new());
+      // Fill in some fields for the certificate arbitrarily.
+      EXPECT_TRUE(X509_set_version(cert.get(), 2 /* X.509v3 */));
+      EXPECT_TRUE(ASN1_INTEGER_set(X509_get_serialNumber(cert.get()), 1));
+      EXPECT_TRUE(X509_gmtime_adj(X509_getm_notBefore(cert.get()), 0));
+      EXPECT_TRUE(
+          X509_gmtime_adj(X509_getm_notAfter(cert.get()), 60 * 60 * 24));
+      X509_NAME *subject = X509_get_subject_name(cert.get());
+      X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
+                                 reinterpret_cast<const uint8_t *>("Test"), -1,
+                                 -1, 0);
+      EXPECT_TRUE(X509_set_issuer_name(cert.get(), subject));
+      EXPECT_TRUE(X509_set_pubkey(cert.get(), pkey.get()));
+    } else {
+      // Extract fields from a parsed certificate.
+      cert = CertFromPEM(kLeafPEM);
+      ASSERT_TRUE(cert);
+
+      // We should test with a different algorithm from what is already in the
+      // certificate.
+      EXPECT_NE(kSignatureNID, X509_get_signature_nid(cert.get()));
+    }
+
+    // Fill in the signature algorithm.
+    ASSERT_TRUE(X509_set1_signature_algo(cert.get(), algor.get()));
+
+    // Extract the TBSCertificiate.
+    uint8_t *tbs_cert = nullptr;
+    int tbs_cert_len = i2d_re_X509_tbs(cert.get(), &tbs_cert);
+    bssl::UniquePtr<uint8_t> free_tbs_cert(tbs_cert);
+    ASSERT_GT(tbs_cert_len, 0);
+
+    // Generate a signature externally and fill it in.
+    bssl::ScopedEVP_MD_CTX md_ctx;
+    ASSERT_TRUE(EVP_DigestSignInit(md_ctx.get(), nullptr, kSignatureHash,
+                                   nullptr, pkey.get()));
+    size_t sig_len;
+    ASSERT_TRUE(EVP_DigestSign(md_ctx.get(), nullptr, &sig_len, tbs_cert,
+                               tbs_cert_len));
+    std::vector<uint8_t> sig(sig_len);
+    ASSERT_TRUE(EVP_DigestSign(md_ctx.get(), sig.data(), &sig_len, tbs_cert,
+                               tbs_cert_len));
+    sig.resize(sig_len);
+    ASSERT_TRUE(X509_set1_signature_value(cert.get(), sig.data(), sig.size()));
+
+    // Check the signature.
+    EXPECT_TRUE(X509_verify(cert.get(), pkey.get()));
+
+    // Re-encode the certificate. X509 objects contain a cached TBSCertificate
+    // encoding and |i2d_re_X509_tbs| should have refreshed that cache.
+    bssl::UniquePtr<X509> copy = ReencodeCertificate(cert.get());
+    ASSERT_TRUE(copy);
+    EXPECT_TRUE(X509_verify(copy.get(), pkey.get()));
+  }
 }
 
 TEST(X509Test, Ed25519Sign) {
@@ -2543,5 +2699,298 @@ TEST(X509Test, BasicConstraints) {
     ASSERT_TRUE(cert);
     EXPECT_EQ(test.flags, X509_get_extension_flags(cert.get()) & kFlagMask);
     EXPECT_EQ(test.path_len, X509_get_pathlen(cert.get()));
+  }
+}
+
+// The following strings are test certificates signed by kP256Key and kRSAKey,
+// with missing, NULL, or invalid algorithm parameters.
+static const char kP256NoParam[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBIDCBxqADAgECAgIE0jAKBggqhkjOPQQDAjAPMQ0wCwYDVQQDEwRUZXN0MCAX
+DTAwMDEwMTAwMDAwMFoYDzIxMDAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQDEwRUZXN0
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5itp4r9ln5e+Lx4NlIpM1Zdrt6ke
+DUb73ampHp3culoB59aXqAoY+cPEox5W4nyDSNsWGhz1HX7xlC1Lz3IiwaMQMA4w
+DAYDVR0TBAUwAwEB/zAKBggqhkjOPQQDAgNJADBGAiEAqdIiF+bN9Cl44oUeICpy
+aXd7HqhpVUaglYKw9ChmNUACIQCpMdL0fNkFNDbRww9dSl/y7kBdk/tp16HiqeSy
+gGzFYg==
+-----END CERTIFICATE-----
+)";
+static const char kP256NullParam[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBJDCByKADAgECAgIE0jAMBggqhkjOPQQDAgUAMA8xDTALBgNVBAMTBFRlc3Qw
+IBcNMDAwMTAxMDAwMDAwWhgPMjEwMDAxMDEwMDAwMDBaMA8xDTALBgNVBAMTBFRl
+c3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATmK2niv2Wfl74vHg2UikzVl2u3
+qR4NRvvdqakendy6WgHn1peoChj5w8SjHlbifINI2xYaHPUdfvGULUvPciLBoxAw
+DjAMBgNVHRMEBTADAQH/MAwGCCqGSM49BAMCBQADSQAwRgIhAKILHmyo+F3Cn/VX
+UUeSXOQQKX5aLzsQitwwmNF3ZgH3AiEAsYHcrVj/ftmoQIORARkQ/+PrqntXev8r
+t6uPxHrmpUY=
+-----END CERTIFICATE-----
+)";
+static const char kP256InvalidParam[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBMTCBz6ADAgECAgIE0jATBggqhkjOPQQDAgQHZ2FyYmFnZTAPMQ0wCwYDVQQD
+EwRUZXN0MCAXDTAwMDEwMTAwMDAwMFoYDzIxMDAwMTAxMDAwMDAwWjAPMQ0wCwYD
+VQQDEwRUZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5itp4r9ln5e+Lx4N
+lIpM1Zdrt6keDUb73ampHp3culoB59aXqAoY+cPEox5W4nyDSNsWGhz1HX7xlC1L
+z3IiwaMQMA4wDAYDVR0TBAUwAwEB/zATBggqhkjOPQQDAgQHZ2FyYmFnZQNIADBF
+AiAglpDf/YhN89LeJ2WAs/F0SJIrsuhS4uoInIz6WXUiuQIhAIu5Pwhp5E3Pbo8y
+fLULTZnynuQUULQkRcF7S7T2WpIL
+-----END CERTIFICATE-----
+)";
+static const char kRSANoParam[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBWzCBx6ADAgECAgIE0jALBgkqhkiG9w0BAQswDzENMAsGA1UEAxMEVGVzdDAg
+Fw0wMDAxMDEwMDAwMDBaGA8yMTAwMDEwMTAwMDAwMFowDzENMAsGA1UEAxMEVGVz
+dDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOYraeK/ZZ+Xvi8eDZSKTNWXa7ep
+Hg1G+92pqR6d3LpaAefWl6gKGPnDxKMeVuJ8g0jbFhoc9R1+8ZQtS89yIsGjEDAO
+MAwGA1UdEwQFMAMBAf8wCwYJKoZIhvcNAQELA4GBAC1f8W3W0Ao7CPfIBQYDSbPh
+brZpbxdBU5x27JOS7iSa+Lc9pEH5VCX9vIypHVHXLPEfZ38yIt11eiyrmZB6w62N
+l9kIeZ6FVPmC30d3sXx70Jjs+ZX9yt7kD1gLyNAQQfeYfa4rORAZT1n2YitD74NY
+TWUH2ieFP3l+ecj1SeQR
+-----END CERTIFICATE-----
+)";
+static const char kRSANullParam[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBXzCByaADAgECAgIE0jANBgkqhkiG9w0BAQsFADAPMQ0wCwYDVQQDEwRUZXN0
+MCAXDTAwMDEwMTAwMDAwMFoYDzIxMDAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQDEwRU
+ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5itp4r9ln5e+Lx4NlIpM1Zdr
+t6keDUb73ampHp3culoB59aXqAoY+cPEox5W4nyDSNsWGhz1HX7xlC1Lz3IiwaMQ
+MA4wDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOBgQAzVcfIv+Rq1KrMXqIL
+fPq/cWZjgqFZA1RGaGElNaqp+rkJfamq5tDGzckWpebrK+jjRN7yIlcWDtPpy3Gy
+seZfvtBDR0TwJm0S/pQl8prKB4wgALcwe3bmi56Rq85nzY5ZLNcP16LQxL+jAAua
+SwmQUz4bRpckRBj+sIyp1We+pg==
+-----END CERTIFICATE-----
+)";
+static const char kRSAInvalidParam[] = R"(
+-----BEGIN CERTIFICATE-----
+MIIBbTCB0KADAgECAgIE0jAUBgkqhkiG9w0BAQsEB2dhcmJhZ2UwDzENMAsGA1UE
+AxMEVGVzdDAgFw0wMDAxMDEwMDAwMDBaGA8yMTAwMDEwMTAwMDAwMFowDzENMAsG
+A1UEAxMEVGVzdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOYraeK/ZZ+Xvi8e
+DZSKTNWXa7epHg1G+92pqR6d3LpaAefWl6gKGPnDxKMeVuJ8g0jbFhoc9R1+8ZQt
+S89yIsGjEDAOMAwGA1UdEwQFMAMBAf8wFAYJKoZIhvcNAQELBAdnYXJiYWdlA4GB
+AHTJ6cWWjCNrZhqiWWVI3jdK+h5xpRG8jGMXxR4JnjtoYRRusJLOXhmapwCB6fA0
+4vc+66O27v36yDmQX+tIc/hDrTpKNJptU8q3n2VagREvoHhkOTYkcCeS8vmnMtn8
+5OMNZ/ajVwOssw61GcAlScRqEHkZFBoGp7e+QpgB2tf9
+-----END CERTIFICATE-----
+)";
+
+TEST(X509Test, AlgorithmParameters) {
+  // P-256 parameters should be omitted, but we accept NULL ones.
+  bssl::UniquePtr<EVP_PKEY> key = PrivateKeyFromPEM(kP256Key);
+  ASSERT_TRUE(key);
+
+  bssl::UniquePtr<X509> cert = CertFromPEM(kP256NoParam);
+  ASSERT_TRUE(cert);
+  EXPECT_TRUE(X509_verify(cert.get(), key.get()));
+
+  cert = CertFromPEM(kP256NullParam);
+  ASSERT_TRUE(cert);
+  EXPECT_TRUE(X509_verify(cert.get(), key.get()));
+
+  cert = CertFromPEM(kP256InvalidParam);
+  ASSERT_TRUE(cert);
+  EXPECT_FALSE(X509_verify(cert.get(), key.get()));
+  uint32_t err = ERR_get_error();
+  EXPECT_EQ(ERR_LIB_X509, ERR_GET_LIB(err));
+  EXPECT_EQ(X509_R_INVALID_PARAMETER, ERR_GET_REASON(err));
+
+  // RSA parameters should be NULL, but we accept omitted ones.
+  key = PrivateKeyFromPEM(kRSAKey);
+  ASSERT_TRUE(key);
+
+  cert = CertFromPEM(kRSANoParam);
+  ASSERT_TRUE(cert);
+  EXPECT_TRUE(X509_verify(cert.get(), key.get()));
+
+  cert = CertFromPEM(kRSANullParam);
+  ASSERT_TRUE(cert);
+  EXPECT_TRUE(X509_verify(cert.get(), key.get()));
+
+  cert = CertFromPEM(kRSAInvalidParam);
+  ASSERT_TRUE(cert);
+  EXPECT_FALSE(X509_verify(cert.get(), key.get()));
+  err = ERR_get_error();
+  EXPECT_EQ(ERR_LIB_X509, ERR_GET_LIB(err));
+  EXPECT_EQ(X509_R_INVALID_PARAMETER, ERR_GET_REASON(err));
+}
+
+TEST(X509Test, GeneralName)  {
+  const std::vector<uint8_t> kNames[] = {
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.1 }
+      //   [0] {
+      //     SEQUENCE {}
+      //   }
+      // }
+      {0xa0, 0x13, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x01, 0xa0, 0x02, 0x30, 0x00},
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.1 }
+      //   [0] {
+      //     [APPLICATION 0] {}
+      //   }
+      // }
+      {0xa0, 0x13, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x01, 0xa0, 0x02, 0x60, 0x00},
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.1 }
+      //   [0] {
+      //     UTF8String { "a" }
+      //   }
+      // }
+      {0xa0, 0x14, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x01, 0xa0, 0x03, 0x0c, 0x01, 0x61},
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.2 }
+      //   [0] {
+      //     UTF8String { "a" }
+      //   }
+      // }
+      {0xa0, 0x14, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x02, 0xa0, 0x03, 0x0c, 0x01, 0x61},
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.1 }
+      //   [0] {
+      //     UTF8String { "b" }
+      //   }
+      // }
+      {0xa0, 0x14, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x01, 0xa0, 0x03, 0x0c, 0x01, 0x62},
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.1 }
+      //   [0] {
+      //     BOOLEAN { TRUE }
+      //   }
+      // }
+      {0xa0, 0x14, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x01, 0xa0, 0x03, 0x01, 0x01, 0xff},
+      // [0] {
+      //   OBJECT_IDENTIFIER { 1.2.840.113554.4.1.72585.2.1 }
+      //   [0] {
+      //     BOOLEAN { FALSE }
+      //   }
+      // }
+      {0xa0, 0x14, 0x06, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04,
+       0x01, 0x84, 0xb7, 0x09, 0x02, 0x01, 0xa0, 0x03, 0x01, 0x01, 0x00},
+      // [1 PRIMITIVE] { "a" }
+      {0x81, 0x01, 0x61},
+      // [1 PRIMITIVE] { "b" }
+      {0x81, 0x01, 0x62},
+      // [2 PRIMITIVE] { "a" }
+      {0x82, 0x01, 0x61},
+      // [2 PRIMITIVE] { "b" }
+      {0x82, 0x01, 0x62},
+      // [4] {
+      //   SEQUENCE {
+      //     SET {
+      //       SEQUENCE {
+      //         # commonName
+      //         OBJECT_IDENTIFIER { 2.5.4.3 }
+      //         UTF8String { "a" }
+      //       }
+      //     }
+      //   }
+      // }
+      {0xa4, 0x0e, 0x30, 0x0c, 0x31, 0x0a, 0x30, 0x08, 0x06, 0x03, 0x55, 0x04,
+       0x03, 0x0c, 0x01, 0x61},
+      // [4] {
+      //   SEQUENCE {
+      //     SET {
+      //       SEQUENCE {
+      //         # commonName
+      //         OBJECT_IDENTIFIER { 2.5.4.3 }
+      //         UTF8String { "b" }
+      //       }
+      //     }
+      //   }
+      // }
+      {0xa4, 0x0e, 0x30, 0x0c, 0x31, 0x0a, 0x30, 0x08, 0x06, 0x03, 0x55, 0x04,
+       0x03, 0x0c, 0x01, 0x62},
+      // [5] {
+      //   [1] {
+      //     UTF8String { "a" }
+      //   }
+      // }
+      {0xa5, 0x05, 0xa1, 0x03, 0x0c, 0x01, 0x61},
+      // [5] {
+      //   [1] {
+      //     UTF8String { "b" }
+      //   }
+      // }
+      {0xa5, 0x05, 0xa1, 0x03, 0x0c, 0x01, 0x62},
+      // [5] {
+      //   [0] {
+      //     UTF8String {}
+      //   }
+      //   [1] {
+      //     UTF8String { "a" }
+      //   }
+      // }
+      {0xa5, 0x09, 0xa0, 0x02, 0x0c, 0x00, 0xa1, 0x03, 0x0c, 0x01, 0x61},
+      // [5] {
+      //   [0] {
+      //     UTF8String { "a" }
+      //   }
+      //   [1] {
+      //     UTF8String { "a" }
+      //   }
+      // }
+      {0xa5, 0x0a, 0xa0, 0x03, 0x0c, 0x01, 0x61, 0xa1, 0x03, 0x0c, 0x01, 0x61},
+      // [5] {
+      //   [0] {
+      //     UTF8String { "b" }
+      //   }
+      //   [1] {
+      //     UTF8String { "a" }
+      //   }
+      // }
+      {0xa5, 0x0a, 0xa0, 0x03, 0x0c, 0x01, 0x62, 0xa1, 0x03, 0x0c, 0x01, 0x61},
+      // [6 PRIMITIVE] { "a" }
+      {0x86, 0x01, 0x61},
+      // [6 PRIMITIVE] { "b" }
+      {0x86, 0x01, 0x62},
+      // [7 PRIMITIVE] { `11111111` }
+      {0x87, 0x04, 0x11, 0x11, 0x11, 0x11},
+      // [7 PRIMITIVE] { `22222222`}
+      {0x87, 0x04, 0x22, 0x22, 0x22, 0x22},
+      // [7 PRIMITIVE] { `11111111111111111111111111111111` }
+      {0x87, 0x10, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+       0x11, 0x11, 0x11, 0x11, 0x11, 0x11},
+      // [7 PRIMITIVE] { `22222222222222222222222222222222` }
+      {0x87, 0x10, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+       0x22, 0x22, 0x22, 0x22, 0x22, 0x22},
+      // [8 PRIMITIVE] { 1.2.840.113554.4.1.72585.2.1 }
+      {0x88, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04, 0x01, 0x84, 0xb7,
+       0x09, 0x02, 0x01},
+      // [8 PRIMITIVE] { 1.2.840.113554.4.1.72585.2.2 }
+      {0x88, 0x0d, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x04, 0x01, 0x84, 0xb7,
+       0x09, 0x02, 0x02},
+  };
+
+  // Every name should be equal to itself and not equal to any others.
+  for (size_t i = 0; i < OPENSSL_ARRAY_SIZE(kNames); i++) {
+    SCOPED_TRACE(Bytes(kNames[i]));
+
+    const uint8_t *ptr = kNames[i].data();
+    bssl::UniquePtr<GENERAL_NAME> a(
+        d2i_GENERAL_NAME(nullptr, &ptr, kNames[i].size()));
+    ASSERT_TRUE(a);
+    ASSERT_EQ(ptr, kNames[i].data() + kNames[i].size());
+
+    for (size_t j = 0; j < OPENSSL_ARRAY_SIZE(kNames); j++) {
+      SCOPED_TRACE(Bytes(kNames[j]));
+
+      ptr = kNames[j].data();
+      bssl::UniquePtr<GENERAL_NAME> b(
+          d2i_GENERAL_NAME(nullptr, &ptr, kNames[j].size()));
+      ASSERT_TRUE(b);
+      ASSERT_EQ(ptr, kNames[j].data() + kNames[j].size());
+
+      if (i == j) {
+        EXPECT_EQ(GENERAL_NAME_cmp(a.get(), b.get()), 0);
+      } else {
+        EXPECT_NE(GENERAL_NAME_cmp(a.get(), b.get()), 0);
+      }
+    }
   }
 }
