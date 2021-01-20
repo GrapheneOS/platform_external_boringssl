@@ -83,6 +83,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/conf/conf.c
   ${BORINGSSL_ROOT}src/crypto/cpu-aarch64-fuchsia.c
   ${BORINGSSL_ROOT}src/crypto/cpu-aarch64-linux.c
+  ${BORINGSSL_ROOT}src/crypto/cpu-aarch64-win.c
   ${BORINGSSL_ROOT}src/crypto/cpu-arm-linux.c
   ${BORINGSSL_ROOT}src/crypto/cpu-arm.c
   ${BORINGSSL_ROOT}src/crypto/cpu-intel.c
@@ -90,10 +91,8 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/crypto.c
   ${BORINGSSL_ROOT}src/crypto/curve25519/curve25519.c
   ${BORINGSSL_ROOT}src/crypto/curve25519/spake25519.c
-  ${BORINGSSL_ROOT}src/crypto/dh/check.c
-  ${BORINGSSL_ROOT}src/crypto/dh/dh.c
-  ${BORINGSSL_ROOT}src/crypto/dh/dh_asn1.c
-  ${BORINGSSL_ROOT}src/crypto/dh/params.c
+  ${BORINGSSL_ROOT}src/crypto/dh_extra/dh_asn1.c
+  ${BORINGSSL_ROOT}src/crypto/dh_extra/params.c
   ${BORINGSSL_ROOT}src/crypto/digest_extra/digest_extra.c
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa.c
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa_asn1.c
@@ -152,6 +151,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/rand_extra/deterministic.c
   ${BORINGSSL_ROOT}src/crypto/rand_extra/forkunsafe.c
   ${BORINGSSL_ROOT}src/crypto/rand_extra/fuchsia.c
+  ${BORINGSSL_ROOT}src/crypto/rand_extra/passive.c
   ${BORINGSSL_ROOT}src/crypto/rand_extra/rand_extra.c
   ${BORINGSSL_ROOT}src/crypto/rand_extra/windows.c
   ${BORINGSSL_ROOT}src/crypto/rc4/rc4.c
@@ -330,7 +330,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/curve25519/ed25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/spake25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/x25519_test.cc
-  ${BORINGSSL_ROOT}src/crypto/dh/dh_test.cc
+  ${BORINGSSL_ROOT}src/crypto/dh_extra/dh_test.cc
   ${BORINGSSL_ROOT}src/crypto/digest_extra/digest_test.cc
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa_test.cc
   ${BORINGSSL_ROOT}src/crypto/ecdh_extra/ecdh_test.cc
@@ -514,6 +514,18 @@ set(crypto_sources_mac_x86_64
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/x86_64-mont.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/fipsmodule/x86_64-mont5.S
   ${BORINGSSL_ROOT}mac-x86_64/crypto/test/trampoline-x86_64.S
+)
+set(crypto_sources_win_aarch64
+  ${BORINGSSL_ROOT}win-aarch64/crypto/chacha/chacha-armv8.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/aesv8-armx64.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/armv8-mont.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/ghash-neon-armv8.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/ghashv8-armx64.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/sha1-armv8.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/sha256-armv8.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/sha512-armv8.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/vpaes-armv8.S
+  ${BORINGSSL_ROOT}win-aarch64/crypto/test/trampoline-armv8.S
 )
 set(crypto_sources_win_x86
   ${BORINGSSL_ROOT}win-x86/crypto/chacha/chacha-x86.asm

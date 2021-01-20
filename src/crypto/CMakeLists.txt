@@ -47,17 +47,23 @@ if(NOT OPENSSL_NO_ASM)
       endforeach()
     endif()
   else()
-    if(${ARCH} STREQUAL "x86_64")
-      set(PERLASM_STYLE nasm)
+    if(${ARCH} STREQUAL "aarch64")
+      set(PERLASM_STYLE win64)
+      set(ASM_EXT S)
+      enable_language(ASM)
     else()
-      set(PERLASM_STYLE win32n)
-      set(PERLASM_FLAGS "-DOPENSSL_IA32_SSE2")
-    endif()
-    set(CMAKE_ASM_NASM_FLAGS "${CMAKE_ASM_NASM_FLAGS} -gcv8")
+      if(${ARCH} STREQUAL "x86_64")
+        set(PERLASM_STYLE nasm)
+      else()
+        set(PERLASM_STYLE win32n)
+        set(PERLASM_FLAGS "-DOPENSSL_IA32_SSE2")
+      endif()
+      set(CMAKE_ASM_NASM_FLAGS "${CMAKE_ASM_NASM_FLAGS} -gcv8")
 
-    # On Windows, we use the NASM output, specifically built with Yasm.
-    set(ASM_EXT asm)
-    enable_language(ASM_NASM)
+      # On Windows, we use the NASM output.
+      set(ASM_EXT asm)
+      enable_language(ASM_NASM)
+    endif()
   endif()
 endif()
 
@@ -258,6 +264,7 @@ add_library(
   conf/conf.c
   cpu-aarch64-fuchsia.c
   cpu-aarch64-linux.c
+  cpu-aarch64-win.c
   cpu-arm-linux.c
   cpu-arm.c
   cpu-intel.c
@@ -265,10 +272,8 @@ add_library(
   crypto.c
   curve25519/curve25519.c
   curve25519/spake25519.c
-  dh/dh.c
-  dh/params.c
-  dh/check.c
-  dh/dh_asn1.c
+  dh_extra/params.c
+  dh_extra/dh_asn1.c
   digest_extra/digest_extra.c
   dsa/dsa.c
   dsa/dsa_asn1.c
@@ -325,6 +330,7 @@ add_library(
   rand_extra/deterministic.c
   rand_extra/forkunsafe.c
   rand_extra/fuchsia.c
+  rand_extra/passive.c
   rand_extra/rand_extra.c
   rand_extra/windows.c
   rc4/rc4.c
@@ -501,7 +507,7 @@ add_executable(
   curve25519/spake25519_test.cc
   curve25519/x25519_test.cc
   ecdh_extra/ecdh_test.cc
-  dh/dh_test.cc
+  dh_extra/dh_test.cc
   digest_extra/digest_test.cc
   dsa/dsa_test.cc
   err/err_test.cc
