@@ -453,8 +453,6 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
               "hashAlg": "SHA2-384"
             }, {
               "hashAlg": "SHA2-512"
-            }, {
-              "hashAlg": "SHA-1"
             }]
           }]
         },{
@@ -469,8 +467,6 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
               "hashAlg": "SHA2-384"
             }, {
               "hashAlg": "SHA2-512"
-            }, {
-              "hashAlg": "SHA-1"
             }]
           }]
         },{
@@ -485,8 +481,6 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
               "hashAlg": "SHA2-384"
             }, {
               "hashAlg": "SHA2-512"
-            }, {
-              "hashAlg": "SHA-1"
             }]
           }]
         },{
@@ -505,9 +499,6 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
             }, {
               "hashAlg": "SHA2-512",
               "saltLen": 64
-            }, {
-              "hashAlg": "SHA-1",
-              "saltLen": 20
             }]
           }]
         },{
@@ -526,9 +517,6 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
             }, {
               "hashAlg": "SHA2-512",
               "saltLen": 64
-            }, {
-              "hashAlg": "SHA-1",
-              "saltLen": 20
             }]
           }]
         },{
@@ -547,9 +535,6 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
             }, {
               "hashAlg": "SHA2-512",
               "saltLen": 64
-            }, {
-              "hashAlg": "SHA-1",
-              "saltLen": 20
             }]
           }]
         }]
@@ -693,7 +678,7 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
         "algorithm": "CMAC-AES",
         "revision": "1.0",
         "capabilities": [{
-          "direction": ["gen", "ver"],
+          "direction": ["gen"],
           "msgLen": [{
             "min": 0,
             "max": 65536,
@@ -740,33 +725,19 @@ static bool GetConfig(const Span<const uint8_t> args[]) {
         ]
       },
       {
-        "algorithm": "KAS-FFC",
-        "revision": "1.0",
-        "mode": "Component",
-        "function": [
-          "keyPairGen"
-        ],
+        "algorithm": "KAS-FFC-SSC",
+        "revision": "Sp800-56Ar3",
         "scheme": {
           "dhEphem": {
             "kasRole": [
               "initiator"
-            ],
-            "noKdfNoKc": {
-              "parameterSet": {
-                "fb": {
-                  "hashAlg": [
-                    "SHA2-256"
-                  ]
-                },
-                "fc": {
-                  "hashAlg": [
-                    "SHA2-256"
-                  ]
-                }
-              }
-            }
+            ]
           }
-        }
+        },
+        "domainParameterGenerationMethods": [
+          "FB",
+          "FC"
+        ]
       }
     ])";
   return WriteReply(
@@ -1501,6 +1472,20 @@ static bool CMAC_AES(const Span<const uint8_t> args[]) {
   return WriteReply(STDOUT_FILENO, Span<const uint8_t>(mac, mac_len));
 }
 
+static bool CMAC_AESVerify(const Span<const uint8_t> args[]) {
+  // This function is just for testing since libcrypto doesn't do the
+  // verification itself. The regcap doesn't advertise "ver" support.
+  uint8_t mac[16];
+  if (!AES_CMAC(mac, args[0].data(), args[0].size(), args[1].data(),
+                args[1].size()) ||
+      args[2].size() > sizeof(mac)) {
+    return false;
+  }
+
+  const uint8_t ok = OPENSSL_memcmp(mac, args[2].data(), args[2].size());
+  return WriteReply(STDOUT_FILENO, Span<const uint8_t>(&ok, sizeof(ok)));
+}
+
 static std::map<unsigned, bssl::UniquePtr<RSA>>& CachedRSAKeys() {
   static std::map<unsigned, bssl::UniquePtr<RSA>> keys;
   return keys;
@@ -1715,7 +1700,6 @@ static bool ECDH(const Span<const uint8_t> args[]) {
                     output);
 }
 
-template<const EVP_MD* (*HashFunc)()>
 static bool FFDH(const Span<const uint8_t> args[]) {
   bssl::UniquePtr<BIGNUM> p(BytesToBIGNUM(args[0]));
   bssl::UniquePtr<BIGNUM> q(BytesToBIGNUM(args[1]));
@@ -1752,16 +1736,14 @@ static bool FFDH(const Span<const uint8_t> args[]) {
     return false;
   }
 
-  uint8_t digest[EVP_MAX_MD_SIZE];
-  size_t digest_len;
-  if (!DH_compute_key_hashed(dh.get(), digest, &digest_len, sizeof(digest),
-                             their_pub.get(), HashFunc())) {
+  std::vector<uint8_t> z(DH_size(dh.get()));
+  if (DH_compute_key_padded(z.data(), their_pub.get(), dh.get()) !=
+      static_cast<int>(z.size())) {
     fprintf(stderr, "DH_compute_key_hashed failed.\n");
     return false;
   }
 
-  return WriteReply(STDOUT_FILENO, BIGNUMBytes(DH_get0_pub_key(dh.get())),
-                    Span<const uint8_t>(digest, digest_len));
+  return WriteReply(STDOUT_FILENO, BIGNUMBytes(DH_get0_pub_key(dh.get())), z);
 }
 
 static constexpr struct {
@@ -1805,6 +1787,7 @@ static constexpr struct {
     {"ECDSA/sigGen", 4, ECDSASigGen},
     {"ECDSA/sigVer", 7, ECDSASigVer},
     {"CMAC-AES", 3, CMAC_AES},
+    {"CMAC-AES/verify", 3, CMAC_AESVerify},
     {"RSA/keyGen", 1, RSAKeyGen},
     {"RSA/sigGen/SHA2-224/pkcs1v1.5", 2, RSASigGen<EVP_sha224, false>},
     {"RSA/sigGen/SHA2-256/pkcs1v1.5", 2, RSASigGen<EVP_sha256, false>},
@@ -1834,7 +1817,7 @@ static constexpr struct {
     {"ECDH/P-256", 3, ECDH<NID_X9_62_prime256v1>},
     {"ECDH/P-384", 3, ECDH<NID_secp384r1>},
     {"ECDH/P-521", 3, ECDH<NID_secp521r1>},
-    {"FFDH/SHA2-256", 6, FFDH<EVP_sha256>},
+    {"FFDH", 6, FFDH},
 };
 
 int main() {
