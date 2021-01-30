@@ -59,6 +59,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/bio/printf.c
   ${BORINGSSL_ROOT}src/crypto/bio/socket.c
   ${BORINGSSL_ROOT}src/crypto/bio/socket_helper.c
+  ${BORINGSSL_ROOT}src/crypto/blake2/blake2.c
   ${BORINGSSL_ROOT}src/crypto/bn_extra/bn_asn1.c
   ${BORINGSSL_ROOT}src/crypto/bn_extra/convert.c
   ${BORINGSSL_ROOT}src/crypto/buf/buf.c
@@ -317,6 +318,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/asn1/asn1_test.cc
   ${BORINGSSL_ROOT}src/crypto/base64/base64_test.cc
   ${BORINGSSL_ROOT}src/crypto/bio/bio_test.cc
+  ${BORINGSSL_ROOT}src/crypto/blake2/blake2_test.cc
   ${BORINGSSL_ROOT}src/crypto/buf/buf_test.cc
   ${BORINGSSL_ROOT}src/crypto/bytestring/bytestring_test.cc
   ${BORINGSSL_ROOT}src/crypto/chacha/chacha_test.cc
