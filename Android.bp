@@ -425,7 +425,7 @@ cc_binary {
     name: "acvp_modulewrapper",
     host_supported: true,
     srcs: [
-        "src/util/fipstools/acvp/modulewrapper/modulewrapper.cc",
+        "src/util/fipstools/acvp/modulewrapper/main.cc",
     ],
     target: {
         android: {
@@ -439,6 +439,32 @@ cc_binary {
         },
     },
 
+    static_libs: [
+        "libacvp_modulewrapper",
+    ],
+    shared_libs: [
+        "libcrypto",
+    ],
+
+    defaults: [
+        "boringssl_flags",
+    ],
+}
+
+// ACVP wrapper implementation shared between Android and Trusty
+cc_library_static {
+    name: "libacvp_modulewrapper",
+    host_supported: true,
+    vendor_available: true,
+    srcs: [
+        "src/util/fipstools/acvp/modulewrapper/modulewrapper.cc",
+    ],
+    target: {
+        android: {
+            compile_multilib: "both",
+        },
+    },
+    export_include_dirs: ["src/util/fipstools/acvp/modulewrapper/"],
     shared_libs: [
         "libcrypto",
     ],
