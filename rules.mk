@@ -70,10 +70,6 @@ LOCAL_C_INCLUDES := src/crypto src/include
 
 GLOBAL_INCLUDES += $(addprefix $(LOCAL_DIR)/,$(LOCAL_C_INCLUDES))
 
-# BoringSSL expects an STL to be available when building for C++11 to provide
-# scopers. Suppress those APIs.
-GLOBAL_CPPFLAGS += -DBORINGSSL_NO_CXX
-
 MODULE_DEPS := \
 	lib/openssl-stubs \
 
