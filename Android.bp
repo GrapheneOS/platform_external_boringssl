@@ -472,6 +472,8 @@ cc_library_static {
     defaults: [
         "boringssl_flags",
     ],
+
+    visibility: ["//system/core/trusty/utils/acvp"],
 }
 
 // Test support library
