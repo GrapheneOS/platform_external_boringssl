@@ -271,6 +271,7 @@ cc_library_static {
         "//bootable/recovery/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
+        "//external/rust/crates/quiche",
         // Strictly, only the *static* toybox for legacy devices should have
         // access to libcrypto_static, but we can't express that.
         "//external/toybox",
