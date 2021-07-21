@@ -122,6 +122,7 @@ crypto_sources := \
   src/crypto/ex_data.c\
   src/crypto/fipsmodule/bcm.c\
   src/crypto/fipsmodule/fips_shared_support.c\
+  src/crypto/fipsmodule/is_fips.c\
   src/crypto/hkdf/hkdf.c\
   src/crypto/hpke/hpke.c\
   src/crypto/hrss/hrss.c\
@@ -188,6 +189,7 @@ crypto_sources := \
   src/crypto/x509/x509_ext.c\
   src/crypto/x509/x509_lu.c\
   src/crypto/x509/x509_obj.c\
+  src/crypto/x509/x509_r2x.c\
   src/crypto/x509/x509_req.c\
   src/crypto/x509/x509_set.c\
   src/crypto/x509/x509_trs.c\
@@ -254,8 +256,6 @@ ssl_sources := \
   src/ssl/d1_srtp.cc\
   src/ssl/dtls_method.cc\
   src/ssl/dtls_record.cc\
-  src/ssl/encrypted_client_hello.cc\
-  src/ssl/extensions.cc\
   src/ssl/handoff.cc\
   src/ssl/handshake.cc\
   src/ssl/handshake_client.cc\
@@ -278,6 +278,7 @@ ssl_sources := \
   src/ssl/ssl_versions.cc\
   src/ssl/ssl_x509.cc\
   src/ssl/t1_enc.cc\
+  src/ssl/t1_lib.cc\
   src/ssl/tls13_both.cc\
   src/ssl/tls13_client.cc\
   src/ssl/tls13_enc.cc\
