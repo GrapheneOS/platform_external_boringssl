@@ -66,7 +66,6 @@
 #include <openssl/x509v3.h>
 
 #include "../internal.h"
-#include "internal.h"
 
 /*
  * Method to handle CRL access. In general a CRL could be very large (several
@@ -205,12 +204,11 @@ static int crl_set_issuers(X509_CRL *crl)
 
         for (k = 0; k < sk_X509_EXTENSION_num(exts); k++) {
             ext = sk_X509_EXTENSION_value(exts, k);
-            if (X509_EXTENSION_get_critical(ext)) {
-              if (OBJ_obj2nid(X509_EXTENSION_get_object(ext)) ==
-                  NID_certificate_issuer)
-                continue;
-              crl->flags |= EXFLAG_CRITICAL;
-              break;
+            if (ext->critical > 0) {
+                if (OBJ_obj2nid(ext->object) == NID_certificate_issuer)
+                    continue;
+                crl->flags |= EXFLAG_CRITICAL;
+                break;
             }
         }
 
@@ -299,10 +297,10 @@ static int crl_cb(int operation, ASN1_VALUE **pval, const ASN1_ITEM *it,
         for (idx = 0; idx < sk_X509_EXTENSION_num(exts); idx++) {
             int nid;
             ext = sk_X509_EXTENSION_value(exts, idx);
-            nid = OBJ_obj2nid(X509_EXTENSION_get_object(ext));
+            nid = OBJ_obj2nid(ext->object);
             if (nid == NID_freshest_crl)
                 crl->flags |= EXFLAG_FRESHEST;
-            if (X509_EXTENSION_get_critical(ext)) {
+            if (ext->critical > 0) {
                 /* We handle IDP and deltas */
                 if ((nid == NID_issuing_distribution_point)
                     || (nid == NID_authority_key_identifier)
@@ -438,11 +436,6 @@ int X509_CRL_get0_by_cert(X509_CRL *crl, X509_REVOKED **ret, X509 *x)
 
 static int def_crl_verify(X509_CRL *crl, EVP_PKEY *r)
 {
-    if (X509_ALGOR_cmp(crl->sig_alg, crl->crl->sig_alg) != 0) {
-        OPENSSL_PUT_ERROR(X509, X509_R_SIGNATURE_ALGORITHM_MISMATCH);
-        return 0;
-    }
-
     return (ASN1_item_verify(ASN1_ITEM_rptr(X509_CRL_INFO),
                              crl->sig_alg, crl->signature, crl->crl, r));
 }
@@ -563,3 +556,7 @@ void *X509_CRL_get_meth_data(X509_CRL *crl)
 {
     return crl->meth_data;
 }
+
+IMPLEMENT_ASN1_SET_OF(X509_REVOKED)
+
+IMPLEMENT_ASN1_SET_OF(X509_CRL)
