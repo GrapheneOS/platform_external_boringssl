@@ -56,7 +56,7 @@ OPENSSL_STATIC_ASSERT(
 
 static inline struct poly1305_state_st *poly1305_aligned_state(
     poly1305_state *state) {
-  return align_pointer(state, 64);
+  return (struct poly1305_state_st *)(((uintptr_t)state + 63) & ~63);
 }
 
 // poly1305_blocks updates |state| given some amount of input data. This
