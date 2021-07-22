@@ -124,7 +124,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/ex_data.c
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/bcm.c
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/fips_shared_support.c
-  ${BORINGSSL_ROOT}src/crypto/fipsmodule/is_fips.c
   ${BORINGSSL_ROOT}src/crypto/hkdf/hkdf.c
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke.c
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss.c
@@ -191,7 +190,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/x509/x509_ext.c
   ${BORINGSSL_ROOT}src/crypto/x509/x509_lu.c
   ${BORINGSSL_ROOT}src/crypto/x509/x509_obj.c
-  ${BORINGSSL_ROOT}src/crypto/x509/x509_r2x.c
   ${BORINGSSL_ROOT}src/crypto/x509/x509_req.c
   ${BORINGSSL_ROOT}src/crypto/x509/x509_set.c
   ${BORINGSSL_ROOT}src/crypto/x509/x509_trs.c
@@ -258,6 +256,8 @@ set(ssl_sources
   ${BORINGSSL_ROOT}src/ssl/d1_srtp.cc
   ${BORINGSSL_ROOT}src/ssl/dtls_method.cc
   ${BORINGSSL_ROOT}src/ssl/dtls_record.cc
+  ${BORINGSSL_ROOT}src/ssl/encrypted_client_hello.cc
+  ${BORINGSSL_ROOT}src/ssl/extensions.cc
   ${BORINGSSL_ROOT}src/ssl/handoff.cc
   ${BORINGSSL_ROOT}src/ssl/handshake.cc
   ${BORINGSSL_ROOT}src/ssl/handshake_client.cc
@@ -280,7 +280,6 @@ set(ssl_sources
   ${BORINGSSL_ROOT}src/ssl/ssl_versions.cc
   ${BORINGSSL_ROOT}src/ssl/ssl_x509.cc
   ${BORINGSSL_ROOT}src/ssl/t1_enc.cc
-  ${BORINGSSL_ROOT}src/ssl/t1_lib.cc
   ${BORINGSSL_ROOT}src/ssl/tls13_both.cc
   ${BORINGSSL_ROOT}src/ssl/tls13_client.cc
   ${BORINGSSL_ROOT}src/ssl/tls13_enc.cc
@@ -296,6 +295,7 @@ set(tool_sources
   ${BORINGSSL_ROOT}src/tool/digest.cc
   ${BORINGSSL_ROOT}src/tool/fd.cc
   ${BORINGSSL_ROOT}src/tool/file.cc
+  ${BORINGSSL_ROOT}src/tool/generate_ech.cc
   ${BORINGSSL_ROOT}src/tool/generate_ed25519.cc
   ${BORINGSSL_ROOT}src/tool/genrsa.cc
   ${BORINGSSL_ROOT}src/tool/pkcs12.cc
@@ -326,6 +326,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/cipher_extra/cipher_test.cc
   ${BORINGSSL_ROOT}src/crypto/cmac/cmac_test.cc
   ${BORINGSSL_ROOT}src/crypto/compiler_test.cc
+  ${BORINGSSL_ROOT}src/crypto/conf/conf_test.cc
   ${BORINGSSL_ROOT}src/crypto/constant_time_test.cc
   ${BORINGSSL_ROOT}src/crypto/cpu-arm-linux_test.cc
   ${BORINGSSL_ROOT}src/crypto/crypto_test.cc

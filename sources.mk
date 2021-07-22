@@ -122,7 +122,6 @@ crypto_sources := \
   src/crypto/ex_data.c\
   src/crypto/fipsmodule/bcm.c\
   src/crypto/fipsmodule/fips_shared_support.c\
-  src/crypto/fipsmodule/is_fips.c\
   src/crypto/hkdf/hkdf.c\
   src/crypto/hpke/hpke.c\
   src/crypto/hrss/hrss.c\
@@ -189,7 +188,6 @@ crypto_sources := \
   src/crypto/x509/x509_ext.c\
   src/crypto/x509/x509_lu.c\
   src/crypto/x509/x509_obj.c\
-  src/crypto/x509/x509_r2x.c\
   src/crypto/x509/x509_req.c\
   src/crypto/x509/x509_set.c\
   src/crypto/x509/x509_trs.c\

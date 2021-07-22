@@ -370,7 +370,6 @@ add_library(
   x509/x509_ext.c
   x509/x509_lu.c
   x509/x509_obj.c
-  x509/x509_r2x.c
   x509/x509_req.c
   x509/x509_set.c
   x509/x509_trs.c
@@ -502,6 +501,7 @@ add_executable(
   cipher_extra/cipher_test.cc
   cmac/cmac_test.cc
   compiler_test.cc
+  conf/conf_test.cc
   constant_time_test.cc
   cpu-arm-linux_test.cc
   crypto_test.cc
