@@ -475,6 +475,12 @@ extern "C" {
 // it is safe to call mutating functions is a little tricky due to various
 // internal caches.
 
+// X509_VERSION_* are X.509 version numbers. Note the numerical values of all
+// defined X.509 versions are one less than the named version.
+#define X509_VERSION_1 0
+#define X509_VERSION_2 1
+#define X509_VERSION_3 2
+
 // X509_get_version returns the numerical value of |x509|'s version. That is,
 // it returns zero for X.509v1, one for X.509v2, and two for X.509v3. Unknown
 // versions are rejected by the parser, but a manually-created |X509| object may
@@ -1519,6 +1525,7 @@ BORINGSSL_MAKE_DELETER(RSA_PSS_PARAMS, RSA_PSS_PARAMS_free)
 BORINGSSL_MAKE_DELETER(X509, X509_free)
 BORINGSSL_MAKE_UP_REF(X509, X509_up_ref)
 BORINGSSL_MAKE_DELETER(X509_ALGOR, X509_ALGOR_free)
+BORINGSSL_MAKE_DELETER(X509_ATTRIBUTE, X509_ATTRIBUTE_free)
 BORINGSSL_MAKE_DELETER(X509_CRL, X509_CRL_free)
 BORINGSSL_MAKE_UP_REF(X509_CRL, X509_CRL_up_ref)
 BORINGSSL_MAKE_DELETER(X509_CRL_METHOD, X509_CRL_METHOD_free)
