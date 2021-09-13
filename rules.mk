@@ -68,6 +68,19 @@ MODULE_STATIC_ARMCAP += $(call toarmcap,SHA256,$(USE_ARM_V8_SHA2))
 MODULE_CFLAGS += $(MODULE_STATIC_ARMCAP)
 MODULE_ASMFLAGS += $(MODULE_STATIC_ARMCAP)
 
+ifeq (false,$(call TOBOOL,$(ALLOW_FP_USE)))
+# chacha, ghash, vpaes, sha1, and sha256 assembly files use neon instructions,
+# which we aren't allowed to do in the kernel if ALLOW_FP_USE is disabled. This
+# means that the kernel can't use these functions, but we don't need to for now.
+# If someone ever tries to, we will get missing symbols during linking.
+LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/chacha/chacha-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
+LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/ghash-neon-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
+LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/vpaes-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
+LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/sha1-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
+LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/sha256-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
+LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/test/trampoline-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
+endif
+
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES))
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES_$(ARCH)))
 
