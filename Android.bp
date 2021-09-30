@@ -304,6 +304,36 @@ cc_library_static {
     ],
 }
 
+// Common defaults for lib*_fuzz_unsafe. These are unsafe and deterministic
+// libraries for testing and fuzzing only. See src/FUZZING.md.
+cc_defaults {
+    name: "boringssl_fuzz_unsafe_defaults",
+    host_supported: true,
+    cflags: [
+        "-DBORINGSSL_UNSAFE_DETERMINISTIC_MODE",
+        "-DBORINGSSL_UNSAFE_FUZZER_MODE",
+    ],
+    visibility: [
+        "//frameworks/native/libs/binder/tests:__subpackages__",
+    ],
+}
+
+// Unsafe and deterministic version of libcrypto. For testing and fuzzing only.
+// See src/FUZZING.md.
+cc_test_library {
+    name: "libcrypto_fuzz_unsafe",
+    ramdisk_available: false,
+    vendor_ramdisk_available: false,
+    defaults: [
+        "libcrypto_bcm_sources",
+        "libcrypto_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+        "boringssl_fuzz_unsafe_defaults",
+    ],
+}
+
 //// libssl
 
 // Target static library
@@ -341,6 +371,22 @@ cc_library {
         "com.android.resolv",
     ],
     min_sdk_version: "29",
+}
+
+// Unsafe and deterministic version of libssl. For testing and fuzzing only.
+// See src/FUZZING.md.
+cc_test_library {
+    name: "libssl_fuzz_unsafe",
+    host_supported: true,
+    defaults: [
+        "libssl_sources",
+        "boringssl_defaults",
+        "boringssl_flags",
+        "boringssl_fuzz_unsafe_defaults",
+    ],
+    static_libs: [
+        "libcrypto_fuzz_unsafe",
+    ],
 }
 
 // Tool
