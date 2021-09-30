@@ -207,7 +207,6 @@ crypto_headers = [
 ]
 
 crypto_internal_headers = [
-    "src/crypto/asn1/charmap.h",
     "src/crypto/asn1/internal.h",
     "src/crypto/bio/internal.h",
     "src/crypto/bytestring/internal.h",
@@ -252,6 +251,7 @@ crypto_internal_headers = [
     "src/crypto/poly1305/internal.h",
     "src/crypto/pool/internal.h",
     "src/crypto/trust_token/internal.h",
+    "src/crypto/x509/charmap.h",
     "src/crypto/x509/internal.h",
     "src/crypto/x509v3/ext_dat.h",
     "src/crypto/x509v3/internal.h",
@@ -276,7 +276,6 @@ crypto_sources = [
     "src/crypto/asn1/a_object.c",
     "src/crypto/asn1/a_octet.c",
     "src/crypto/asn1/a_print.c",
-    "src/crypto/asn1/a_strex.c",
     "src/crypto/asn1/a_strnid.c",
     "src/crypto/asn1/a_time.c",
     "src/crypto/asn1/a_type.c",
@@ -417,13 +416,13 @@ crypto_sources = [
     "src/crypto/trust_token/voprf.c",
     "src/crypto/x509/a_digest.c",
     "src/crypto/x509/a_sign.c",
+    "src/crypto/x509/a_strex.c",
     "src/crypto/x509/a_verify.c",
     "src/crypto/x509/algorithm.c",
     "src/crypto/x509/asn1_gen.c",
     "src/crypto/x509/by_dir.c",
     "src/crypto/x509/by_file.c",
     "src/crypto/x509/i2d_pr.c",
-    "src/crypto/x509/name_print.c",
     "src/crypto/x509/rsa_pss.c",
     "src/crypto/x509/t_crl.c",
     "src/crypto/x509/t_req.c",

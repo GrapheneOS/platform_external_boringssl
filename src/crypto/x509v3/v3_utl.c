@@ -88,67 +88,40 @@ static int ipv6_hex(unsigned char *out, const char *in, int inlen);
 
 /* Add a CONF_VALUE name value pair to stack */
 
-static int x509V3_add_len_value(const char *name, const char *value,
-                                size_t value_len, int omit_value,
-                                STACK_OF(CONF_VALUE) **extlist)
+int X509V3_add_value(const char *name, const char *value,
+                     STACK_OF(CONF_VALUE) **extlist)
 {
     CONF_VALUE *vtmp = NULL;
     char *tname = NULL, *tvalue = NULL;
-    int extlist_was_null = *extlist == NULL;
     if (name && !(tname = OPENSSL_strdup(name)))
-        goto malloc_err;
-    if (!omit_value) {
-        /* |CONF_VALUE| cannot represent strings with NULs. */
-        if (OPENSSL_memchr(value, 0, value_len)) {
-            OPENSSL_PUT_ERROR(X509V3, X509V3_R_INVALID_VALUE);
-            goto err;
-        }
-        tvalue = OPENSSL_strndup(value, value_len);
-        if (tvalue == NULL) {
-            goto malloc_err;
-        }
-    }
+        goto err;
+    if (value && !(tvalue = OPENSSL_strdup(value)))
+        goto err;
     if (!(vtmp = CONF_VALUE_new()))
-        goto malloc_err;
+        goto err;
     if (!*extlist && !(*extlist = sk_CONF_VALUE_new_null()))
-        goto malloc_err;
+        goto err;
     vtmp->section = NULL;
     vtmp->name = tname;
     vtmp->value = tvalue;
     if (!sk_CONF_VALUE_push(*extlist, vtmp))
-        goto malloc_err;
+        goto err;
     return 1;
- malloc_err:
-    OPENSSL_PUT_ERROR(X509V3, ERR_R_MALLOC_FAILURE);
  err:
-    if (extlist_was_null) {
-        sk_CONF_VALUE_free(*extlist);
-        *extlist = NULL;
-    }
-    OPENSSL_free(vtmp);
-    OPENSSL_free(tname);
-    OPENSSL_free(tvalue);
+    OPENSSL_PUT_ERROR(X509V3, ERR_R_MALLOC_FAILURE);
+    if (vtmp)
+        OPENSSL_free(vtmp);
+    if (tname)
+        OPENSSL_free(tname);
+    if (tvalue)
+        OPENSSL_free(tvalue);
     return 0;
-}
-
-int X509V3_add_value(const char *name, const char *value,
-                     STACK_OF(CONF_VALUE) **extlist)
-{
-    return x509V3_add_len_value(name, value, value != NULL ? strlen(value) : 0,
-                                /*omit_value=*/value == NULL, extlist);
 }
 
 int X509V3_add_value_uchar(const char *name, const unsigned char *value,
                            STACK_OF(CONF_VALUE) **extlist)
 {
     return X509V3_add_value(name, (const char *)value, extlist);
-}
-
-int x509V3_add_value_asn1_string(const char *name, const ASN1_STRING *value,
-                                 STACK_OF(CONF_VALUE) **extlist)
-{
-    return x509V3_add_len_value(name, (const char *)value->data, value->length,
-                                /*omit_value=*/0, extlist);
 }
 
 /* Free function for STACK_OF(CONF_VALUE) */
@@ -295,7 +268,7 @@ ASN1_INTEGER *s2i_ASN1_INTEGER(X509V3_EXT_METHOD *method, const char *value)
     return aint;
 }
 
-int X509V3_add_value_int(const char *name, const ASN1_INTEGER *aint,
+int X509V3_add_value_int(const char *name, ASN1_INTEGER *aint,
                          STACK_OF(CONF_VALUE) **extlist)
 {
     char *strtmp;
@@ -658,45 +631,27 @@ static void str_free(OPENSSL_STRING str)
 
 static int append_ia5(STACK_OF(OPENSSL_STRING) **sk, ASN1_IA5STRING *email)
 {
+    char *emtmp;
     /* First some sanity checks */
     if (email->type != V_ASN1_IA5STRING)
         return 1;
-    if (email->data == NULL || email->length == 0)
+    if (!email->data || !email->length)
         return 1;
-    /* |OPENSSL_STRING| cannot represent strings with embedded NULs. Do not
-     * report them as outputs. */
-    if (OPENSSL_memchr(email->data, 0, email->length) != NULL)
-        return 1;
-
-    char *emtmp = NULL;
     if (!*sk)
         *sk = sk_OPENSSL_STRING_new(sk_strcmp);
     if (!*sk)
-        goto err;
-
-    emtmp = OPENSSL_strndup((char *)email->data, email->length);
-    if (emtmp == NULL) {
-        goto err;
-    }
-
+        return 0;
     /* Don't add duplicates */
     sk_OPENSSL_STRING_sort(*sk);
-    if (sk_OPENSSL_STRING_find(*sk, NULL, emtmp)) {
-        OPENSSL_free(emtmp);
+    if (sk_OPENSSL_STRING_find(*sk, NULL, (char *)email->data))
         return 1;
-    }
-    if (!sk_OPENSSL_STRING_push(*sk, emtmp)) {
-        goto err;
+    emtmp = OPENSSL_strdup((char *)email->data);
+    if (!emtmp || !sk_OPENSSL_STRING_push(*sk, emtmp)) {
+        X509_email_free(*sk);
+        *sk = NULL;
+        return 0;
     }
     return 1;
-
-err:
-    /* TODO(davidben): Fix the error-handling in this file. It currently relies
-     * on |append_ia5| leaving |*sk| at NULL on error. */
-    OPENSSL_free(emtmp);
-    X509_email_free(*sk);
-    *sk = NULL;
-    return 0;
 }
 
 void X509_email_free(STACK_OF(OPENSSL_STRING) *sk)
@@ -1165,7 +1120,7 @@ int X509_check_ip_asc(X509 *x, const char *ipasc, unsigned int flags)
 
 /*
  * Convert IP addresses both IPv4 and IPv6 into an OCTET STRING compatible
- * with RFC 3280.
+ * with RFC3280.
  */
 
 ASN1_OCTET_STRING *a2i_IPADDRESS(const char *ipasc)
