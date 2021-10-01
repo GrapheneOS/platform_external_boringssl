@@ -260,7 +260,7 @@ type ECHConfig struct {
 	ConfigID     uint8
 	KEM          uint16
 	PublicKey    []byte
-	MaxNameLen   uint8
+	MaxNameLen   uint16
 	PublicName   string
 	CipherSuites []HPKECipherSuite
 	// The following fields are only used by CreateECHConfig().
@@ -282,8 +282,8 @@ func CreateECHConfig(template *ECHConfig) *ECHConfig {
 		cipherSuites.addU16(suite.KDF)
 		cipherSuites.addU16(suite.AEAD)
 	}
-	contents.addU8(template.MaxNameLen)
-	contents.addU8LengthPrefixed().addBytes([]byte(template.PublicName))
+	contents.addU16(template.MaxNameLen)
+	contents.addU16LengthPrefixed().addBytes([]byte(template.PublicName))
 	extensions := contents.addU16LengthPrefixed()
 	// Mandatory extensions have the high bit set.
 	if template.UnsupportedExtension {
@@ -318,12 +318,9 @@ type ServerECHConfig struct {
 	Key       []byte
 }
 
-const (
-	echClientTypeOuter byte = 0
-	echClientTypeInner byte = 1
-)
-
-type echClientOuter struct {
+// The contents of a CH "encrypted_client_hello" extension.
+// https://tools.ietf.org/html/draft-ietf-tls-esni-10
+type clientECH struct {
 	kdfID    uint16
 	aeadID   uint16
 	configID uint8
@@ -332,64 +329,64 @@ type echClientOuter struct {
 }
 
 type clientHelloMsg struct {
-	raw                                      []byte
-	isDTLS                                   bool
-	isV2ClientHello                          bool
-	vers                                     uint16
-	random                                   []byte
-	v2Challenge                              []byte
-	sessionID                                []byte
-	cookie                                   []byte
-	cipherSuites                             []uint16
-	compressionMethods                       []uint8
-	nextProtoNeg                             bool
-	serverName                               string
-	echOuter                                 *echClientOuter
-	echInner                                 bool
-	invalidECHInner                          []byte
-	ocspStapling                             bool
-	supportedCurves                          []CurveID
-	supportedPoints                          []uint8
-	hasKeyShares                             bool
-	keyShares                                []keyShareEntry
-	keySharesRaw                             []byte
-	trailingKeyShareData                     bool
-	pskIdentities                            []pskIdentity
-	pskKEModes                               []byte
-	pskBinders                               [][]uint8
-	hasEarlyData                             bool
-	tls13Cookie                              []byte
-	ticketSupported                          bool
-	sessionTicket                            []uint8
-	signatureAlgorithms                      []signatureAlgorithm
-	signatureAlgorithmsCert                  []signatureAlgorithm
-	supportedVersions                        []uint16
-	secureRenegotiation                      []byte
-	alpnProtocols                            []string
-	quicTransportParams                      []byte
-	quicTransportParamsLegacy                []byte
-	duplicateExtension                       bool
-	channelIDSupported                       bool
-	extendedMasterSecret                     bool
-	srtpProtectionProfiles                   []uint16
-	srtpMasterKeyIdentifier                  string
-	sctListSupported                         bool
-	customExtension                          string
-	hasGREASEExtension                       bool
-	omitExtensions                           bool
-	emptyExtensions                          bool
-	pad                                      int
-	compressedCertAlgs                       []uint16
-	delegatedCredentials                     bool
-	alpsProtocols                            []string
-	outerExtensions                          []uint16
-	reorderOuterExtensionsWithoutCompressing bool
-	prefixExtensions                         []uint16
+	raw                       []byte
+	isDTLS                    bool
+	isV2ClientHello           bool
+	vers                      uint16
+	random                    []byte
+	v2Challenge               []byte
+	sessionID                 []byte
+	cookie                    []byte
+	cipherSuites              []uint16
+	compressionMethods        []uint8
+	nextProtoNeg              bool
+	serverName                string
+	clientECH                 *clientECH
+	echIsInner                bool
+	invalidECHIsInner         []byte
+	ocspStapling              bool
+	supportedCurves           []CurveID
+	supportedPoints           []uint8
+	hasKeyShares              bool
+	keyShares                 []keyShareEntry
+	keySharesRaw              []byte
+	trailingKeyShareData      bool
+	pskIdentities             []pskIdentity
+	pskKEModes                []byte
+	pskBinders                [][]uint8
+	hasEarlyData              bool
+	tls13Cookie               []byte
+	ticketSupported           bool
+	sessionTicket             []uint8
+	signatureAlgorithms       []signatureAlgorithm
+	signatureAlgorithmsCert   []signatureAlgorithm
+	supportedVersions         []uint16
+	secureRenegotiation       []byte
+	alpnProtocols             []string
+	quicTransportParams       []byte
+	quicTransportParamsLegacy []byte
+	duplicateExtension        bool
+	channelIDSupported        bool
+	extendedMasterSecret      bool
+	srtpProtectionProfiles    []uint16
+	srtpMasterKeyIdentifier   string
+	sctListSupported          bool
+	customExtension           string
+	hasGREASEExtension        bool
+	omitExtensions            bool
+	emptyExtensions           bool
+	pad                       int
+	compressedCertAlgs        []uint16
+	delegatedCredentials      bool
+	alpsProtocols             []string
+	outerExtensions           []uint16
+	prefixExtensions          []uint16
 	// The following fields are only filled in by |unmarshal| and ignored when
 	// marshaling a new ClientHello.
-	echPayloadStart int
-	echPayloadEnd   int
-	rawExtensions   []byte
+	extensionStart    int
+	echExtensionStart int
+	echExtensionEnd   int
+	rawExtensions     map[uint16][]byte
 }
 
 func (m *clientHelloMsg) marshalKeyShares(bb *byteBuilder) {
@@ -408,6 +405,7 @@ type clientHelloType int
 
 const (
 	clientHelloNormal clientHelloType = iota
+	clientHelloOuterAAD
 	clientHelloEncodedInner
 )
 
@@ -473,26 +471,35 @@ func (m *clientHelloMsg) marshalBody(hello *byteBuilder, typ clientHelloType) {
 			body: serverNameList.finish(),
 		})
 	}
-	if m.echOuter != nil {
+	if m.clientECH != nil && typ != clientHelloOuterAAD {
 		body := newByteBuilder()
-		body.addU8(echClientTypeOuter)
-		body.addU16(m.echOuter.kdfID)
-		body.addU16(m.echOuter.aeadID)
-		body.addU8(m.echOuter.configID)
-		body.addU16LengthPrefixed().addBytes(m.echOuter.enc)
-		body.addU16LengthPrefixed().addBytes(m.echOuter.payload)
+		body.addU16(m.clientECH.kdfID)
+		body.addU16(m.clientECH.aeadID)
+		body.addU8(m.clientECH.configID)
+		body.addU16LengthPrefixed().addBytes(m.clientECH.enc)
+		body.addU16LengthPrefixed().addBytes(m.clientECH.payload)
+
 		extensions = append(extensions, extension{
 			id:   extensionEncryptedClientHello,
 			body: body.finish(),
 		})
 	}
-	if m.echInner {
-		body := newByteBuilder()
-		body.addU8(echClientTypeInner)
-		// If unset, invalidECHInner is empty, which is the correct serialization.
-		body.addBytes(m.invalidECHInner)
+	if m.echIsInner {
 		extensions = append(extensions, extension{
-			id:   extensionEncryptedClientHello,
+			id: extensionECHIsInner,
+			// If unset, invalidECHIsInner is empty, which is the correct
+			// serialization.
+			body: m.invalidECHIsInner,
+		})
+	}
+	if m.outerExtensions != nil && typ == clientHelloEncodedInner {
+		body := newByteBuilder()
+		extensionsList := body.addU8LengthPrefixed()
+		for _, extID := range m.outerExtensions {
+			extensionsList.addU16(extID)
+		}
+		extensions = append(extensions, extension{
+			id:   extensionECHOuterExtensions,
 			body: body.finish(),
 		})
 	}
@@ -661,7 +668,7 @@ func (m *clientHelloMsg) marshalBody(hello *byteBuilder, typ clientHelloType) {
 	if m.sctListSupported {
 		extensions = append(extensions, extension{id: extensionSignedCertificateTimestamp})
 	}
-	if len(m.customExtension) > 0 {
+	if l := len(m.customExtension); l > 0 {
 		extensions = append(extensions, extension{
 			id:   extensionCustom,
 			body: []byte(m.customExtension),
@@ -719,51 +726,35 @@ func (m *clientHelloMsg) marshalBody(hello *byteBuilder, typ clientHelloType) {
 		})
 	}
 
+	// Write each extension in |extensions| to the |hello| message, hoisting
+	// the extensions named in |m.prefixExtensions| to the front.
 	extensionsBB := hello.addU16LengthPrefixed()
 	extMap := make(map[uint16][]byte)
-	extsWritten := make(map[uint16]struct{})
 	for _, ext := range extensions {
 		extMap[ext.id] = ext.body
+	}
+	// Elide each of the extensions named by |m.outerExtensions|.
+	if m.outerExtensions != nil && typ == clientHelloEncodedInner {
+		for _, extID := range m.outerExtensions {
+			delete(extMap, extID)
+		}
 	}
 	// Write each of the prefix extensions, if we have it.
 	for _, extID := range m.prefixExtensions {
 		if body, ok := extMap[extID]; ok {
 			extensionsBB.addU16(extID)
 			extensionsBB.addU16LengthPrefixed().addBytes(body)
-			extsWritten[extID] = struct{}{}
 		}
 	}
-	// Write outer extensions, possibly in compressed form.
-	if m.outerExtensions != nil {
-		if typ == clientHelloEncodedInner && !m.reorderOuterExtensionsWithoutCompressing {
-			extensionsBB.addU16(extensionECHOuterExtensions)
-			list := extensionsBB.addU16LengthPrefixed().addU8LengthPrefixed()
-			for _, extID := range m.outerExtensions {
-				list.addU16(extID)
-				extsWritten[extID] = struct{}{}
-			}
-		} else {
-			for _, extID := range m.outerExtensions {
-				// m.outerExtensions may intentionally contain duplicates to test the
-				// server's reaction. If m.reorderOuterExtensionsWithoutCompressing
-				// is set, we are targetting the second ClientHello and wish to send a
-				// valid first ClientHello. In that case, deduplicate so the error
-				// only appears later.
-				if _, written := extsWritten[extID]; m.reorderOuterExtensionsWithoutCompressing && written {
-					continue
-				}
-				if body, ok := extMap[extID]; ok {
-					extensionsBB.addU16(extID)
-					extensionsBB.addU16LengthPrefixed().addBytes(body)
-					extsWritten[extID] = struct{}{}
-				}
-			}
-		}
+	// Forget each of the prefix extensions. This loop is separate from the
+	// extension-writing loop because |m.prefixExtensions| may contain
+	// duplicates.
+	for _, extID := range m.prefixExtensions {
+		delete(extMap, extID)
 	}
-
 	// Write each of the remaining extensions in their original order.
 	for _, ext := range extensions {
-		if _, written := extsWritten[ext.id]; !written {
+		if _, ok := extMap[ext.id]; ok {
 			extensionsBB.addU16(ext.id)
 			extensionsBB.addU16LengthPrefixed().addBytes(ext.body)
 		}
@@ -786,6 +777,10 @@ func (m *clientHelloMsg) marshalBody(hello *byteBuilder, typ clientHelloType) {
 			hello.addU16(0)
 		}
 	}
+}
+
+func (m *clientHelloMsg) marshalForOuterAAD(bb *byteBuilder) {
+	m.marshalBody(bb, clientHelloOuterAAD)
 }
 
 func (m *clientHelloMsg) marshalForEncodedInner() []byte {
@@ -896,6 +891,8 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		}
 	}
 
+	m.extensionStart = len(data) - len(reader)
+
 	m.nextProtoNeg = false
 	m.serverName = ""
 	m.ocspStapling = false
@@ -912,6 +909,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	m.customExtension = ""
 	m.delegatedCredentials = false
 	m.alpsProtocols = nil
+	m.rawExtensions = make(map[uint16][]byte)
 
 	if len(reader) == 0 {
 		// ClientHello is optionally followed by extension data
@@ -922,7 +920,6 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	if !reader.readU16LengthPrefixed(&extensions) || len(reader) != 0 || !checkDuplicateExtensions(extensions) {
 		return false
 	}
-	m.rawExtensions = extensions
 	for len(extensions) > 0 {
 		var extension uint16
 		var body byteReader
@@ -930,6 +927,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			!extensions.readU16LengthPrefixed(&body) {
 			return false
 		}
+		m.rawExtensions[extension] = body
 		switch extension {
 		case extensionServerName:
 			var names byteReader
@@ -948,33 +946,24 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				}
 			}
 		case extensionEncryptedClientHello:
-			var typ byte
-			if !body.readU8(&typ) {
+			m.echExtensionEnd = len(data) - len(extensions)
+			m.echExtensionStart = m.echExtensionEnd - len(body) - 4
+			var ech clientECH
+			if !body.readU16(&ech.kdfID) ||
+				!body.readU16(&ech.aeadID) ||
+				!body.readU8(&ech.configID) ||
+				!body.readU16LengthPrefixedBytes(&ech.enc) ||
+				!body.readU16LengthPrefixedBytes(&ech.payload) ||
+				len(ech.payload) == 0 ||
+				len(body) > 0 {
 				return false
 			}
-			switch typ {
-			case echClientTypeOuter:
-				var echOuter echClientOuter
-				if !body.readU16(&echOuter.kdfID) ||
-					!body.readU16(&echOuter.aeadID) ||
-					!body.readU8(&echOuter.configID) ||
-					!body.readU16LengthPrefixedBytes(&echOuter.enc) ||
-					!body.readU16LengthPrefixedBytes(&echOuter.payload) ||
-					len(echOuter.payload) == 0 ||
-					len(body) > 0 {
-					return false
-				}
-				m.echOuter = &echOuter
-				m.echPayloadEnd = len(data) - len(extensions)
-				m.echPayloadStart = m.echPayloadEnd - len(echOuter.payload)
-			case echClientTypeInner:
-				if len(body) > 0 {
-					return false
-				}
-				m.echInner = true
-			default:
+			m.clientECH = &ech
+		case extensionECHIsInner:
+			if len(body) != 0 {
 				return false
 			}
+			m.echIsInner = true
 		case extensionNextProtoNeg:
 			if len(body) != 0 {
 				return false
@@ -1206,6 +1195,13 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		}
 	}
 
+	// Clients may not send both extensions.
+	// TODO(davidben): A later draft will likely merge the code points, at which
+	// point this check will be redundant.
+	if m.echIsInner && m.clientECH != nil {
+		return false
+	}
+
 	return true
 }
 
@@ -1218,15 +1214,9 @@ func decodeClientHelloInner(config *Config, encoded []byte, helloOuter *clientHe
 		len(sessionID) != 0 || // Copied from |helloOuter|
 		!reader.readU16LengthPrefixedBytes(&cipherSuites) ||
 		!reader.readU8LengthPrefixedBytes(&compressionMethods) ||
-		!reader.readU16LengthPrefixed(&extensions) {
+		!reader.readU16LengthPrefixed(&extensions) ||
+		len(reader) != 0 {
 		return nil, errors.New("tls: error parsing EncodedClientHelloInner")
-	}
-
-	// The remainder of the structure is padding.
-	for _, padding := range reader {
-		if padding != 0 {
-			return nil, errors.New("tls: non-zero padding in EncodedClientHelloInner")
-		}
 	}
 
 	builder := newByteBuilder()
@@ -1239,7 +1229,6 @@ func decodeClientHelloInner(config *Config, encoded []byte, helloOuter *clientHe
 	newExtensions := body.addU16LengthPrefixed()
 
 	var seenOuterExtensions bool
-	outerExtensions := byteReader(helloOuter.rawExtensions)
 	copied := make(map[uint16]struct{})
 	for len(extensions) > 0 {
 		var extType uint16
@@ -1257,35 +1246,28 @@ func decodeClientHelloInner(config *Config, encoded []byte, helloOuter *clientHe
 			return nil, errors.New("tls: duplicate ech_outer_extensions extension")
 		}
 		seenOuterExtensions = true
-		var extList byteReader
-		if !extBody.readU8LengthPrefixed(&extList) || len(extList) == 0 || len(extBody) != 0 {
+		var outerExtensions byteReader
+		if !extBody.readU8LengthPrefixed(&outerExtensions) || len(outerExtensions) == 0 || len(extBody) != 0 {
 			return nil, errors.New("tls: error parsing ech_outer_extensions")
 		}
-		for len(extList) != 0 {
+		for len(outerExtensions) != 0 {
 			var newExtType uint16
-			if !extList.readU16(&newExtType) {
+			if !outerExtensions.readU16(&newExtType) {
 				return nil, errors.New("tls: error parsing ech_outer_extensions")
 			}
 			if newExtType == extensionEncryptedClientHello {
 				return nil, errors.New("tls: error parsing ech_outer_extensions")
 			}
-			for {
-				if len(outerExtensions) == 0 {
-					return nil, fmt.Errorf("tls: extension %d not found in ClientHelloOuter", newExtType)
-				}
-				var foundExt uint16
-				var newExtBody []byte
-				if !outerExtensions.readU16(&foundExt) ||
-					!outerExtensions.readU16LengthPrefixedBytes(&newExtBody) {
-					return nil, errors.New("tls: error parsing ClientHelloOuter")
-				}
-				if foundExt == newExtType {
-					newExtensions.addU16(newExtType)
-					newExtensions.addU16LengthPrefixed().addBytes(newExtBody)
-					copied[newExtType] = struct{}{}
-					break
-				}
+			if _, ok := copied[newExtType]; ok {
+				return nil, errors.New("tls: duplicate extension in ech_outer_extensions")
 			}
+			newExtBody, ok := helloOuter.rawExtensions[newExtType]
+			if !ok {
+				return nil, fmt.Errorf("tls: extension %d not found in ClientHelloOuter", newExtType)
+			}
+			newExtensions.addU16(newExtType)
+			newExtensions.addU16LengthPrefixed().addBytes(newExtBody)
+			copied[newExtType] = struct{}{}
 		}
 	}
 
@@ -1503,6 +1485,25 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	}
 
 	return true
+}
+
+// marshalForECHConf marshals |m|, but zeroes out the last 8 bytes of the
+// ServerHello.random.
+func (m *serverHelloMsg) marshalForECHConf() []byte {
+	ret := m.marshal()
+	// Make a copy so we can mutate it.
+	ret = append(make([]byte, 0, len(ret)), ret...)
+
+	reparsed := new(serverHelloMsg)
+	if !reparsed.unmarshal(ret) {
+		panic("could not re-parse ServerHello")
+	}
+	// We rely on |unmarshal| aliasing the |random| into |ret|.
+	for i := 24; i < 32; i++ {
+		reparsed.random[i] = 0
+	}
+
+	return ret
 }
 
 type encryptedExtensionsMsg struct {
@@ -1906,18 +1907,16 @@ func (m *clientEncryptedExtensionsMsg) unmarshal(data []byte) bool {
 }
 
 type helloRetryRequestMsg struct {
-	raw                   []byte
-	vers                  uint16
-	sessionID             []byte
-	cipherSuite           uint16
-	compressionMethod     uint8
-	hasSelectedGroup      bool
-	selectedGroup         CurveID
-	cookie                []byte
-	customExtension       string
-	echConfirmation       []byte
-	echConfirmationOffset int
-	duplicateExtensions   bool
+	raw                 []byte
+	vers                uint16
+	sessionID           []byte
+	cipherSuite         uint16
+	compressionMethod   uint8
+	hasSelectedGroup    bool
+	selectedGroup       CurveID
+	cookie              []byte
+	customExtension     string
+	duplicateExtensions bool
 }
 
 func (m *helloRetryRequestMsg) marshal() []byte {
@@ -1960,10 +1959,6 @@ func (m *helloRetryRequestMsg) marshal() []byte {
 		if len(m.customExtension) > 0 {
 			extensions.addU16(extensionCustom)
 			extensions.addU16LengthPrefixed().addBytes([]byte(m.customExtension))
-		}
-		if len(m.echConfirmation) > 0 {
-			extensions.addU16(extensionEncryptedClientHello)
-			extensions.addU16LengthPrefixed().addBytes(m.echConfirmation)
 		}
 	}
 
@@ -2010,17 +2005,9 @@ func (m *helloRetryRequestMsg) unmarshal(data []byte) bool {
 			m.hasSelectedGroup = true
 			m.selectedGroup = CurveID(v)
 		case extensionCookie:
-			if !body.readU16LengthPrefixedBytes(&m.cookie) ||
-				len(m.cookie) == 0 ||
-				len(body) != 0 {
+			if !body.readU16LengthPrefixedBytes(&m.cookie) || len(body) != 0 {
 				return false
 			}
-		case extensionEncryptedClientHello:
-			if len(body) != echAcceptConfirmationLength {
-				return false
-			}
-			m.echConfirmation = body
-			m.echConfirmationOffset = len(m.raw) - len(extensions) - len(body)
 		default:
 			// Unknown extensions are illegal from the server.
 			return false
