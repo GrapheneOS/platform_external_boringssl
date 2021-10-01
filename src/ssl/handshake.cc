@@ -126,7 +126,8 @@ BSSL_NAMESPACE_BEGIN
 
 SSL_HANDSHAKE::SSL_HANDSHAKE(SSL *ssl_arg)
     : ssl(ssl_arg),
-      ech_is_inner(false),
+      ech_present(false),
+      ech_is_inner_present(false),
       ech_authenticated_reject(false),
       scts_requested(false),
       handshake_finalized(false),
@@ -267,15 +268,12 @@ bool ssl_hash_message(SSL_HANDSHAKE *hs, const SSLMessage &msg) {
 }
 
 bool ssl_parse_extensions(const CBS *cbs, uint8_t *out_alert,
-                          std::initializer_list<SSLExtension *> extensions,
+                          Span<const SSL_EXTENSION_TYPE> ext_types,
                           bool ignore_unknown) {
   // Reset everything.
-  for (SSLExtension *ext : extensions) {
-    ext->present = false;
-    CBS_init(&ext->data, nullptr, 0);
-    if (!ext->allowed) {
-      assert(!ignore_unknown);
-    }
+  for (const SSL_EXTENSION_TYPE &ext_type : ext_types) {
+    *ext_type.out_present = false;
+    CBS_init(ext_type.out_data, nullptr, 0);
   }
 
   CBS copy = *cbs;
@@ -289,10 +287,10 @@ bool ssl_parse_extensions(const CBS *cbs, uint8_t *out_alert,
       return false;
     }
 
-    SSLExtension *found = nullptr;
-    for (SSLExtension *ext : extensions) {
-      if (type == ext->type && ext->allowed) {
-        found = ext;
+    const SSL_EXTENSION_TYPE *found = nullptr;
+    for (const SSL_EXTENSION_TYPE &ext_type : ext_types) {
+      if (type == ext_type.type) {
+        found = &ext_type;
         break;
       }
     }
@@ -307,14 +305,14 @@ bool ssl_parse_extensions(const CBS *cbs, uint8_t *out_alert,
     }
 
     // Duplicate ext_types are forbidden.
-    if (found->present) {
+    if (*found->out_present) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_DUPLICATE_EXTENSION);
       *out_alert = SSL_AD_ILLEGAL_PARAMETER;
       return false;
     }
 
-    found->present = true;
-    found->data = data;
+    *found->out_present = 1;
+    *found->out_data = data;
   }
 
   return true;
