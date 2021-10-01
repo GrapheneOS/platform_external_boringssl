@@ -71,7 +71,7 @@ int i2d_ASN1_BOOLEAN(int a, unsigned char **pp)
     if (*pp == NULL) {
         if ((p = allocated = OPENSSL_malloc(r)) == NULL) {
             OPENSSL_PUT_ERROR(ASN1, ERR_R_MALLOC_FAILURE);
-            return -1;
+            return 0;
         }
     } else {
         p = *pp;
