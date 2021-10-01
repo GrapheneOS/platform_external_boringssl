@@ -1,7 +1,6 @@
 # This file is created by generate_build_files.py. Do not edit manually.
 
 test_support_sources = [
-    "src/crypto/asn1/charmap.h",
     "src/crypto/asn1/internal.h",
     "src/crypto/bio/internal.h",
     "src/crypto/bytestring/internal.h",
@@ -54,6 +53,7 @@ test_support_sources = [
     "src/crypto/test/wycheproof_util.cc",
     "src/crypto/test/wycheproof_util.h",
     "src/crypto/trust_token/internal.h",
+    "src/crypto/x509/charmap.h",
     "src/crypto/x509/internal.h",
     "src/crypto/x509v3/ext_dat.h",
     "src/crypto/x509v3/internal.h",

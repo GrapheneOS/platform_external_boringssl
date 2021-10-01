@@ -62,7 +62,6 @@
 
 #include "pcy_int.h"
 #include "../internal.h"
-#include "../x509/internal.h"
 
 static int policy_data_cmp(const X509_POLICY_DATA **a,
                            const X509_POLICY_DATA **b);

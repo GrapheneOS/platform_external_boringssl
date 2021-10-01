@@ -24,7 +24,6 @@
 #include <io.h>
 #else
 #include <libgen.h>
-#include <signal.h>
 #endif
 
 #include "internal.h"
@@ -107,8 +106,6 @@ int main(int argc, char **argv) {
     perror("_setmode(_fileno(stderr), O_BINARY)");
     return 1;
   }
-#else
-  signal(SIGPIPE, SIG_IGN);
 #endif
 
   CRYPTO_library_init();

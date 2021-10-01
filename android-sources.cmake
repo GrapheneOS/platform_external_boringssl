@@ -30,7 +30,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/asn1/a_object.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_octet.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_print.c
-  ${BORINGSSL_ROOT}src/crypto/asn1/a_strex.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_strnid.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_time.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_type.c
@@ -171,13 +170,13 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/trust_token/voprf.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_digest.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_sign.c
+  ${BORINGSSL_ROOT}src/crypto/x509/a_strex.c
   ${BORINGSSL_ROOT}src/crypto/x509/a_verify.c
   ${BORINGSSL_ROOT}src/crypto/x509/algorithm.c
   ${BORINGSSL_ROOT}src/crypto/x509/asn1_gen.c
   ${BORINGSSL_ROOT}src/crypto/x509/by_dir.c
   ${BORINGSSL_ROOT}src/crypto/x509/by_file.c
   ${BORINGSSL_ROOT}src/crypto/x509/i2d_pr.c
-  ${BORINGSSL_ROOT}src/crypto/x509/name_print.c
   ${BORINGSSL_ROOT}src/crypto/x509/rsa_pss.c
   ${BORINGSSL_ROOT}src/crypto/x509/t_crl.c
   ${BORINGSSL_ROOT}src/crypto/x509/t_req.c
