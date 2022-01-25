@@ -9,7 +9,7 @@ test_support_sources = [
     "src/crypto/cipher_extra/internal.h",
     "src/crypto/conf/conf_def.h",
     "src/crypto/conf/internal.h",
-    "src/crypto/cpu-arm-linux.h",
+    "src/crypto/cpu_arm_linux.h",
     "src/crypto/curve25519/curve25519_tables.h",
     "src/crypto/curve25519/internal.h",
     "src/crypto/dsa/internal.h",
@@ -89,7 +89,7 @@ crypto_test_sources = [
     "src/crypto/compiler_test.cc",
     "src/crypto/conf/conf_test.cc",
     "src/crypto/constant_time_test.cc",
-    "src/crypto/cpu-arm-linux_test.cc",
+    "src/crypto/cpu_arm_linux_test.cc",
     "src/crypto/crypto_test.cc",
     "src/crypto/curve25519/ed25519_test.cc",
     "src/crypto/curve25519/spake25519_test.cc",
@@ -140,7 +140,6 @@ crypto_test_sources = [
     "src/crypto/x509/x509_test.cc",
     "src/crypto/x509/x509_time_test.cc",
     "src/crypto/x509v3/tab_test.cc",
-    "src/crypto/x509v3/v3name_test.cc",
 ]
 
 ssl_test_sources = [
