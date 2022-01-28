@@ -60,17 +60,11 @@ cc_defaults {
         "-Werror",
     ],
 
-    conlyflags: ["-std=c99"],
+    c_std: "gnu11",
 
     // Build BoringSSL and its tests against the same STL.
     sdk_version: "9",
     target: {
-        linux: {
-            cflags: ["-D_XOPEN_SOURCE=700"],
-        },
-        windows: {
-            cflags: ["-D_XOPEN_SOURCE=700"],
-        },
         android: {
             stl: "libc++_static",
         },
