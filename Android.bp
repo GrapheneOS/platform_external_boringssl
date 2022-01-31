@@ -369,6 +369,7 @@ cc_library {
 
     apex_available: [
         "//apex_available:platform",
+        "com.android.bluetooth",
         "com.android.adbd",
         "com.android.conscrypt",
         "com.android.resolv",
