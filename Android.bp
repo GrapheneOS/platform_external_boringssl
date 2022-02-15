@@ -51,7 +51,6 @@ cc_defaults {
         "-DBORINGSSL_SHARED_LIBRARY",
         "-DBORINGSSL_ANDROID_SYSTEM",
         "-DOPENSSL_SMALL",
-        "-D_XOPEN_SOURCE=700",
         "-Werror",
         "-Wno-unused-parameter",
     ],
@@ -66,6 +65,12 @@ cc_defaults {
     // Build BoringSSL and its tests against the same STL.
     sdk_version: "9",
     target: {
+        linux: {
+            cflags: ["-D_XOPEN_SOURCE=700"],
+        },
+        windows: {
+            cflags: ["-D_XOPEN_SOURCE=700"],
+        },
         android: {
             stl: "libc++_static",
         },
@@ -159,7 +164,7 @@ cc_object {
         "com.android.art",
         "com.android.art.debug",
         "com.android.art.testing",
-        "com.android.bluetooth.updatable",
+        "com.android.bluetooth",
         "com.android.compos",
         "com.android.conscrypt",
         "com.android.resolv",
@@ -247,7 +252,7 @@ cc_library {
         "com.android.art",
         "com.android.art.debug",
         "com.android.art.testing",
-        "com.android.bluetooth.updatable",
+        "com.android.bluetooth",
         "com.android.compos",
         "com.android.conscrypt",
         "com.android.resolv",
@@ -364,6 +369,7 @@ cc_library {
 
     apex_available: [
         "//apex_available:platform",
+        "com.android.bluetooth",
         "com.android.adbd",
         "com.android.conscrypt",
         "com.android.resolv",

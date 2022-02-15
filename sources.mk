@@ -80,13 +80,14 @@ crypto_sources := \
   src/crypto/cipher_extra/tls_cbc.c\
   src/crypto/cmac/cmac.c\
   src/crypto/conf/conf.c\
-  src/crypto/cpu-aarch64-fuchsia.c\
-  src/crypto/cpu-aarch64-linux.c\
-  src/crypto/cpu-aarch64-win.c\
-  src/crypto/cpu-arm-linux.c\
-  src/crypto/cpu-arm.c\
-  src/crypto/cpu-intel.c\
-  src/crypto/cpu-ppc64le.c\
+  src/crypto/cpu_aarch64_apple.c\
+  src/crypto/cpu_aarch64_fuchsia.c\
+  src/crypto/cpu_aarch64_linux.c\
+  src/crypto/cpu_aarch64_win.c\
+  src/crypto/cpu_arm.c\
+  src/crypto/cpu_arm_linux.c\
+  src/crypto/cpu_intel.c\
+  src/crypto/cpu_ppc64le.c\
   src/crypto/crypto.c\
   src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\

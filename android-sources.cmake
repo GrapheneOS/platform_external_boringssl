@@ -82,13 +82,14 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/cipher_extra/tls_cbc.c
   ${BORINGSSL_ROOT}src/crypto/cmac/cmac.c
   ${BORINGSSL_ROOT}src/crypto/conf/conf.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-aarch64-fuchsia.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-aarch64-linux.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-aarch64-win.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-arm-linux.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-arm.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-intel.c
-  ${BORINGSSL_ROOT}src/crypto/cpu-ppc64le.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_apple.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_fuchsia.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_linux.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_win.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_arm.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_arm_linux.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_intel.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_ppc64le.c
   ${BORINGSSL_ROOT}src/crypto/crypto.c
   ${BORINGSSL_ROOT}src/crypto/curve25519/curve25519.c
   ${BORINGSSL_ROOT}src/crypto/curve25519/spake25519.c
@@ -328,7 +329,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/compiler_test.cc
   ${BORINGSSL_ROOT}src/crypto/conf/conf_test.cc
   ${BORINGSSL_ROOT}src/crypto/constant_time_test.cc
-  ${BORINGSSL_ROOT}src/crypto/cpu-arm-linux_test.cc
+  ${BORINGSSL_ROOT}src/crypto/cpu_arm_linux_test.cc
   ${BORINGSSL_ROOT}src/crypto/crypto_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/ed25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/spake25519_test.cc
@@ -379,7 +380,6 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/x509/x509_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_time_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509v3/tab_test.cc
-  ${BORINGSSL_ROOT}src/crypto/x509v3/v3name_test.cc
 )
 set(ssl_test_sources
   ${BORINGSSL_ROOT}src/crypto/test/abi_test.cc

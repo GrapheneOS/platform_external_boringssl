@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, Google Inc.
+/* Copyright (c) 2022, Google Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -12,27 +12,26 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
-#include <openssl/cpu.h>
+#ifndef OPENSSL_HEADER_RUST_WRAPPER_H
+#define OPENSSL_HEADER_RUST_WRAPPER_H
 
-#if (defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64)) && \
-    !defined(OPENSSL_STATIC_ARMCAP)
+#include <openssl/err.h>
 
-#include <openssl/arm_arch.h>
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
 
-extern uint32_t OPENSSL_armcap_P;
+// The following functions are wrappers over inline functions and macros in
+// BoringSSL, which bindgen cannot currently correctly bind. These wrappers
+// ensure changes to the functions remain in lockstep with the Rust versions.
+int ERR_GET_LIB_RUST(uint32_t packed_error);
+int ERR_GET_REASON_RUST(uint32_t packed_error);
+int ERR_GET_FUNC_RUST(uint32_t packed_error);
 
-int CRYPTO_is_NEON_capable_at_runtime(void) {
-  return (OPENSSL_armcap_P & ARMV7_NEON) != 0;
-}
 
-int CRYPTO_is_ARMv8_AES_capable_at_runtime(void) {
-  return (OPENSSL_armcap_P & ARMV8_AES) != 0;
-}
+#if defined(__cplusplus)
+}  // extern C
+#endif
 
-int CRYPTO_is_ARMv8_PMULL_capable_at_runtime(void) {
-  return (OPENSSL_armcap_P & ARMV8_PMULL) != 0;
-}
-
-#endif  /* (defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64)) &&
-           !defined(OPENSSL_STATIC_ARMCAP) */
+#endif  // OPENSSL_HEADER_RUST_WRAPPER_H
