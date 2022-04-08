@@ -493,21 +493,45 @@ cc_library_static {
 // Tests
 cc_test {
     name: "boringssl_crypto_test",
-    test_suites: ["device-tests"],
-    host_supported: true,
+    test_config: "NativeTests.xml",
+    host_supported: false,
+    per_testcase_directory: true,
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "64",
+        },
+    },
     defaults: [
         "boringssl_crypto_test_sources",
         "boringssl_flags",
     ],
     whole_static_libs: ["boringssl_test_support"],
-
     shared_libs: ["libcrypto"],
+    target: {
+        android: {
+            test_suites: ["mts-conscrypt"],
+        },
+    },
 }
 
 cc_test {
     name: "boringssl_ssl_test",
-    test_suites: ["device-tests"],
-    host_supported: true,
+    test_config: "NativeTests.xml",
+    host_supported: false,
+    per_testcase_directory: true,
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "64",
+        },
+    },
     defaults: [
         "boringssl_ssl_test_sources",
         "boringssl_flags",
@@ -518,6 +542,11 @@ cc_test {
         "libcrypto",
         "libssl",
     ],
+    target: {
+        android: {
+            test_suites: ["mts-conscrypt"],
+        },
+    },
 }
 
 // Utility binary for CMVP on-site testing.
