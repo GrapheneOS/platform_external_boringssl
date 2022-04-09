@@ -22,7 +22,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/asn1/a_bool.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_d2i_fp.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_dup.c
-  ${BORINGSSL_ROOT}src/crypto/asn1/a_enum.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_gentm.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_i2d_fp.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_int.c
