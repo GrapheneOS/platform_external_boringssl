@@ -266,7 +266,6 @@ crypto_sources = [
     "src/crypto/asn1/a_bool.c",
     "src/crypto/asn1/a_d2i_fp.c",
     "src/crypto/asn1/a_dup.c",
-    "src/crypto/asn1/a_enum.c",
     "src/crypto/asn1/a_gentm.c",
     "src/crypto/asn1/a_i2d_fp.c",
     "src/crypto/asn1/a_int.c",
