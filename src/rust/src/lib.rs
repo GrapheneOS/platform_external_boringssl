@@ -2,8 +2,8 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-// populated by cmake
-${INCLUDES}
+// ANDROID: Use Soong-generated bindings rather than CMake-generated
+pub use bssl_sys_raw::*;
 
 pub fn ERR_GET_LIB(packed_error: u32) -> i32 {
     unsafe { ERR_GET_LIB_RUST(packed_error) }
