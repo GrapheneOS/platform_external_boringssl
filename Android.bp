@@ -60,8 +60,6 @@ cc_defaults {
         "-Werror",
     ],
 
-    c_std: "gnu11",
-
     // Build BoringSSL and its tests against the same STL.
     sdk_version: "9",
     target: {
