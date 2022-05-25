@@ -58,6 +58,8 @@
 #include "cipher/aead.c"
 #include "cipher/cipher.c"
 #include "cipher/e_aes.c"
+#include "cipher/e_aesccm.c"
+#include "cmac/cmac.c"
 #include "dh/check.c"
 #include "dh/dh.c"
 #include "digest/digest.c"
@@ -71,7 +73,7 @@
 #include "ec/oct.c"
 #include "ec/p224-64.c"
 #include "ec/p256.c"
-#include "ec/p256-x86_64.c"
+#include "ec/p256-nistz.c"
 #include "ec/scalar.c"
 #include "ec/simple.c"
 #include "ec/simple_mul.c"
@@ -97,6 +99,7 @@
 #include "rsa/rsa_impl.c"
 #include "self_check/fips.c"
 #include "self_check/self_check.c"
+#include "service_indicator/service_indicator.c"
 #include "sha/sha1-altivec.c"
 #include "sha/sha1.c"
 #include "sha/sha256.c"
@@ -210,21 +213,12 @@ int BORINGSSL_integrity_test(void) {
   assert_within(rodata_start, kP256Params, rodata_end);
   assert_within(rodata_start, kPKCS1SigPrefixes, rodata_end);
 
-#if defined(OPENSSL_AARCH64) || defined(OPENSSL_ANDROID)
   uint8_t result[SHA256_DIGEST_LENGTH];
   const EVP_MD *const kHashFunction = EVP_sha256();
   if (!boringssl_self_test_sha256() ||
       !boringssl_self_test_hmac_sha256()) {
     return 0;
   }
-#else
-  uint8_t result[SHA512_DIGEST_LENGTH];
-  const EVP_MD *const kHashFunction = EVP_sha512();
-  if (!boringssl_self_test_sha512() ||
-      !boringssl_self_test_hmac_sha256()) {
-    return 0;
-  }
-#endif
 
   static const uint8_t kHMACKey[64] = {0};
   unsigned result_len;
