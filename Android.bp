@@ -574,6 +574,8 @@ rust_bindgen {
     host_supported: true,
     wrapper_src: "src/rust/wrapper.h",
     bindgen_flags: [
+        // Adapted from upstream the src/rust/CMakeLists.txt file at:
+        // https://boringssl.googlesource.com/boringssl/+/refs/heads/master/rust/CMakeLists.txt
         "--no-derive-default",
         "--enable-function-attribute-detection",
         "--use-core",
@@ -605,6 +607,21 @@ rust_bindgen {
     ],
 }
 
+// Encapsulate the bindgen-generated layout tests as a test target.
+rust_test {
+    name: "libbssl_sys_raw_test",
+    srcs: [
+        ":libbssl_sys_raw",
+    ],
+    crate_name: "bssl_sys_raw_test",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    clippy_lints: "none",
+    lints: "none",
+}
+
+// Rust's bindgen doesn't cope with macros, so this target includes C functions that
+// do the same thing as macros defined in BoringSSL header files.
 cc_library_static {
     name: "libbssl_rust_support",
     host_supported: true,
@@ -620,12 +637,20 @@ cc_library_static {
     ],
 }
 
+// Replace the upstream CMake placeholder with a re-export of all of the local bindgen output.
+gensrcs {
+    name: "libbssl_sys_src",
+    srcs: ["src/rust/src/lib.rs"],
+    cmd: "sed 's@^.{INCLUDES}@pub use bssl_sys_raw::*;@' $(in) > $(out)",
+}
+
 rust_library {
     name: "libbssl_ffi",
     host_supported: true,
     crate_name: "bssl_ffi",
     visibility: ["//external/rust/crates/openssl"],
-    srcs: ["src/rust/src/lib.rs"],
+    // Use the modified source with placeholder replaced.
+    srcs: [":libbssl_sys_src"],
     // Since libbssl_sys_raw is not publically visible, we can't
     // accidentally force a double-link by linking statically, so do so.
     rlibs: ["libbssl_sys_raw"],
