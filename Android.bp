@@ -649,7 +649,10 @@ rust_library {
     name: "libbssl_ffi",
     host_supported: true,
     crate_name: "bssl_ffi",
-    visibility: ["//external/rust/crates/openssl"],
+    visibility: [
+        "//external/rust/crates/openssl",
+        "//system/keymint/boringssl",
+    ],
     // Use the modified source with placeholder replaced.
     srcs: [":libbssl_sys_src"],
     vendor_available: true,
