@@ -573,6 +573,7 @@ rust_bindgen {
     crate_name: "bssl_sys_raw",
     host_supported: true,
     wrapper_src: "src/rust/wrapper.h",
+    vendor_available: true,
     bindgen_flags: [
         // Adapted from upstream the src/rust/CMakeLists.txt file at:
         // https://boringssl.googlesource.com/boringssl/+/refs/heads/master/rust/CMakeLists.txt
@@ -651,6 +652,7 @@ rust_library {
     visibility: ["//external/rust/crates/openssl"],
     // Use the modified source with placeholder replaced.
     srcs: [":libbssl_sys_src"],
+    vendor_available: true,
     // Since libbssl_sys_raw is not publically visible, we can't
     // accidentally force a double-link by linking statically, so do so.
     rlibs: ["libbssl_sys_raw"],
