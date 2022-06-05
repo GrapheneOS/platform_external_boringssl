@@ -88,7 +88,6 @@ MODULE_INCLUDES += $(LOCAL_DIR)/src/crypto
 
 MODULE_EXPORT_INCLUDES += $(LOCAL_DIR)/src/include
 
-MODULE_LIBRARY_DEPS += \
-	trusty/user/base/lib/openssl-stubs \
+include trusty/user/base/lib/openssl-stubs/openssl-stubs-inc.mk
 
 include make/library.mk
