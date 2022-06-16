@@ -153,6 +153,7 @@ cc_object {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
+        "com.android.adservices",
         "com.android.art",
         "com.android.art.debug",
         "com.android.art.testing",
@@ -241,6 +242,7 @@ cc_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
+        "com.android.adservices",
         "com.android.art",
         "com.android.art.debug",
         "com.android.art.testing",
