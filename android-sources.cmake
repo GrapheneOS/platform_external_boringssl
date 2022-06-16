@@ -104,7 +104,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/ecdsa_extra/ecdsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/engine/engine.c
   ${BORINGSSL_ROOT}src/crypto/err/err.c
-  ${BORINGSSL_ROOT}src/crypto/evp/digestsign.c
   ${BORINGSSL_ROOT}src/crypto/evp/evp.c
   ${BORINGSSL_ROOT}src/crypto/evp/evp_asn1.c
   ${BORINGSSL_ROOT}src/crypto/evp/evp_ctx.c
