@@ -102,7 +102,6 @@ crypto_sources := \
   src/crypto/ecdsa_extra/ecdsa_asn1.c\
   src/crypto/engine/engine.c\
   src/crypto/err/err.c\
-  src/crypto/evp/digestsign.c\
   src/crypto/evp/evp.c\
   src/crypto/evp/evp_asn1.c\
   src/crypto/evp/evp_ctx.c\
