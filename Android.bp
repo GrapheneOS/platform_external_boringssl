@@ -286,6 +286,7 @@ cc_library_static {
         "//system/security/keystore/tests",
         "//test/vts-testcase/security/avb",
     ],
+    min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
         "com.android.neuralnetworks",
