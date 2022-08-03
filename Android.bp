@@ -276,6 +276,7 @@ cc_library_static {
         "//hardware/interfaces/keymaster/4.0/vts/functional",
         "//hardware/interfaces/keymaster/4.1/vts/functional",
         "//packages/modules/adb",
+        "//packages/modules/Bluetooth:__subpackages__",
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//packages/modules/NeuralNetworks:__subpackages__",
         "//system/core/init",
