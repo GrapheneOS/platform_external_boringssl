@@ -109,6 +109,8 @@ cc_defaults {
     local_include_dirs: ["src/crypto"],
 }
 
+// Boring Crypto Module object file.
+// Any changes here must also be reflected in bcm_object_for_testing below.
 cc_object {
     name: "bcm_object",
     device_supported: true,
@@ -165,6 +167,55 @@ cc_object {
     min_sdk_version: "29",
 }
 
+// Version of bcm_object built with BORINGSSL_FIPS_BREAK_TESTS defined.
+// Only for use with the FIPS break-tests.sh script.
+// Must be kept in sync with bcm_object.
+cc_object {
+    name: "bcm_object_for_testing",
+    visibility: [
+        "//external/boringssl",
+    ],
+    device_supported: true,
+    defaults: [
+        "libcrypto_bcm_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
+    sanitize: {
+        address: false,
+        hwaddress: false,
+        fuzzer: false,
+    },
+    target: {
+        android: {
+            cflags: [
+                "-DBORINGSSL_FIPS",
+                "-DBORINGSSL_FIPS_BREAK_TESTS",
+                "-fPIC",
+                // -fno[data|text]-sections required to ensure a
+                // single text and data section for FIPS integrity check
+                "-fno-data-sections",
+                "-fno-function-sections",
+            ],
+            linker_script: "src/crypto/fipsmodule/fips_shared.lds",
+        },
+        // Temporary hack to let BoringSSL build with a new compiler.
+        // This doesn't enable HWASAN unconditionally, it just causes
+        // BoringSSL's asm code to unconditionally use a HWASAN-compatible
+        // global variable reference so that the non-HWASANified (because of
+        // sanitize: { hwaddress: false } above) code in the BCM can
+        // successfully link against the HWASANified code in the rest of
+        // BoringSSL in HWASAN builds.
+        android_arm64: {
+            asflags: [
+                "-fsanitize=hwaddress",
+            ],
+        },
+    },
+    min_sdk_version: "29",
+}
+
 bootstrap_go_package {
     name: "bssl_ar",
     pkgPath: "boringssl.googlesource.com/boringssl/util/ar",
@@ -195,7 +246,8 @@ blueprint_go_binary {
     ],
 }
 
-// Target and host library
+// Target and host library.
+// Any changes here must also be reflected in libcrypto_for_test below.
 cc_library {
     name: "libcrypto",
     visibility: ["//visibility:public"],
@@ -250,6 +302,49 @@ cc_library {
         "com.android.resolv",
         "com.android.virt",
     ],
+    min_sdk_version: "29",
+}
+
+// Version of libcrypto build with BORINGSSL_FIPS_BREAK_TESTS defined
+// Only for use with the FIPS break-tests.sh script.
+// Must be kept in sync with libcrypto.
+cc_library {
+    name: "libcrypto_for_testing",
+    visibility: [
+        "//external/boringssl",
+    ],
+    defaults: [
+        "libcrypto_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
+    unique_host_soname: true,
+    srcs: [
+        ":bcm_object_for_testing",
+    ],
+    target: {
+        android: {
+            cflags: [
+                "-DBORINGSSL_FIPS",
+                "-DBORINGSSL_FIPS_BREAK_TESTS",
+            ],
+            sanitize: {
+                // Disable address sanitizing otherwise libcrypto will not report
+                // itself as being in FIPS mode, which causes boringssl_self_test
+                // to fail.
+                address: false,
+            },
+            inject_bssl_hash: true,
+            static: {
+                // Disable the static version of libcrypto, as it causes
+                // problems for FIPS certification.  Use libcrypto_static for
+                // modules that need static libcrypto but do not need FIPS self
+                // testing, or use dynamic libcrypto.
+                enabled: false,
+            },
+        },
+    },
     min_sdk_version: "29",
 }
 
@@ -565,6 +660,10 @@ cc_binary {
     ],
     srcs: [
         "src/util/fipstools/test_fips.c",
+    ],
+    required: [
+        "adb",
+        "libcrypto_for_testing",
     ],
 }
 
