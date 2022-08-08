@@ -154,6 +154,7 @@ crypto_headers = [
     "src/include/openssl/conf.h",
     "src/include/openssl/cpu.h",
     "src/include/openssl/crypto.h",
+    "src/include/openssl/ctrdrbg.h",
     "src/include/openssl/curve25519.h",
     "src/include/openssl/des.h",
     "src/include/openssl/dh.h",
