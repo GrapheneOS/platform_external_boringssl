@@ -106,7 +106,9 @@ local_runtime_break_test() {
 }
 
 device_runtime_break_test() {
-  BORINGSSL_FIPS_BREAK_TEST=$1 $RUN $TEST_FIPS_BIN $LIBCRYPTO_BREAK_BIN
+  cp $LIBCRYPTO_BREAK_BIN ./libcrypto.so
+  BORINGSSL_FIPS_BREAK_TEST=$1 $RUN $TEST_FIPS_BIN ./libcrypto.so
+  rm ./libcrypto.so
 }
 
 # TODO(prb): make break-hash and break-kat take similar arguments to save having
@@ -128,7 +130,7 @@ local_kat_break_test() {
 
 pause () {
   echo -n "Press <Enter> "
-  # read
+  read
 }
 
 if [ "$MODE" = "local" ]; then
@@ -157,7 +159,7 @@ else # Device mode
   TEST_FIPS_BIN="$ANDROID_PRODUCT_OUT/system/bin/test_fips"
   check_file "$TEST_FIPS_BIN"
   LIBCRYPTO_BIN="$ANDROID_PRODUCT_OUT/system/lib64/libcrypto.so"
-  LIBCRYPTO_BREAK_BIN="./libcrypto_for_testing.so"
+  LIBCRYPTO_BREAK_BIN="$ANDROID_PRODUCT_OUT/system/lib64/libcrypto_for_testing.so"
   check_file "$LIBCRYPTO_BIN"
   check_file "$LIBCRYPTO_BREAK_BIN"
 
