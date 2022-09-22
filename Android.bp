@@ -125,6 +125,7 @@ cc_object {
     sanitize: {
         address: false,
         hwaddress: false,
+        memtag_stack: false,
         fuzzer: false,
     },
     target: {
