@@ -125,6 +125,7 @@ cc_object {
     sanitize: {
         address: false,
         hwaddress: false,
+        memtag_stack: false,
         fuzzer: false,
     },
     target: {
@@ -755,6 +756,7 @@ rust_library {
     visibility: [
         "//external/rust/crates/openssl",
         "//system/keymint/boringssl",
+        "//system/security/prng_seeder",
     ],
     // Use the modified source with placeholder replaced.
     srcs: [":libbssl_sys_src"],
