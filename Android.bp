@@ -103,6 +103,7 @@ cc_defaults {
     },
 
     local_include_dirs: ["src/crypto"],
+    stl: "none",
 }
 
 // Boring Crypto Module object file.
