@@ -62,11 +62,7 @@ cc_defaults {
 
     // Build BoringSSL and its tests against the same STL.
     sdk_version: "9",
-    target: {
-        android: {
-            stl: "libc++_static",
-        },
-    },
+    stl: "libc++_static",
 }
 
 // Used by libcrypto + libssl
@@ -107,6 +103,7 @@ cc_defaults {
     },
 
     local_include_dirs: ["src/crypto"],
+    stl: "none",
 }
 
 // Boring Crypto Module object file.
