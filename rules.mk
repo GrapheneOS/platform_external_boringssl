@@ -37,22 +37,6 @@ LOCAL_ADDITIONAL_DEPENDENCIES :=
 MODULE_SRCDEPS += $(LOCAL_DIR)/crypto-sources.mk
 include $(LOCAL_DIR)/crypto-sources.mk
 
-# Some files in BoringSSL use OS functions that aren't supported by Trusty. The
-# easiest way to deal with them is not to include them. As long as no path to
-# the functions defined in these files exists, the linker will be happy. If
-# such a path is created, it'll be a link-time error and something more complex
-# may need to be considered.
-LOCAL_SRC_FILES := $(filter-out src/crypto/bio/connect.c,$(LOCAL_SRC_FILES))
-LOCAL_SRC_FILES := $(filter-out src/crypto/bio/fd.c,$(LOCAL_SRC_FILES))
-LOCAL_SRC_FILES := $(filter-out src/crypto/bio/file.c,$(LOCAL_SRC_FILES))
-LOCAL_SRC_FILES := $(filter-out src/crypto/bio/socket.c,$(LOCAL_SRC_FILES))
-LOCAL_SRC_FILES := $(filter-out src/crypto/bio/socket_helper.c,$(LOCAL_SRC_FILES))
-LOCAL_SRC_FILES := $(filter-out src/crypto/x509/by_dir.c,$(LOCAL_SRC_FILES))
-
-# BoringSSL detects Trusty based on this define and does things like switch to
-# no-op threading functions.
-MODULE_CFLAGS += -DTRUSTY
-
 # The AOSP stdatomic.h clang header does not build against musl. Disable C11
 # atomics.
 MODULE_CFLAGS += -D__STDC_NO_ATOMICS__
