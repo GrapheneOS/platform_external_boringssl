@@ -394,6 +394,25 @@ cc_library_static {
     ],
 }
 
+// Static library for use in bare-metal environments
+cc_library_static {
+    name: "libcrypto_baremetal",
+    defaults: [
+        "libcrypto_bcm_sources",
+        "libcrypto_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
+    cflags: [
+        "-DOPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED",
+        "-DOPENSSL_SMALL",
+        "-DOPENSSL_NO_ASM",
+    ],
+    visibility: ["//packages/modules/Virtualization:__subpackages__"],
+    apex_available: ["com.android.virt"],
+}
+
 // Common defaults for lib*_fuzz_unsafe. These are unsafe and deterministic
 // libraries for testing and fuzzing only. See src/FUZZING.md.
 cc_defaults {
