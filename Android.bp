@@ -599,14 +599,13 @@ cc_library_static {
 
     shared_libs: [
         "libcrypto",
-        "libssl",
     ],
 }
 
 // Tests
 cc_test {
     name: "boringssl_crypto_test",
-    test_config: "NativeTests.xml",
+    test_config: "CryptoNativeTests.xml",
     host_supported: false,
     per_testcase_directory: true,
     compile_multilib: "both",
@@ -635,7 +634,7 @@ cc_test {
 
 cc_test {
     name: "boringssl_ssl_test",
-    test_config: "NativeTests.xml",
+    test_config: "SslNativeTests.xml",
     host_supported: false,
     per_testcase_directory: true,
     compile_multilib: "both",

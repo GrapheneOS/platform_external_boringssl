@@ -14,26 +14,19 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   ~
-  ~ Re-runs a subset of MtsConscryptTestCases using Conscrypt's file-descriptor based
-  ~ implementation to ensure there are no regressions in this implementation before
-  ~ it is fully deprecated.
-  ~
-  ~ Apart from the include filters and SSLSocket implementation this test suite is
-  ~ identical to MtsConscryptTestCases.
+  ~ Native test configuration for boringssl_crypto_test.
   -->
 <configuration description="Configuration for BoringSSL native tests">
    <option name="test-suite-tag" value="mts-conscrypt" />
    <target_preparer class="com.android.compatibility.common.tradefed.targetprep.FilePusher">
        <option name="cleanup" value="true" />
        <option name="push" value="boringssl_crypto_test->/data/local/tmp/boringssl_crypto_test" />
-       <option name="push" value="boringssl_ssl_test->/data/local/tmp/boringssl_ssl_test" />
        <option name="append-bitness" value="true" />
    </target_preparer>
    <target_preparer class="com.android.tradefed.targetprep.RootTargetPreparer"/>
    <test class="com.android.tradefed.testtype.GTest" >
        <option name="native-test-device-path" value="/data/local/tmp" />
        <option name="module-name" value="boringssl_crypto_test" />
-       <option name="module-name" value="boringssl_ssl_test" />
        <option name="runtime-hint" value="10m" />
        <option name="native-test-timeout" value="600000" />
    </test>
