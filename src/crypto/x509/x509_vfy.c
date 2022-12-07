@@ -1000,6 +1000,9 @@ static int check_crl_time(X509_STORE_CTX *ctx, X509_CRL *crl, int notify)
 {
     time_t *ptime;
     int i;
+    if (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME) {
+      return 1;
+    }
     if (notify)
         ctx->current_crl = crl;
     if (ctx->param->flags & X509_V_FLAG_USE_CHECK_TIME)
@@ -1743,6 +1746,9 @@ static int check_cert_time(X509_STORE_CTX *ctx, X509 *x)
     time_t *ptime;
     int i;
 
+    if (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME) {
+      return 1;
+    }
     if (ctx->param->flags & X509_V_FLAG_USE_CHECK_TIME)
         ptime = &ctx->param->check_time;
     else
