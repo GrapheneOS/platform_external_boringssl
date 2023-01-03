@@ -777,7 +777,7 @@ rust_library {
     // Since libbssl_sys_raw is not publically visible, we can't
     // accidentally force a double-link by linking statically, so do so.
     rlibs: ["libbssl_sys_raw"],
-    static_libs: [
+    whole_static_libs: [
         "libbssl_rust_support",
     ],
     apex_available: [
