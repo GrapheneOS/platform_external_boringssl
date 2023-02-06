@@ -409,7 +409,10 @@ cc_library_static {
         "-DOPENSSL_SMALL",
         "-DOPENSSL_NO_ASM",
     ],
-    visibility: ["//packages/modules/Virtualization:__subpackages__"],
+    visibility: [
+        "//packages/modules/Virtualization:__subpackages__",
+        "//system/security/diced/open_dice",
+    ],
     apex_available: ["com.android.virt"],
 }
 
@@ -785,4 +788,3 @@ rust_library {
         "com.android.virt",
     ],
 }
-
