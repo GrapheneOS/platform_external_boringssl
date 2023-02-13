@@ -410,6 +410,7 @@ cc_library_static {
         "-D__TRUSTY__",
     ],
     visibility: [
+        "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
     ],
