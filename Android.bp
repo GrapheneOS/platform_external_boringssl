@@ -407,11 +407,12 @@ cc_library_static {
         "boringssl_flags",
     ],
     cflags: [
-        "-DOPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED",
         "-DOPENSSL_SMALL",
         "-DOPENSSL_NO_ASM",
+        "-D__TRUSTY__",
     ],
     visibility: [
+        "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
     ],
