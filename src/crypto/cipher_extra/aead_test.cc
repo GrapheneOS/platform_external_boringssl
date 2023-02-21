@@ -12,7 +12,6 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
-#include <assert.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -49,8 +48,13 @@ constexpr uint32_t kNondeterministic = 1 << 7;
 
 // RequiresADLength encodes an AD length requirement into flags.
 constexpr uint32_t RequiresADLength(size_t length) {
-  assert(length < 16);
-  return static_cast<uint32_t>((length & 0xf) << 3);
+  // If we had a more recent C++ version we could assert that the length is
+  // sufficiently small with:
+  //
+  // if (length >= 16) {
+  //  __builtin_unreachable();
+  // }
+  return (length & 0xf) << 3;
 }
 
 // RequiredADLength returns the AD length requirement encoded in |flags|, or
@@ -60,8 +64,9 @@ constexpr size_t RequiredADLength(uint32_t flags) {
 }
 
 constexpr uint32_t RequiresMinimumTagLength(size_t length) {
-  assert(length < 16);
-  return static_cast<uint32_t>((length & 0xf) << 8);
+  // See above for statically checking the size at compile time with future C++
+  // versions.
+  return (length & 0xf) << 8;
 }
 
 constexpr size_t MinimumTagLength(uint32_t flags) {
@@ -149,9 +154,6 @@ static const struct KnownAEAD kAEADs[] = {
 
     {"AES_128_CCM_BLUETOOTH_8", EVP_aead_aes_128_ccm_bluetooth_8,
      "aes_128_ccm_bluetooth_8_tests.txt", 0},
-
-    {"AES_128_CCM_Matter", EVP_aead_aes_128_ccm_matter,
-     "aes_128_ccm_matter_tests.txt", 0},
 };
 
 class PerAEADTest : public testing::TestWithParam<KnownAEAD> {
