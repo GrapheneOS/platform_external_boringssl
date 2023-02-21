@@ -872,8 +872,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		len(m.sessionID) > 32 {
 		return false
 	}
-	if m.isDTLS && !reader.readU8LengthPrefixedBytes(&m.cookie) {
-		return false
+	if m.isDTLS {
+		if !reader.readU8LengthPrefixedBytes(&m.cookie) ||
+			len(m.cookie) > 32 {
+			return false
+		}
 	}
 	var cipherSuites byteReader
 	if !reader.readU16LengthPrefixed(&cipherSuites) ||

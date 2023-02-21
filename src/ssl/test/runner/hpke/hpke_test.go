@@ -23,7 +23,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
+	"io/ioutil"
 	"path/filepath"
 	"testing"
 )
@@ -98,7 +98,7 @@ type ExportTestVector struct {
 
 // TestVectors checks all relevant test vectors in test-vectors.json.
 func TestVectors(t *testing.T) {
-	jsonStr, err := os.ReadFile(filepath.Join(*testDataDir, "test-vectors.json"))
+	jsonStr, err := ioutil.ReadFile(filepath.Join(*testDataDir, "test-vectors.json"))
 	if err != nil {
 		t.Errorf("error reading test vectors: %s", err)
 		return
