@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -137,7 +138,7 @@ func doTest(test invocation) error {
 	}
 	defer input.Close()
 
-	tempFile, err := os.CreateTemp("", "boringssl-check_expected-")
+	tempFile, err := ioutil.TempFile("", "boringssl-check_expected-")
 	if err != nil {
 		return fmt.Errorf("Failed to create temp file: %s", err)
 	}
@@ -189,7 +190,7 @@ func doTest(test invocation) error {
 }
 
 func writeUpdate(path string, contents []byte) {
-	if err := os.WriteFile(path, contents, 0644); err != nil {
+	if err := ioutil.WriteFile(path, contents, 0644); err != nil {
 		log.Printf("Failed to create missing file %q: %s", path, err)
 	} else {
 		log.Printf("Wrote %q", path)

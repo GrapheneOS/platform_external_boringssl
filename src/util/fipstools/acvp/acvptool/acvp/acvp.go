@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -167,12 +168,12 @@ func parseReplyToBytes(in io.Reader) ([]byte, error) {
 		return nil, err
 	}
 
-	buf, err := io.ReadAll(decoder.Buffered())
+	buf, err := ioutil.ReadAll(decoder.Buffered())
 	if err != nil {
 		return nil, err
 	}
 
-	rest, err := io.ReadAll(in)
+	rest, err := ioutil.ReadAll(in)
 	if err != nil {
 		return nil, err
 	}

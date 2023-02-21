@@ -216,7 +216,6 @@ DB	0x67
 	por	xmm0,xmm2
 	por	xmm1,xmm3
 	por	xmm0,xmm1
-
 	pshufd	xmm1,xmm0,0x4e
 	por	xmm0,xmm1
 	lea	r12,[256+r12]
@@ -340,7 +339,6 @@ $L$outer:
 	por	xmm4,xmm2
 	por	xmm5,xmm3
 	por	xmm4,xmm5
-
 	pshufd	xmm0,xmm4,0x4e
 	por	xmm0,xmm4
 	lea	r12,[256+r12]
@@ -725,7 +723,6 @@ DB	0x67
 	por	xmm0,xmm2
 	por	xmm1,xmm3
 	por	xmm0,xmm1
-
 	pshufd	xmm1,xmm0,0x4e
 	por	xmm0,xmm1
 	lea	r12,[256+r12]
@@ -933,7 +930,6 @@ $L$outer4x:
 	por	xmm4,xmm2
 	por	xmm5,xmm3
 	por	xmm4,xmm5
-
 	pshufd	xmm0,xmm4,0x4e
 	por	xmm0,xmm4
 	lea	r12,[256+r12]
@@ -2376,7 +2372,6 @@ DB	0x67
 	por	xmm0,xmm2
 	por	xmm1,xmm3
 	pxor	xmm0,xmm1
-
 	pshufd	xmm1,xmm0,0x4e
 	por	xmm0,xmm1
 	lea	rdi,[256+rdi]
@@ -2527,7 +2522,6 @@ DB	0x67,0x67
 	por	xmm4,xmm2
 	por	xmm5,xmm3
 	por	xmm4,xmm5
-
 	pshufd	xmm0,xmm4,0x4e
 	por	xmm0,xmm4
 	lea	rdi,[256+rdi]
@@ -3488,15 +3482,6 @@ bn_scatter5:
 
 	cmp	edx,0
 	jz	NEAR $L$scatter_epilogue
-
-
-
-
-
-
-
-
-
 	lea	r8,[r9*8+r8]
 $L$scatter:
 	mov	rax,QWORD[rcx]
@@ -3664,7 +3649,6 @@ $L$gather:
 	por	xmm5,xmm3
 	por	xmm4,xmm5
 	lea	r11,[256+r11]
-
 	pshufd	xmm0,xmm4,0x4e
 	por	xmm0,xmm4
 	movq	QWORD[rcx],xmm0
