@@ -59,11 +59,11 @@
 #include <openssl/err.h>
 #include <openssl/mem.h>
 #include <openssl/sha.h>
-#include <openssl/type_check.h>
 
 #include "../../internal.h"
 #include "../bn/internal.h"
 #include "../ec/internal.h"
+#include "../service_indicator/internal.h"
 #include "internal.h"
 
 
@@ -321,8 +321,8 @@ ECDSA_SIG *ECDSA_do_sign(const uint8_t *digest, size_t digest_len,
 
   // Pass a SHA512 hash of the private key and digest as additional data
   // into the RBG. This is a hardening measure against entropy failure.
-  OPENSSL_STATIC_ASSERT(SHA512_DIGEST_LENGTH >= 32,
-                        "additional_data is too large for SHA-512");
+  static_assert(SHA512_DIGEST_LENGTH >= 32,
+                "additional_data is too large for SHA-512");
 
   FIPS_service_indicator_lock_state();
 
