@@ -385,7 +385,6 @@ std::vector<Flag> SortedFlags() {
                  &TestConfig::quic_early_data_context),
       IntFlag("-early-write-after-message",
               &TestConfig::early_write_after_message),
-      BoolFlag("-fips-202205", &TestConfig::fips_202205),
   };
   std::sort(flags.begin(), flags.end(), [](const Flag &a, const Flag &b) {
     return strcmp(a.name, b.name) < 0;
@@ -1618,7 +1617,7 @@ static unsigned PskClientCallback(SSL *ssl, const char *hint,
 
   OPENSSL_strlcpy(out_identity, config->psk_identity.c_str(), max_identity_len);
   OPENSSL_memcpy(out_psk, config->psk.data(), config->psk.size());
-  return static_cast<unsigned>(config->psk.size());
+  return config->psk.size();
 }
 
 static unsigned PskServerCallback(SSL *ssl, const char *identity,
@@ -1636,7 +1635,7 @@ static unsigned PskServerCallback(SSL *ssl, const char *identity,
   }
 
   OPENSSL_memcpy(out_psk, config->psk.data(), config->psk.size());
-  return static_cast<unsigned>(config->psk.size());
+  return config->psk.size();
 }
 
 static ssl_verify_result_t CustomVerifyCallback(SSL *ssl, uint8_t *out_alert) {
@@ -1765,11 +1764,6 @@ bssl::UniquePtr<SSL> TestConfig::NewSSL(
   }
   if (enable_ech_grease) {
     SSL_set_enable_ech_grease(ssl.get(), 1);
-  }
-  if (fips_202205 && !SSL_set_compliance_policy(
-                         ssl.get(), ssl_compliance_policy_fips_202205)) {
-    fprintf(stderr, "SSL_set_compliance_policy failed\n");
-    return nullptr;
   }
   if (!ech_config_list.empty() &&
       !SSL_set1_ech_config_list(

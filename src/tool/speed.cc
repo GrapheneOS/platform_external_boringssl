@@ -1061,8 +1061,12 @@ static bool SpeedSipHash(const std::string &selected) {
 
 static TRUST_TOKEN_PRETOKEN *trust_token_pretoken_dup(
     TRUST_TOKEN_PRETOKEN *in) {
-  return (TRUST_TOKEN_PRETOKEN *)OPENSSL_memdup(in,
-                                                sizeof(TRUST_TOKEN_PRETOKEN));
+  TRUST_TOKEN_PRETOKEN *out =
+      (TRUST_TOKEN_PRETOKEN *)OPENSSL_malloc(sizeof(TRUST_TOKEN_PRETOKEN));
+  if (out) {
+    OPENSSL_memcpy(out, in, sizeof(TRUST_TOKEN_PRETOKEN));
+  }
+  return out;
 }
 
 static bool SpeedTrustToken(std::string name, const TRUST_TOKEN_METHOD *method,

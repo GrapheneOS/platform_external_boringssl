@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -292,7 +293,7 @@ func main() {
 	}
 
 	// Stage everything in a temporary directory.
-	tmpDir, err := os.MkdirTemp("", "boringssl-android")
+	tmpDir, err := ioutil.TempDir("", "boringssl-android")
 	if err != nil {
 		fmt.Printf("Error making temporary directory: %s\n", err)
 		os.Exit(1)
