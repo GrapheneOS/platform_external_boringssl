@@ -235,16 +235,9 @@ func (hs *serverHandshakeState) readClientHello() error {
 	if c.isDTLS && !config.Bugs.SkipHelloVerifyRequest {
 		// Per RFC 6347, the version field in HelloVerifyRequest SHOULD
 		// be always DTLS 1.0
-		cookieLen := c.config.Bugs.HelloVerifyRequestCookieLength
-		if cookieLen == 0 {
-			cookieLen = 32
-		}
-		if c.config.Bugs.EmptyHelloVerifyRequestCookie {
-			cookieLen = 0
-		}
 		helloVerifyRequest := &helloVerifyRequestMsg{
 			vers:   VersionDTLS10,
-			cookie: make([]byte, cookieLen),
+			cookie: make([]byte, 32),
 		}
 		if _, err := io.ReadFull(c.config.rand(), helloVerifyRequest.cookie); err != nil {
 			c.sendAlert(alertInternalError)

@@ -16,9 +16,8 @@
 
 #include <openssl/span.h>
 
-#include <algorithm>
-#include <climits>
 #include <cstring>
+#include <limits>
 
 MockQuicTransport::MockQuicTransport(bssl::UniquePtr<BIO> bio, SSL *ssl)
     : bio_(std::move(bio)),
@@ -52,8 +51,11 @@ bool ReadAll(BIO *bio, bssl::Span<uint8_t> out) {
   size_t len = out.size();
   uint8_t *buf = out.data();
   while (len > 0) {
-    size_t chunk_len = std::min(len, size_t{INT_MAX});
-    int ret = BIO_read(bio, buf, static_cast<int>(chunk_len));
+    int chunk_len = std::numeric_limits<int>::max();
+    if (len <= static_cast<unsigned int>(std::numeric_limits<int>::max())) {
+      chunk_len = len;
+    }
+    int ret = BIO_read(bio, buf, chunk_len);
     if (ret <= 0) {
       return false;
     }

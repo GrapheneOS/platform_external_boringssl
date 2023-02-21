@@ -56,7 +56,6 @@
 
 #include <openssl/bn.h>
 
-#include <assert.h>
 #include <limits.h>
 #include <string.h>
 
@@ -66,11 +65,6 @@
 #include "internal.h"
 #include "../delocate.h"
 
-
-// BN_MAX_WORDS is the maximum number of words allowed in a |BIGNUM|. It is
-// sized so byte and bit counts of a |BIGNUM| always fit in |int|, with room to
-// spare.
-#define BN_MAX_WORDS (INT_MAX / (4 * BN_BITS2))
 
 BIGNUM *BN_new(void) {
   BIGNUM *bn = OPENSSL_malloc(sizeof(BIGNUM));
@@ -85,8 +79,6 @@ BIGNUM *BN_new(void) {
 
   return bn;
 }
-
-BIGNUM *BN_secure_new(void) { return BN_new(); }
 
 void BN_init(BIGNUM *bn) {
   OPENSSL_memset(bn, 0, sizeof(BIGNUM));
@@ -297,9 +289,8 @@ void bn_set_static_words(BIGNUM *bn, const BN_ULONG *words, size_t num) {
   }
   bn->d = (BN_ULONG *)words;
 
-  assert(num <= BN_MAX_WORDS);
-  bn->width = (int)num;
-  bn->dmax = (int)num;
+  bn->width = num;
+  bn->dmax = num;
   bn->neg = 0;
   bn->flags |= BN_FLG_STATIC_DATA;
 }
@@ -352,7 +343,7 @@ int bn_wexpand(BIGNUM *bn, size_t words) {
     return 1;
   }
 
-  if (words > BN_MAX_WORDS) {
+  if (words > (INT_MAX / (4 * BN_BITS2))) {
     OPENSSL_PUT_ERROR(BN, BN_R_BIGNUM_TOO_LONG);
     return 0;
   }
@@ -409,7 +400,7 @@ int bn_resize_words(BIGNUM *bn, size_t words) {
     }
     OPENSSL_memset(bn->d + bn->width, 0,
                    (words - bn->width) * sizeof(BN_ULONG));
-    bn->width = (int)words;
+    bn->width = words;
     return 1;
   }
 
@@ -418,15 +409,15 @@ int bn_resize_words(BIGNUM *bn, size_t words) {
     OPENSSL_PUT_ERROR(BN, BN_R_BIGNUM_TOO_LONG);
     return 0;
   }
-  bn->width = (int)words;
+  bn->width = words;
   return 1;
 }
 
 void bn_select_words(BN_ULONG *r, BN_ULONG mask, const BN_ULONG *a,
                      const BN_ULONG *b, size_t num) {
   for (size_t i = 0; i < num; i++) {
-    static_assert(sizeof(BN_ULONG) <= sizeof(crypto_word_t),
-                  "crypto_word_t is too small");
+    OPENSSL_STATIC_ASSERT(sizeof(BN_ULONG) <= sizeof(crypto_word_t),
+                          "crypto_word_t is too small");
     r[i] = constant_time_select_w(mask, a[i], b[i]);
   }
 }

@@ -24,11 +24,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 )
 
 func do(outPath, inPath string) error {
-	objectBytes, err := os.ReadFile(inPath)
+	objectBytes, err := ioutil.ReadFile(inPath)
 	if err != nil {
 		return err
 	}
@@ -130,7 +131,7 @@ func do(outPath, inPath string) error {
 	fmt.Printf("\nHash of module was:          %x\n", hashWas)
 	fmt.Printf("Hash of corrupted module is: %x\n", newHash)
 
-	return os.WriteFile(outPath, objectBytes, 0755)
+	return ioutil.WriteFile(outPath, objectBytes, 0755)
 }
 
 func main() {

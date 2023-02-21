@@ -116,8 +116,7 @@ static const SSL_CIPHER *choose_tls13_cipher(
 
   const uint16_t version = ssl_protocol_version(ssl);
 
-  return ssl_choose_tls13_cipher(cipher_suites, version, group_id,
-                                 ssl->config->only_fips_cipher_suites_in_tls13);
+  return ssl_choose_tls13_cipher(cipher_suites, version, group_id);
 }
 
 static bool add_new_session_tickets(SSL_HANDSHAKE *hs, bool *out_sent_tickets) {
@@ -738,13 +737,12 @@ static enum ssl_hs_wait_t do_send_server_hello(SSL_HANDSHAKE *hs) {
 
   SSL_HANDSHAKE_HINTS *const hints = hs->hints.get();
   if (hints && !hs->hints_requested &&
-      hints->server_random_tls13.size() == random.size()) {
-    OPENSSL_memcpy(random.data(), hints->server_random_tls13.data(),
-                   random.size());
+      hints->server_random.size() == random.size()) {
+    OPENSSL_memcpy(random.data(), hints->server_random.data(), random.size());
   } else {
     RAND_bytes(random.data(), random.size());
     if (hints && hs->hints_requested &&
-        !hints->server_random_tls13.CopyFrom(random)) {
+        !hints->server_random.CopyFrom(random)) {
       return ssl_hs_error;
     }
   }
