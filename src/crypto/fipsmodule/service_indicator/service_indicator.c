@@ -15,7 +15,6 @@
 #include <openssl/crypto.h>
 #include <openssl/ec.h>
 #include <openssl/ec_key.h>
-#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/service_indicator.h>
 

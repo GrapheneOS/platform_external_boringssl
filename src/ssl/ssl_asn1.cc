@@ -150,57 +150,57 @@ BSSL_NAMESPACE_BEGIN
 
 static const unsigned kVersion = 1;
 
-static const CBS_ASN1_TAG kTimeTag =
+static const unsigned kTimeTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 1;
-static const CBS_ASN1_TAG kTimeoutTag =
+static const unsigned kTimeoutTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 2;
-static const CBS_ASN1_TAG kPeerTag =
+static const unsigned kPeerTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 3;
-static const CBS_ASN1_TAG kSessionIDContextTag =
+static const unsigned kSessionIDContextTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 4;
-static const CBS_ASN1_TAG kVerifyResultTag =
+static const unsigned kVerifyResultTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 5;
-static const CBS_ASN1_TAG kHostNameTag =
+static const unsigned kHostNameTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 6;
-static const CBS_ASN1_TAG kPSKIdentityTag =
+static const unsigned kPSKIdentityTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 8;
-static const CBS_ASN1_TAG kTicketLifetimeHintTag =
+static const unsigned kTicketLifetimeHintTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 9;
-static const CBS_ASN1_TAG kTicketTag =
+static const unsigned kTicketTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 10;
-static const CBS_ASN1_TAG kPeerSHA256Tag =
+static const unsigned kPeerSHA256Tag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 13;
-static const CBS_ASN1_TAG kOriginalHandshakeHashTag =
+static const unsigned kOriginalHandshakeHashTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 14;
-static const CBS_ASN1_TAG kSignedCertTimestampListTag =
+static const unsigned kSignedCertTimestampListTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 15;
-static const CBS_ASN1_TAG kOCSPResponseTag =
+static const unsigned kOCSPResponseTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 16;
-static const CBS_ASN1_TAG kExtendedMasterSecretTag =
+static const unsigned kExtendedMasterSecretTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 17;
-static const CBS_ASN1_TAG kGroupIDTag =
+static const unsigned kGroupIDTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 18;
-static const CBS_ASN1_TAG kCertChainTag =
+static const unsigned kCertChainTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 19;
-static const CBS_ASN1_TAG kTicketAgeAddTag =
+static const unsigned kTicketAgeAddTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 21;
-static const CBS_ASN1_TAG kIsServerTag =
+static const unsigned kIsServerTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 22;
-static const CBS_ASN1_TAG kPeerSignatureAlgorithmTag =
+static const unsigned kPeerSignatureAlgorithmTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 23;
-static const CBS_ASN1_TAG kTicketMaxEarlyDataTag =
+static const unsigned kTicketMaxEarlyDataTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 24;
-static const CBS_ASN1_TAG kAuthTimeoutTag =
+static const unsigned kAuthTimeoutTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 25;
-static const CBS_ASN1_TAG kEarlyALPNTag =
+static const unsigned kEarlyALPNTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 26;
-static const CBS_ASN1_TAG kIsQuicTag =
+static const unsigned kIsQuicTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 27;
-static const CBS_ASN1_TAG kQuicEarlyDataContextTag =
+static const unsigned kQuicEarlyDataContextTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 28;
-static const CBS_ASN1_TAG kLocalALPSTag =
+static const unsigned kLocalALPSTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 29;
-static const CBS_ASN1_TAG kPeerALPSTag =
+static const unsigned kPeerALPSTag =
     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 30;
 
 static int SSL_SESSION_to_bytes_full(const SSL_SESSION *in, CBB *cbb,
@@ -438,8 +438,7 @@ static int SSL_SESSION_to_bytes_full(const SSL_SESSION *in, CBB *cbb,
 // tagged with |tag| from |cbs| and saves it in |*out|. If the element was not
 // found, it sets |*out| to NULL. It returns one on success, whether or not the
 // element was found, and zero on decode error.
-static int SSL_SESSION_parse_string(CBS *cbs, UniquePtr<char> *out,
-                                    CBS_ASN1_TAG tag) {
+static int SSL_SESSION_parse_string(CBS *cbs, UniquePtr<char> *out, unsigned tag) {
   CBS value;
   int present;
   if (!CBS_get_optional_asn1_octet_string(cbs, &value, &present, tag)) {
@@ -467,7 +466,7 @@ static int SSL_SESSION_parse_string(CBS *cbs, UniquePtr<char> *out,
 // tagged with |tag| from |cbs| and stows it in |*out|. It returns one on
 // success, whether or not the element was found, and zero on decode error.
 static bool SSL_SESSION_parse_octet_string(CBS *cbs, Array<uint8_t> *out,
-                                           CBS_ASN1_TAG tag) {
+                                           unsigned tag) {
   CBS value;
   if (!CBS_get_optional_asn1_octet_string(cbs, &value, NULL, tag)) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
@@ -478,7 +477,7 @@ static bool SSL_SESSION_parse_octet_string(CBS *cbs, Array<uint8_t> *out,
 
 static int SSL_SESSION_parse_crypto_buffer(CBS *cbs,
                                            UniquePtr<CRYPTO_BUFFER> *out,
-                                           CBS_ASN1_TAG tag,
+                                           unsigned tag,
                                            CRYPTO_BUFFER_POOL *pool) {
   if (!CBS_peek_asn1_tag(cbs, tag)) {
     return 1;
@@ -501,10 +500,8 @@ static int SSL_SESSION_parse_crypto_buffer(CBS *cbs,
 
 // SSL_SESSION_parse_bounded_octet_string parses an optional ASN.1 OCTET STRING
 // explicitly tagged with |tag| of size at most |max_out|.
-static int SSL_SESSION_parse_bounded_octet_string(CBS *cbs, uint8_t *out,
-                                                  uint8_t *out_len,
-                                                  uint8_t max_out,
-                                                  CBS_ASN1_TAG tag) {
+static int SSL_SESSION_parse_bounded_octet_string(
+    CBS *cbs, uint8_t *out, uint8_t *out_len, uint8_t max_out, unsigned tag) {
   CBS value;
   if (!CBS_get_optional_asn1_octet_string(cbs, &value, NULL, tag) ||
       CBS_len(&value) > max_out) {
@@ -516,7 +513,7 @@ static int SSL_SESSION_parse_bounded_octet_string(CBS *cbs, uint8_t *out,
   return 1;
 }
 
-static int SSL_SESSION_parse_long(CBS *cbs, long *out, CBS_ASN1_TAG tag,
+static int SSL_SESSION_parse_long(CBS *cbs, long *out, unsigned tag,
                                   long default_value) {
   uint64_t value;
   if (!CBS_get_optional_asn1_uint64(cbs, &value, tag,
@@ -529,7 +526,7 @@ static int SSL_SESSION_parse_long(CBS *cbs, long *out, CBS_ASN1_TAG tag,
   return 1;
 }
 
-static int SSL_SESSION_parse_u32(CBS *cbs, uint32_t *out, CBS_ASN1_TAG tag,
+static int SSL_SESSION_parse_u32(CBS *cbs, uint32_t *out, unsigned tag,
                                  uint32_t default_value) {
   uint64_t value;
   if (!CBS_get_optional_asn1_uint64(cbs, &value, tag,
@@ -542,7 +539,7 @@ static int SSL_SESSION_parse_u32(CBS *cbs, uint32_t *out, CBS_ASN1_TAG tag,
   return 1;
 }
 
-static int SSL_SESSION_parse_u16(CBS *cbs, uint16_t *out, CBS_ASN1_TAG tag,
+static int SSL_SESSION_parse_u16(CBS *cbs, uint16_t *out, unsigned tag,
                                  uint16_t default_value) {
   uint64_t value;
   if (!CBS_get_optional_asn1_uint64(cbs, &value, tag,

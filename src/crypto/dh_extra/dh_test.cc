@@ -70,7 +70,6 @@
 #include <openssl/err.h>
 #include <openssl/mem.h>
 
-#include "../fipsmodule/dh/internal.h"
 #include "../internal.h"
 #include "../test/test_util.h"
 
@@ -135,13 +134,19 @@ static bool RunBasicTests() {
   }
 
   printf("\np    = ");
-  BN_print_fp(stdout, DH_get0_p(a.get()));
+  BN_print_fp(stdout, a->p);
   printf("\ng    = ");
-  BN_print_fp(stdout, DH_get0_g(a.get()));
+  BN_print_fp(stdout, a->g);
   printf("\n");
 
-  bssl::UniquePtr<DH> b(DHparams_dup(a.get()));
+  bssl::UniquePtr<DH> b(DH_new());
   if (!b) {
+    return false;
+  }
+
+  b->p = BN_dup(a->p);
+  b->g = BN_dup(a->g);
+  if (b->p == nullptr || b->g == nullptr) {
     return false;
   }
 
@@ -149,22 +154,22 @@ static bool RunBasicTests() {
     return false;
   }
   printf("pri1 = ");
-  BN_print_fp(stdout, DH_get0_priv_key(a.get()));
+  BN_print_fp(stdout, a->priv_key);
   printf("\npub1 = ");
-  BN_print_fp(stdout, DH_get0_pub_key(a.get()));
+  BN_print_fp(stdout, a->pub_key);
   printf("\n");
 
   if (!DH_generate_key(b.get())) {
     return false;
   }
   printf("pri2 = ");
-  BN_print_fp(stdout, DH_get0_priv_key(b.get()));
+  BN_print_fp(stdout, b->priv_key);
   printf("\npub2 = ");
-  BN_print_fp(stdout, DH_get0_pub_key(b.get()));
+  BN_print_fp(stdout, b->pub_key);
   printf("\n");
 
   std::vector<uint8_t> key1(DH_size(a.get()));
-  int ret = DH_compute_key(key1.data(), DH_get0_pub_key(b.get()), a.get());
+  int ret = DH_compute_key(key1.data(), b->pub_key, a.get());
   if (ret < 0) {
     return false;
   }
@@ -177,7 +182,7 @@ static bool RunBasicTests() {
   printf("\n");
 
   std::vector<uint8_t> key2(DH_size(b.get()));
-  ret = DH_compute_key(key2.data(), DH_get0_pub_key(a.get()), b.get());
+  ret = DH_compute_key(key2.data(), a->pub_key, b.get());
   if (ret < 0) {
     return false;
   }
@@ -338,9 +343,9 @@ static bool TestASN1() {
   bssl::UniquePtr<DH> dh(DH_parse_parameters(&cbs));
   if (!dh || CBS_len(&cbs) != 0 ||
       !BIGNUMEqualsHex(
-          DH_get0_p(dh.get()),
+          dh->p,
           "d72034a3274fdfbf04fd246825b656d8ab2a412d740a52087c40714ed2579313") ||
-      !BIGNUMEqualsHex(DH_get0_g(dh.get()), "2") || dh->priv_length != 0) {
+      !BIGNUMEqualsHex(dh->g, "2") || dh->priv_length != 0) {
     return false;
   }
 
@@ -378,11 +383,11 @@ static bool TestASN1() {
   CBS_init(&cbs, kParamsDSA, sizeof(kParamsDSA));
   dh.reset(DH_parse_parameters(&cbs));
   if (!dh || CBS_len(&cbs) != 0 ||
-      !BIGNUMEqualsHex(DH_get0_p(dh.get()),
+      !BIGNUMEqualsHex(dh->p,
                        "93f3c11801e662b6d1469a2c72ea31d91810302863e2347d80caee8"
                        "22b193c19bb42830270dddb8c03abe99cc4004d705f5203312ca467"
                        "3451952aac11e26a55") ||
-      !BIGNUMEqualsHex(DH_get0_g(dh.get()),
+      !BIGNUMEqualsHex(dh->g,
                        "44c8105344323163d8d18c75c898533b5b4a2a0a09e7d03c5372a86"
                        "b70419c267144fc7f0875e102ab7441e82a3d3c263309e48bb441ec"
                        "a6a8ba1a078a77f55f") ||
