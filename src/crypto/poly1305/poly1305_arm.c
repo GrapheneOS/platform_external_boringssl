@@ -17,7 +17,6 @@
 
 #include <openssl/poly1305.h>
 
-#include <assert.h>
 #include <string.h>
 
 #include "../internal.h"
@@ -184,7 +183,7 @@ struct poly1305_state_st {
   uint8_t key[16];
 };
 
-static_assert(
+OPENSSL_STATIC_ASSERT(
     sizeof(struct poly1305_state_st) + 63 <= sizeof(poly1305_state),
     "poly1305_state isn't large enough to hold aligned poly1305_state_st.");
 
