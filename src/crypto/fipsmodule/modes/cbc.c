@@ -49,6 +49,8 @@
 #include <assert.h>
 #include <string.h>
 
+#include <openssl/type_check.h>
+
 #include "internal.h"
 #include "../../internal.h"
 
@@ -114,12 +116,16 @@ void CRYPTO_cbc128_decrypt(const uint8_t *in, uint8_t *out, size_t len,
   assert(inptr >= outptr || inptr + len <= outptr);
 
   size_t n;
-  alignas(16) uint8_t tmp[16];
+  union {
+    crypto_word_t t[16 / sizeof(crypto_word_t)];
+    uint8_t c[16];
+  } tmp;
+
   if ((inptr >= 32 && outptr <= inptr - 32) || inptr < outptr) {
     // If |out| is at least two blocks behind |in| or completely disjoint, there
     // is no need to decrypt to a temporary block.
-    static_assert(16 % sizeof(crypto_word_t) == 0,
-                  "block cannot be evenly divided into words");
+    OPENSSL_STATIC_ASSERT(16 % sizeof(crypto_word_t) == 0,
+                          "block cannot be evenly divided into words");
     const uint8_t *iv = ivec;
     while (len >= 16) {
       (*block)(in, out, key);
@@ -134,14 +140,14 @@ void CRYPTO_cbc128_decrypt(const uint8_t *in, uint8_t *out, size_t len,
     }
     OPENSSL_memcpy(ivec, iv, 16);
   } else {
-    static_assert(16 % sizeof(crypto_word_t) == 0,
-                  "block cannot be evenly divided into words");
+    OPENSSL_STATIC_ASSERT(16 % sizeof(crypto_word_t) == 0,
+                          "block cannot be evenly divided into words");
 
     while (len >= 16) {
-      (*block)(in, tmp, key);
+      (*block)(in, tmp.c, key);
       for (n = 0; n < 16; n += sizeof(crypto_word_t)) {
         crypto_word_t c = CRYPTO_load_word_le(in + n);
-        CRYPTO_store_word_le(out + n, CRYPTO_load_word_le(tmp + n) ^
+        CRYPTO_store_word_le(out + n, tmp.t[n / sizeof(crypto_word_t)] ^
                                           CRYPTO_load_word_le(ivec + n));
         CRYPTO_store_word_le(ivec + n, c);
       }
@@ -153,10 +159,10 @@ void CRYPTO_cbc128_decrypt(const uint8_t *in, uint8_t *out, size_t len,
 
   while (len) {
     uint8_t c;
-    (*block)(in, tmp, key);
+    (*block)(in, tmp.c, key);
     for (n = 0; n < 16 && n < len; ++n) {
       c = in[n];
-      out[n] = tmp[n] ^ ivec[n];
+      out[n] = tmp.c[n] ^ ivec[n];
       ivec[n] = c;
     }
     if (len <= 16) {

@@ -22,6 +22,7 @@
 #include <openssl/ec.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
+#include <openssl/type_check.h>
 
 #include <assert.h>
 #include <string.h>
