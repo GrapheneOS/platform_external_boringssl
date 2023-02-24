@@ -779,8 +779,8 @@ rust_library {
     // Use the modified source with placeholder replaced.
     srcs: [":libbssl_sys_src"],
     vendor_available: true,
-    // Since libbssl_sys_raw is not publically visible, we can't
-    // accidentally force a double-link by linking statically, so do so.
+    // Since libbssl_sys_raw is not publicly visible, we can't accidentally
+    // force a double-link by linking statically, so do so.
     rlibs: ["libbssl_sys_raw"],
     whole_static_libs: [
         "libbssl_rust_support",
