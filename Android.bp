@@ -489,6 +489,16 @@ cc_library {
     min_sdk_version: "29",
 }
 
+cc_library_static {
+    name: "libssl_baremetal",
+    defaults: [
+        "libssl_sources",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
+    static_libs: ["libcrypto_baremetal"],
+}
+
 // Unsafe and deterministic version of libssl. For testing and fuzzing only.
 // See src/FUZZING.md.
 cc_test_library {
@@ -688,6 +698,31 @@ cc_binary {
     ],
 }
 
+libbssl_sys_raw_flags = [
+    // Adapted from upstream the src/rust/CMakeLists.txt file at:
+    // https://boringssl.googlesource.com/boringssl/+/refs/heads/master/rust/CMakeLists.txt
+    "--no-derive-default",
+    "--enable-function-attribute-detection",
+    "--use-core",
+    "--size_t-is-usize",
+    "--default-macro-constant-type=signed",
+    "--rustified-enum=point_conversion_form_t",
+    // These are not BoringSSL symbols, they are from glibc
+    // and are not relevant to the build besides throwing warnings
+    // about their 'long double' (aka u128) not being FFI safe.
+    // We block those functions so that the build doesn't
+    // spam warnings.
+    //
+    // https://github.com/rust-lang/rust-bindgen/issues/1549 describes the current problem
+    // and other folks' solutions.
+    "--blocklist-function=strtold",
+    "--blocklist-function=qecvt",
+    "--blocklist-function=qecvt_r",
+    "--blocklist-function=qgcvt",
+    "--blocklist-function=qfcvt",
+    "--blocklist-function=qfcvt_r",
+]
+
 // Rust bindings
 rust_bindgen {
     name: "libbssl_sys_raw",
@@ -696,30 +731,7 @@ rust_bindgen {
     host_supported: true,
     wrapper_src: "src/rust/wrapper.h",
     vendor_available: true,
-    bindgen_flags: [
-        // Adapted from upstream the src/rust/CMakeLists.txt file at:
-        // https://boringssl.googlesource.com/boringssl/+/refs/heads/master/rust/CMakeLists.txt
-        "--no-derive-default",
-        "--enable-function-attribute-detection",
-        "--use-core",
-        "--size_t-is-usize",
-        "--default-macro-constant-type=signed",
-        "--rustified-enum=point_conversion_form_t",
-        // These are not BoringSSL symbols, they are from glibc
-        // and are not relevant to the build besides throwing warnings
-        // about their 'long double' (aka u128) not being FFI safe.
-        // We block those functions so that the build doesn't
-        // spam warnings.
-        //
-        // https://github.com/rust-lang/rust-bindgen/issues/1549 describes the current problem
-        // and other folks' solutions.
-        "--blocklist-function=strtold",
-        "--blocklist-function=qecvt",
-        "--blocklist-function=qecvt_r",
-        "--blocklist-function=qgcvt",
-        "--blocklist-function=qfcvt",
-        "--blocklist-function=qfcvt_r",
-    ],
+    bindgen_flags: libbssl_sys_raw_flags,
     shared_libs: [
         "libcrypto",
         "libssl",
@@ -727,6 +739,21 @@ rust_bindgen {
     apex_available: [
         "//apex_available:platform",
         "com.android.virt",
+    ],
+}
+
+rust_bindgen {
+    name: "libbssl_sys_raw_nostd",
+    source_stem: "bindings",
+    crate_name: "bssl_sys_raw",
+    wrapper_src: "src/rust/wrapper.h",
+    bindgen_flags: [
+        "--raw-line=#![no_std]",
+        "--ctypes-prefix=core::ffi",
+    ] + libbssl_sys_raw_flags,
+    header_libs: [
+        "libcrypto_baremetal",
+        "libssl_baremetal",
     ],
 }
 
@@ -760,6 +787,16 @@ cc_library_static {
     ],
 }
 
+cc_library_static {
+    name: "libbssl_rust_support_baremetal",
+    defaults: ["boringssl_flags"],
+    srcs: ["src/rust/rust_wrapper.c"],
+    static_libs: [
+        "libcrypto_baremetal",
+        "libssl_baremetal",
+    ],
+}
+
 // Replace the upstream CMake placeholder with a re-export of all of the local bindgen output.
 gensrcs {
     name: "libbssl_sys_src",
@@ -788,5 +825,30 @@ rust_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.virt",
+    ],
+}
+
+gensrcs {
+    name: "libbssl_sys_src_nostd",
+    srcs: [":libbssl_sys_src"],
+    cmd: "(echo '#![no_std]' && cat $(in)) > $(out)",
+}
+
+rust_library_rlib {
+    name: "libbssl_ffi_nostd",
+    crate_name: "bssl_ffi",
+    visibility: [
+        "//packages/modules/Virtualization/pvmfw",
+    ],
+    srcs: [":libbssl_sys_src_nostd"],
+    rlibs: ["libbssl_sys_raw_nostd"],
+    prefer_rlib: true,
+    no_stdlibs: true,
+    stdlibs: [
+        "libcompiler_builtins.rust_sysroot",
+        "libcore.rust_sysroot",
+    ],
+    whole_static_libs: [
+        "libbssl_rust_support_baremetal",
     ],
 }
