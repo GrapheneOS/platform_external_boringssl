@@ -47,6 +47,7 @@
  * ==================================================================== */
 
 #include <assert.h>
+#include <limits.h>
 #include <string.h>
 
 #include <openssl/aead.h>
@@ -99,16 +100,13 @@ static void vpaes_ctr32_encrypt_blocks_with_bsaes(const uint8_t *in,
   out += 16 * bsaes_blocks;
   blocks -= bsaes_blocks;
 
-  union {
-    uint32_t u32[4];
-    uint8_t u8[16];
-  } new_ivec;
-  memcpy(new_ivec.u8, ivec, 16);
-  uint32_t ctr = CRYPTO_bswap4(new_ivec.u32[3]) + bsaes_blocks;
-  new_ivec.u32[3] = CRYPTO_bswap4(ctr);
+  uint8_t new_ivec[16];
+  memcpy(new_ivec, ivec, 12);
+  uint32_t ctr = CRYPTO_load_u32_be(ivec + 12) + bsaes_blocks;
+  CRYPTO_store_u32_be(new_ivec + 12, ctr);
 
   // Finish any remaining blocks with |vpaes_ctr32_encrypt_blocks|.
-  vpaes_ctr32_encrypt_blocks(in, out, blocks, key, new_ivec.u8);
+  vpaes_ctr32_encrypt_blocks(in, out, blocks, key, new_ivec);
 }
 #endif  // BSAES
 
@@ -292,8 +290,10 @@ static int aes_ofb_cipher(EVP_CIPHER_CTX *ctx, uint8_t *out, const uint8_t *in,
 ctr128_f aes_ctr_set_key(AES_KEY *aes_key, GCM128_KEY *gcm_key,
                          block128_f *out_block, const uint8_t *key,
                          size_t key_bytes) {
+  // This function assumes the key length was previously validated.
+  assert(key_bytes == 128 / 8 || key_bytes == 192 / 8 || key_bytes == 256 / 8);
   if (hwaes_capable()) {
-    aes_hw_set_encrypt_key(key, key_bytes * 8, aes_key);
+    aes_hw_set_encrypt_key(key, (int)key_bytes * 8, aes_key);
     if (gcm_key != NULL) {
       CRYPTO_gcm128_init_key(gcm_key, aes_key, aes_hw_encrypt, 1);
     }
@@ -304,7 +304,7 @@ ctr128_f aes_ctr_set_key(AES_KEY *aes_key, GCM128_KEY *gcm_key,
   }
 
   if (vpaes_capable()) {
-    vpaes_set_encrypt_key(key, key_bytes * 8, aes_key);
+    vpaes_set_encrypt_key(key, (int)key_bytes * 8, aes_key);
     if (out_block) {
       *out_block = vpaes_encrypt;
     }
@@ -321,7 +321,7 @@ ctr128_f aes_ctr_set_key(AES_KEY *aes_key, GCM128_KEY *gcm_key,
 #endif
   }
 
-  aes_nohw_set_encrypt_key(key, key_bytes * 8, aes_key);
+  aes_nohw_set_encrypt_key(key, (int)key_bytes * 8, aes_key);
   if (gcm_key != NULL) {
     CRYPTO_gcm128_init_key(gcm_key, aes_key, aes_nohw_encrypt, 0);
   }
@@ -338,11 +338,9 @@ ctr128_f aes_ctr_set_key(AES_KEY *aes_key, GCM128_KEY *gcm_key,
 #endif
 
 static EVP_AES_GCM_CTX *aes_gcm_from_cipher_ctx(EVP_CIPHER_CTX *ctx) {
-#if defined(__GNUC__) || defined(__clang__)
-  OPENSSL_STATIC_ASSERT(
+  static_assert(
       alignof(EVP_AES_GCM_CTX) <= 16,
       "EVP_AES_GCM_CTX needs more alignment than this function provides");
-#endif
 
   // |malloc| guarantees up to 4-byte alignment on 32-bit and 8-byte alignment
   // on 64-bit systems, so we need to adjust to reach 16-byte alignment.
@@ -531,11 +529,10 @@ static int aes_gcm_ctrl(EVP_CIPHER_CTX *c, int type, int arg, void *ptr) {
       if (gctx->iv == c->iv) {
         gctx_out->iv = out->iv;
       } else {
-        gctx_out->iv = OPENSSL_malloc(gctx->ivlen);
+        gctx_out->iv = OPENSSL_memdup(gctx->iv, gctx->ivlen);
         if (!gctx_out->iv) {
           return 0;
         }
-        OPENSSL_memcpy(gctx_out->iv, gctx->iv, gctx->ivlen);
       }
       return 1;
     }
@@ -554,6 +551,14 @@ static int aes_gcm_cipher(EVP_CIPHER_CTX *ctx, uint8_t *out, const uint8_t *in,
     return -1;
   }
   if (!gctx->iv_set) {
+    return -1;
+  }
+
+  if (len > INT_MAX) {
+    // This function signature can only express up to |INT_MAX| bytes encrypted.
+    //
+    // TODO(https://crbug.com/boringssl/494): Make the internal |EVP_CIPHER|
+    // calling convention |size_t|-clean.
     return -1;
   }
 
@@ -585,7 +590,7 @@ static int aes_gcm_cipher(EVP_CIPHER_CTX *ctx, uint8_t *out, const uint8_t *in,
         }
       }
     }
-    return len;
+    return (int)len;
   } else {
     if (!ctx->encrypt) {
       if (gctx->taglen < 0 ||
@@ -603,7 +608,7 @@ static int aes_gcm_cipher(EVP_CIPHER_CTX *ctx, uint8_t *out, const uint8_t *in,
   }
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_cbc_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_128_cbc) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_128_cbc;
@@ -616,7 +621,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_cbc_generic) {
   out->cipher = aes_cbc_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_ctr_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_128_ctr) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_128_ctr;
@@ -641,7 +646,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_ecb_generic) {
   out->cipher = aes_ecb_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_ofb_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_128_ofb) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_128_ofb128;
@@ -654,7 +659,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_ofb_generic) {
   out->cipher = aes_ofb_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_gcm_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_128_gcm) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_128_gcm;
@@ -671,7 +676,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_128_gcm_generic) {
   out->ctrl = aes_gcm_ctrl;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_cbc_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_192_cbc) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_192_cbc;
@@ -684,7 +689,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_cbc_generic) {
   out->cipher = aes_cbc_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_ctr_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_192_ctr) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_192_ctr;
@@ -709,7 +714,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_ecb_generic) {
   out->cipher = aes_ecb_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_ofb_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_192_ofb) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_192_ofb128;
@@ -722,7 +727,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_ofb_generic) {
   out->cipher = aes_ofb_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_gcm_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_192_gcm) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_192_gcm;
@@ -739,7 +744,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_192_gcm_generic) {
   out->ctrl = aes_gcm_ctrl;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_cbc_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_256_cbc) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_256_cbc;
@@ -752,7 +757,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_cbc_generic) {
   out->cipher = aes_cbc_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_ctr_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_256_ctr) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_256_ctr;
@@ -777,7 +782,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_ecb_generic) {
   out->cipher = aes_ecb_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_ofb_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_256_ofb) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_256_ofb128;
@@ -790,7 +795,7 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_ofb_generic) {
   out->cipher = aes_ofb_cipher;
 }
 
-DEFINE_LOCAL_DATA(EVP_CIPHER, aes_256_gcm_generic) {
+DEFINE_METHOD_FUNCTION(EVP_CIPHER, EVP_aes_256_gcm) {
   memset(out, 0, sizeof(EVP_CIPHER));
 
   out->nid = NID_aes_256_gcm;
@@ -875,26 +880,6 @@ DEFINE_LOCAL_DATA(EVP_CIPHER, aes_hw_256_ecb) {
 
 #endif  // HWAES_ECB
 
-#define EVP_CIPHER_FUNCTION(keybits, mode)             \
-  const EVP_CIPHER *EVP_aes_##keybits##_##mode(void) { \
-    return aes_##keybits##_##mode##_generic();         \
-  }
-
-EVP_CIPHER_FUNCTION(128, cbc)
-EVP_CIPHER_FUNCTION(128, ctr)
-EVP_CIPHER_FUNCTION(128, ofb)
-EVP_CIPHER_FUNCTION(128, gcm)
-
-EVP_CIPHER_FUNCTION(192, cbc)
-EVP_CIPHER_FUNCTION(192, ctr)
-EVP_CIPHER_FUNCTION(192, ofb)
-EVP_CIPHER_FUNCTION(192, gcm)
-
-EVP_CIPHER_FUNCTION(256, cbc)
-EVP_CIPHER_FUNCTION(256, ctr)
-EVP_CIPHER_FUNCTION(256, ofb)
-EVP_CIPHER_FUNCTION(256, gcm)
-
 EVP_ECB_CIPHER_FUNCTION(128)
 EVP_ECB_CIPHER_FUNCTION(192)
 EVP_ECB_CIPHER_FUNCTION(256)
@@ -946,14 +931,12 @@ static int aead_aes_gcm_init_impl(struct aead_aes_gcm_ctx *gcm_ctx,
   return 1;
 }
 
-OPENSSL_STATIC_ASSERT(sizeof(((EVP_AEAD_CTX *)NULL)->state) >=
-                          sizeof(struct aead_aes_gcm_ctx),
-                      "AEAD state is too small");
-#if defined(__GNUC__) || defined(__clang__)
-OPENSSL_STATIC_ASSERT(alignof(union evp_aead_ctx_st_state) >=
-                          alignof(struct aead_aes_gcm_ctx),
-                      "AEAD state has insufficient alignment");
-#endif
+static_assert(sizeof(((EVP_AEAD_CTX *)NULL)->state) >=
+                  sizeof(struct aead_aes_gcm_ctx),
+              "AEAD state is too small");
+static_assert(alignof(union evp_aead_ctx_st_state) >=
+                  alignof(struct aead_aes_gcm_ctx),
+              "AEAD state has insufficient alignment");
 
 static int aead_aes_gcm_init(EVP_AEAD_CTX *ctx, const uint8_t *key,
                              size_t key_len, size_t requested_tag_len) {
@@ -1286,14 +1269,12 @@ struct aead_aes_gcm_tls12_ctx {
   uint64_t min_next_nonce;
 };
 
-OPENSSL_STATIC_ASSERT(sizeof(((EVP_AEAD_CTX *)NULL)->state) >=
-                          sizeof(struct aead_aes_gcm_tls12_ctx),
-                      "AEAD state is too small");
-#if defined(__GNUC__) || defined(__clang__)
-OPENSSL_STATIC_ASSERT(alignof(union evp_aead_ctx_st_state) >=
-                          alignof(struct aead_aes_gcm_tls12_ctx),
-                      "AEAD state has insufficient alignment");
-#endif
+static_assert(sizeof(((EVP_AEAD_CTX *)NULL)->state) >=
+                  sizeof(struct aead_aes_gcm_tls12_ctx),
+              "AEAD state is too small");
+static_assert(alignof(union evp_aead_ctx_st_state) >=
+                  alignof(struct aead_aes_gcm_tls12_ctx),
+              "AEAD state has insufficient alignment");
 
 static int aead_aes_gcm_tls12_init(EVP_AEAD_CTX *ctx, const uint8_t *key,
                                    size_t key_len, size_t requested_tag_len) {
@@ -1326,12 +1307,9 @@ static int aead_aes_gcm_tls12_seal_scatter(
   }
 
   // The given nonces must be strictly monotonically increasing.
-  uint64_t given_counter;
-  OPENSSL_memcpy(&given_counter, nonce + nonce_len - sizeof(given_counter),
-                 sizeof(given_counter));
-  given_counter = CRYPTO_bswap8(given_counter);
-  if (given_counter == UINT64_MAX ||
-      given_counter < gcm_ctx->min_next_nonce) {
+  uint64_t given_counter =
+      CRYPTO_load_u64_be(nonce + nonce_len - sizeof(uint64_t));
+  if (given_counter == UINT64_MAX || given_counter < gcm_ctx->min_next_nonce) {
     OPENSSL_PUT_ERROR(CIPHER, CIPHER_R_INVALID_NONCE);
     return 0;
   }
@@ -1385,14 +1363,12 @@ struct aead_aes_gcm_tls13_ctx {
   uint8_t first;
 };
 
-OPENSSL_STATIC_ASSERT(sizeof(((EVP_AEAD_CTX *)NULL)->state) >=
-                          sizeof(struct aead_aes_gcm_tls13_ctx),
-                      "AEAD state is too small");
-#if defined(__GNUC__) || defined(__clang__)
-OPENSSL_STATIC_ASSERT(alignof(union evp_aead_ctx_st_state) >=
-                          alignof(struct aead_aes_gcm_tls13_ctx),
-                      "AEAD state has insufficient alignment");
-#endif
+static_assert(sizeof(((EVP_AEAD_CTX *)NULL)->state) >=
+                  sizeof(struct aead_aes_gcm_tls13_ctx),
+              "AEAD state is too small");
+static_assert(alignof(union evp_aead_ctx_st_state) >=
+                  alignof(struct aead_aes_gcm_tls13_ctx),
+              "AEAD state has insufficient alignment");
 
 static int aead_aes_gcm_tls13_init(EVP_AEAD_CTX *ctx, const uint8_t *key,
                                    size_t key_len, size_t requested_tag_len) {
@@ -1428,10 +1404,8 @@ static int aead_aes_gcm_tls13_seal_scatter(
   // The given nonces must be strictly monotonically increasing. See
   // https://tools.ietf.org/html/rfc8446#section-5.3 for details of the TLS 1.3
   // nonce construction.
-  uint64_t given_counter;
-  OPENSSL_memcpy(&given_counter, nonce + nonce_len - sizeof(given_counter),
-                 sizeof(given_counter));
-  given_counter = CRYPTO_bswap8(given_counter);
+  uint64_t given_counter =
+      CRYPTO_load_u64_be(nonce + nonce_len - sizeof(uint64_t));
 
   if (gcm_ctx->first) {
     // In the first call the sequence number will be zero and therefore the

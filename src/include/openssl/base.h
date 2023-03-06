@@ -107,6 +107,7 @@ extern "C" {
 #define OPENSSL_MIPS64
 #elif defined(__riscv) && __SIZEOF_POINTER__ == 8
 #define OPENSSL_64_BIT
+#define OPENSSL_RISCV64
 #elif defined(__riscv) && __SIZEOF_POINTER__ == 4
 #define OPENSSL_32_BIT
 #elif defined(__pnacl__)
@@ -195,7 +196,7 @@ extern "C" {
 // A consumer may use this symbol in the preprocessor to temporarily build
 // against multiple revisions of BoringSSL at the same time. It is not
 // recommended to do so for longer than is necessary.
-#define BORINGSSL_API_VERSION 17
+#define BORINGSSL_API_VERSION 18
 
 #if defined(BORINGSSL_SHARED_LIBRARY)
 
@@ -325,6 +326,19 @@ enum ssl_verify_result_t BORINGSSL_ENUM_INT;
 #define BORINGSSL_ENUM_INT
 #endif
 
+// ossl_ssize_t is a signed type which is large enough to fit the size of any
+// valid memory allocation. We prefer using |size_t|, but sometimes we need a
+// signed type for OpenSSL API compatibility. This type can be used in such
+// cases to avoid overflow.
+//
+// Not all |size_t| values fit in |ossl_ssize_t|, but all |size_t| values that
+// are sizes of or indices into C objects, can be converted without overflow.
+typedef ptrdiff_t ossl_ssize_t;
+
+// CBS_ASN1_TAG is the type used by |CBS| and |CBB| for ASN.1 tags. See that
+// header for details. This type is defined in base.h as a forward declaration.
+typedef uint32_t CBS_ASN1_TAG;
+
 // CRYPTO_THREADID is a dummy value.
 typedef int CRYPTO_THREADID;
 
@@ -362,10 +376,6 @@ typedef struct NAME_CONSTRAINTS_st NAME_CONSTRAINTS;
 typedef struct Netscape_spkac_st NETSCAPE_SPKAC;
 typedef struct Netscape_spki_st NETSCAPE_SPKI;
 typedef struct RIPEMD160state_st RIPEMD160_CTX;
-typedef struct X509_POLICY_CACHE_st X509_POLICY_CACHE;
-typedef struct X509_POLICY_LEVEL_st X509_POLICY_LEVEL;
-typedef struct X509_POLICY_NODE_st X509_POLICY_NODE;
-typedef struct X509_POLICY_TREE_st X509_POLICY_TREE;
 typedef struct X509_VERIFY_PARAM_st X509_VERIFY_PARAM;
 typedef struct X509_algor_st X509_ALGOR;
 typedef struct X509_crl_st X509_CRL;
