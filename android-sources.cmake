@@ -28,25 +28,23 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/asn1/a_mbstr.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_object.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_octet.c
-  ${BORINGSSL_ROOT}src/crypto/asn1/a_print.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_strex.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_strnid.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_time.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_type.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_utctm.c
-  ${BORINGSSL_ROOT}src/crypto/asn1/a_utf8.c
   ${BORINGSSL_ROOT}src/crypto/asn1/asn1_lib.c
   ${BORINGSSL_ROOT}src/crypto/asn1/asn1_par.c
   ${BORINGSSL_ROOT}src/crypto/asn1/asn_pack.c
   ${BORINGSSL_ROOT}src/crypto/asn1/f_int.c
   ${BORINGSSL_ROOT}src/crypto/asn1/f_string.c
+  ${BORINGSSL_ROOT}src/crypto/asn1/posix_time.c
   ${BORINGSSL_ROOT}src/crypto/asn1/tasn_dec.c
   ${BORINGSSL_ROOT}src/crypto/asn1/tasn_enc.c
   ${BORINGSSL_ROOT}src/crypto/asn1/tasn_fre.c
   ${BORINGSSL_ROOT}src/crypto/asn1/tasn_new.c
   ${BORINGSSL_ROOT}src/crypto/asn1/tasn_typ.c
   ${BORINGSSL_ROOT}src/crypto/asn1/tasn_utl.c
-  ${BORINGSSL_ROOT}src/crypto/asn1/time_support.c
   ${BORINGSSL_ROOT}src/crypto/base64/base64.c
   ${BORINGSSL_ROOT}src/crypto/bio/bio.c
   ${BORINGSSL_ROOT}src/crypto/bio/bio_mem.c
@@ -81,10 +79,12 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/cipher_extra/tls_cbc.c
   ${BORINGSSL_ROOT}src/crypto/conf/conf.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_apple.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_freebsd.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_fuchsia.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_linux.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_win.c
   ${BORINGSSL_ROOT}src/crypto/cpu_arm.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_arm_freebsd.c
   ${BORINGSSL_ROOT}src/crypto/cpu_arm_linux.c
   ${BORINGSSL_ROOT}src/crypto/cpu_intel.c
   ${BORINGSSL_ROOT}src/crypto/cpu_ppc64le.c
@@ -112,6 +112,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/evp/p_ec_asn1.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_ed25519.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_ed25519_asn1.c
+  ${BORINGSSL_ROOT}src/crypto/evp/p_hkdf.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_rsa.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_rsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_x25519.c
@@ -217,7 +218,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/x509/x_x509a.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/pcy_cache.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/pcy_data.c
-  ${BORINGSSL_ROOT}src/crypto/x509v3/pcy_lib.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/pcy_map.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/pcy_node.c
   ${BORINGSSL_ROOT}src/crypto/x509v3/pcy_tree.c
