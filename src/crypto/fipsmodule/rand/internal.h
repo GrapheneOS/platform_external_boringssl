@@ -100,10 +100,7 @@ struct ctr_drbg_state_st {
   AES_KEY ks;
   block128_f block;
   ctr128_f ctr;
-  union {
-    uint8_t bytes[16];
-    uint32_t words[4];
-  } counter;
+  uint8_t counter[16];
   uint64_t reseed_counter;
 };
 
