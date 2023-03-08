@@ -11,6 +11,7 @@ set(
   crypto/cipher_extra/test/aes_128_cbc_sha1_tls_tests.txt
   crypto/cipher_extra/test/aes_128_ccm_bluetooth_tests.txt
   crypto/cipher_extra/test/aes_128_ccm_bluetooth_8_tests.txt
+  crypto/cipher_extra/test/aes_128_ccm_matter_tests.txt
   crypto/cipher_extra/test/aes_128_ctr_hmac_sha256.txt
   crypto/cipher_extra/test/aes_128_gcm_randnonce_tests.txt
   crypto/cipher_extra/test/aes_128_gcm_siv_tests.txt
@@ -42,8 +43,17 @@ set(
   crypto/evp/evp_tests.txt
   crypto/evp/scrypt_tests.txt
   crypto/fipsmodule/aes/aes_tests.txt
-  crypto/fipsmodule/bn/bn_tests.txt
-  crypto/fipsmodule/bn/miller_rabin_tests.txt
+  crypto/fipsmodule/bn/test/exp_tests.txt
+  crypto/fipsmodule/bn/test/gcd_tests.txt
+  crypto/fipsmodule/bn/test/miller_rabin_tests.txt
+  crypto/fipsmodule/bn/test/mod_exp_tests.txt
+  crypto/fipsmodule/bn/test/mod_inv_tests.txt
+  crypto/fipsmodule/bn/test/mod_mul_tests.txt
+  crypto/fipsmodule/bn/test/mod_sqrt_tests.txt
+  crypto/fipsmodule/bn/test/product_tests.txt
+  crypto/fipsmodule/bn/test/quotient_tests.txt
+  crypto/fipsmodule/bn/test/shift_tests.txt
+  crypto/fipsmodule/bn/test/sum_tests.txt
   crypto/fipsmodule/cmac/cavp_3des_cmac_tests.txt
   crypto/fipsmodule/cmac/cavp_aes128_cmac_tests.txt
   crypto/fipsmodule/cmac/cavp_aes192_cmac_tests.txt
@@ -101,6 +111,21 @@ set(
   crypto/x509/test/many_names1.pem
   crypto/x509/test/many_names2.pem
   crypto/x509/test/many_names3.pem
+  crypto/x509/test/pss_sha1_explicit.pem
+  crypto/x509/test/pss_sha1_mgf1_syntax_error.pem
+  crypto/x509/test/pss_sha1.pem
+  crypto/x509/test/pss_sha224.pem
+  crypto/x509/test/pss_sha256_explicit_trailer.pem
+  crypto/x509/test/pss_sha256_mgf1_sha384.pem
+  crypto/x509/test/pss_sha256_mgf1_syntax_error.pem
+  crypto/x509/test/pss_sha256_omit_nulls.pem
+  crypto/x509/test/pss_sha256_salt_overflow.pem
+  crypto/x509/test/pss_sha256_salt31.pem
+  crypto/x509/test/pss_sha256_unknown_mgf.pem
+  crypto/x509/test/pss_sha256_wrong_trailer.pem
+  crypto/x509/test/pss_sha256.pem
+  crypto/x509/test/pss_sha384.pem
+  crypto/x509/test/pss_sha512.pem
   crypto/x509/test/some_names1.pem
   crypto/x509/test/some_names2.pem
   crypto/x509/test/some_names3.pem
