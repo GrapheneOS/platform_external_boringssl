@@ -31,7 +31,7 @@ int FIPS_mode_set(int on) { return on == FIPS_mode(); }
 const char *FIPS_module_name(void) { return "BoringCrypto"; }
 
 uint32_t FIPS_version(void) {
-  return 2022061300;
+  return 0;
 }
 
 int FIPS_query_algorithm_status(const char *algorithm) {
