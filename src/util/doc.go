@@ -4,7 +4,6 @@
 // From that JSON (which is defined by the Config struct) it reads a list of
 // header file locations and generates HTML files for each in the current
 // directory.
-
 package main
 
 import (
@@ -411,7 +410,7 @@ func (config *Config) parseHeader(path string) (*HeaderFile, error) {
 				lines = lines[1:]
 				lineNo++
 				break
-		 	}
+			}
 			if line == cppGuard {
 				return nil, fmt.Errorf("hit ending C++ guard while in section on line %d (possibly missing two empty lines ahead of guard?)", lineNo)
 			}
