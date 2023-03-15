@@ -96,9 +96,6 @@ extern "C" {
 #elif defined(__ARMEL__) || defined(_M_ARM)
 #define OPENSSL_32_BIT
 #define OPENSSL_ARM
-#elif (defined(__PPC64__) || defined(__powerpc64__)) && defined(_LITTLE_ENDIAN)
-#define OPENSSL_64_BIT
-#define OPENSSL_PPC64LE
 #elif defined(__MIPSEL__) && !defined(__LP64__)
 #define OPENSSL_32_BIT
 #define OPENSSL_MIPS
@@ -422,9 +419,7 @@ typedef struct evp_hpke_ctx_st EVP_HPKE_CTX;
 typedef struct evp_hpke_kdf_st EVP_HPKE_KDF;
 typedef struct evp_hpke_kem_st EVP_HPKE_KEM;
 typedef struct evp_hpke_key_st EVP_HPKE_KEY;
-typedef struct evp_pkey_asn1_method_st EVP_PKEY_ASN1_METHOD;
 typedef struct evp_pkey_ctx_st EVP_PKEY_CTX;
-typedef struct evp_pkey_method_st EVP_PKEY_METHOD;
 typedef struct evp_pkey_st EVP_PKEY;
 typedef struct hmac_ctx_st HMAC_CTX;
 typedef struct md4_state_st MD4_CTX;
@@ -529,8 +524,8 @@ namespace internal {
 template <typename T, typename Enable = void>
 struct DeleterImpl {};
 
-template <typename T>
 struct Deleter {
+  template <typename T>
   void operator()(T *ptr) {
     // Rather than specialize Deleter for each type, we specialize
     // DeleterImpl. This allows bssl::UniquePtr<T> to be used while only
@@ -614,7 +609,7 @@ class StackAllocatedMovable {
 //   bssl::UniquePtr<RSA> rsa(RSA_new());
 //   bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
 template <typename T>
-using UniquePtr = std::unique_ptr<T, internal::Deleter<T>>;
+using UniquePtr = std::unique_ptr<T, internal::Deleter>;
 
 #define BORINGSSL_MAKE_UP_REF(type, up_ref_func)             \
   inline UniquePtr<type> UpRef(type *v) {                    \
