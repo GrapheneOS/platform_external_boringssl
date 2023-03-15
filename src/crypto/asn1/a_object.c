@@ -86,7 +86,6 @@ int i2d_ASN1_OBJECT(const ASN1_OBJECT *a, unsigned char **pp) {
   unsigned char *p, *allocated = NULL;
   if (*pp == NULL) {
     if ((p = allocated = OPENSSL_malloc(objsize)) == NULL) {
-      OPENSSL_PUT_ERROR(ASN1, ERR_R_MALLOC_FAILURE);
       return -1;
     }
   } else {
@@ -107,8 +106,12 @@ int i2t_ASN1_OBJECT(char *buf, int buf_len, const ASN1_OBJECT *a) {
 }
 
 static int write_str(BIO *bp, const char *str) {
-  int len = strlen(str);
-  return BIO_write(bp, str, len) == len ? len : -1;
+  size_t len = strlen(str);
+  if (len > INT_MAX) {
+    OPENSSL_PUT_ERROR(ASN1, ERR_R_OVERFLOW);
+    return -1;
+  }
+  return BIO_write(bp, str, (int)len) == (int)len ? (int)len : -1;
 }
 
 int i2a_ASN1_OBJECT(BIO *bp, const ASN1_OBJECT *a) {
@@ -207,7 +210,6 @@ ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
     OPENSSL_free(data);
     data = (unsigned char *)OPENSSL_malloc(length);
     if (data == NULL) {
-      i = ERR_R_MALLOC_FAILURE;
       goto err;
     }
     ret->flags |= ASN1_OBJECT_FLAG_DYNAMIC_DATA;
@@ -232,7 +234,6 @@ ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
   *pp = p;
   return ret;
 err:
-  OPENSSL_PUT_ERROR(ASN1, i);
   if ((ret != NULL) && ((a == NULL) || (*a != ret))) {
     ASN1_OBJECT_free(ret);
   }
@@ -244,7 +245,6 @@ ASN1_OBJECT *ASN1_OBJECT_new(void) {
 
   ret = (ASN1_OBJECT *)OPENSSL_malloc(sizeof(ASN1_OBJECT));
   if (ret == NULL) {
-    OPENSSL_PUT_ERROR(ASN1, ERR_R_MALLOC_FAILURE);
     return NULL;
   }
   ret->length = 0;
