@@ -731,7 +731,7 @@ rust_bindgen {
     source_stem: "bindings",
     crate_name: "bssl_sys_raw",
     host_supported: true,
-    wrapper_src: "src/rust/wrapper.h",
+    wrapper_src: "src/rust/bssl-sys/wrapper.h",
     vendor_available: true,
     product_available: true,
     bindgen_flags: libbssl_sys_raw_flags,
@@ -749,7 +749,7 @@ rust_bindgen {
     name: "libbssl_sys_raw_nostd",
     source_stem: "bindings",
     crate_name: "bssl_sys_raw",
-    wrapper_src: "src/rust/wrapper.h",
+    wrapper_src: "src/rust/bssl-sys/wrapper.h",
     bindgen_flags: [
         "--raw-line=#![no_std]",
         "--ctypes-prefix=core::ffi",
@@ -779,7 +779,7 @@ cc_library_static {
     name: "libbssl_rust_support",
     host_supported: true,
     defaults: ["boringssl_flags"],
-    srcs: ["src/rust/rust_wrapper.c"],
+    srcs: ["src/rust/bssl-sys/rust_wrapper.c"],
     shared_libs: [
         "libcrypto",
         "libssl",
@@ -793,7 +793,7 @@ cc_library_static {
 cc_library_static {
     name: "libbssl_rust_support_baremetal",
     defaults: ["boringssl_flags"],
-    srcs: ["src/rust/rust_wrapper.c"],
+    srcs: ["src/rust/bssl-sys/rust_wrapper.c"],
     static_libs: [
         "libcrypto_baremetal",
         "libssl_baremetal",
@@ -803,7 +803,7 @@ cc_library_static {
 // Replace the upstream CMake placeholder with a re-export of all of the local bindgen output.
 gensrcs {
     name: "libbssl_sys_src",
-    srcs: ["src/rust/src/lib.rs"],
+    srcs: ["src/rust/bssl-sys/src/lib.rs"],
     cmd: "sed 's@^.{INCLUDES}@pub use bssl_sys_raw::*;@' $(in) > $(out)",
 }
 
