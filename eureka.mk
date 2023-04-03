@@ -125,6 +125,7 @@ crypto_sources := \
   src/crypto/hpke/hpke.c\
   src/crypto/hrss/hrss.c\
   src/crypto/kyber/keccak.c\
+  src/crypto/kyber/kyber.c\
   src/crypto/lhash/lhash.c\
   src/crypto/mem.c\
   src/crypto/obj/obj.c\
