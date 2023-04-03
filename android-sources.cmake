@@ -127,6 +127,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke.c
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss.c
   ${BORINGSSL_ROOT}src/crypto/kyber/keccak.c
+  ${BORINGSSL_ROOT}src/crypto/kyber/kyber.c
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash.c
   ${BORINGSSL_ROOT}src/crypto/mem.c
   ${BORINGSSL_ROOT}src/crypto/obj/obj.c
