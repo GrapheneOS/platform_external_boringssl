@@ -407,6 +407,7 @@ cc_library_static {
     cflags: [
         "-DBORINGSSL_NO_STATIC_INITIALIZER",
         "-DOPENSSL_SMALL",
+        "-DOPENSSL_NO_ASM",
         "-D__TRUSTY__",
     ],
     visibility: [
