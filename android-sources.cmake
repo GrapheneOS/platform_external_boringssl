@@ -123,7 +123,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/ex_data.c
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/bcm.c
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/fips_shared_support.c
-  ${BORINGSSL_ROOT}src/crypto/hkdf/hkdf.c
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke.c
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss.c
   ${BORINGSSL_ROOT}src/crypto/kyber/keccak.c
@@ -159,6 +158,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/refcount_c11.c
   ${BORINGSSL_ROOT}src/crypto/refcount_lock.c
   ${BORINGSSL_ROOT}src/crypto/rsa_extra/rsa_asn1.c
+  ${BORINGSSL_ROOT}src/crypto/rsa_extra/rsa_crypt.c
   ${BORINGSSL_ROOT}src/crypto/rsa_extra/rsa_print.c
   ${BORINGSSL_ROOT}src/crypto/siphash/siphash.c
   ${BORINGSSL_ROOT}src/crypto/stack/stack.c
@@ -340,13 +340,13 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_test.cc
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/hkdf/hkdf_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/md5/md5_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/modes/gcm_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/rand/ctrdrbg_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/rand/fork_detect_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/service_indicator/service_indicator_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/sha/sha_test.cc
-  ${BORINGSSL_ROOT}src/crypto/hkdf/hkdf_test.cc
   ${BORINGSSL_ROOT}src/crypto/hmac_extra/hmac_test.cc
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test.cc
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss_test.cc
