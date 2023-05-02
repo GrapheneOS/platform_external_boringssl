@@ -1041,6 +1041,14 @@ int SSL_peek(SSL *ssl, void *buf, int num) {
   return static_cast<int>(todo);
 }
 
+struct ScopedBuf {
+  void *buf = nullptr;
+
+  ~ScopedBuf() {
+    free(buf);
+  }
+};
+
 int SSL_write(SSL *ssl, const void *buf, int num) {
   ssl_reset_error_state(ssl);
 
@@ -1053,6 +1061,13 @@ int SSL_write(SSL *ssl, const void *buf, int num) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_UNINITIALIZED);
     return -1;
   }
+
+  ScopedBuf buf_override;
+  int buf_override_len = 0;
+
+#if defined(__BIONIC__)
+  buf_override.buf = hook_override_ssl_write(buf, num, &buf_override_len);
+#endif
 
   int ret = 0;
   bool needs_handshake = false;
@@ -1070,8 +1085,19 @@ int SSL_write(SSL *ssl, const void *buf, int num) {
     }
 
     ret = ssl->method->write_app_data(ssl, &needs_handshake,
-                                      (const uint8_t *)buf, num);
+                                      (const uint8_t *)(buf_override.buf ? buf_override.buf : buf),
+                                      (buf_override.buf ? buf_override_len : num));
   } while (needs_handshake);
+
+  if (buf_override.buf) {
+    // adjust return value to what the caller expects
+    if (ret == buf_override_len) {
+      ret = num;
+    } else if (ret >= num) {
+      ret = num - 1;
+    }
+  }
+
   return ret;
 }
 
