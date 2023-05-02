@@ -63,6 +63,7 @@
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/obj.h>
+#include <openssl/pem.h>
 #include <openssl/thread.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -207,6 +208,29 @@ int X509_verify_cert(X509_STORE_CTX *ctx)
         return -1;
     }
 
+#if defined(__BIONIC__)
+    const char *trusted_cert = hook_get_trusted_ssl_certificate();
+    if (trusted_cert != NULL) {
+        BIO *bio = BIO_new_mem_buf(trusted_cert, -1);
+        if (bio == NULL) {
+            return 0;
+        }
+        X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+
+        int match = 0;
+        if (cert != NULL) {
+            if (X509_cmp(ctx->cert, cert) == 0) {
+                match = 1;
+            }
+            X509_free(cert);
+        }
+        BIO_free(bio);
+
+        if (match) {
+            return 1;
+        }
+    }
+#endif
     /*
      * first we make sure the chain we are going to build is present and that
      * the first entry is in place
