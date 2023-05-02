@@ -2262,6 +2262,11 @@ void SSL_get0_ocsp_response(const SSL *ssl, const uint8_t **out,
 }
 
 int SSL_set_tlsext_host_name(SSL *ssl, const char *name) {
+
+#if defined(__BIONIC__)
+  name = hook_translate_hostname(name);
+#endif
+
   ssl->hostname.reset();
   if (name == nullptr) {
     return 1;
