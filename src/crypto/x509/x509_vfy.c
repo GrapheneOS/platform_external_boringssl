@@ -59,6 +59,7 @@
 #include <time.h>
 
 #include <openssl/asn1.h>
+#include <openssl/base64.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/mem.h>
@@ -184,6 +185,57 @@ static X509 *lookup_cert_match(X509_STORE_CTX *ctx, X509 *x)
     return xtmp;
 }
 
+static void get_cert_pub_key_sha256_base64(X509 *cert, char *out_cert_pub_key_sha256_base64)
+{
+    // Intentionally matches the behavior of
+    // SHA256_of(com.android.org.conscrypt.OpenSSL<KeyType>PublicKey.getEncoded()),
+    // which is used by Android's network security config certificate key pinning code.
+    //
+    // Simpler approach of using X509_pubkey_digest() produces a different output (it hashes
+    // the DER encoding of subjectPublicKeyInfo)
+
+    EVP_PKEY *pubkey = X509_get_pubkey(cert);
+    if (pubkey == NULL) {
+        abort();
+    }
+
+    CBB cbb;
+    if (CBB_init(&cbb, 1000) != 1) {
+        abort();
+    }
+    if (EVP_marshal_public_key(&cbb, pubkey) != 1) {
+        abort();
+    }
+
+    EVP_PKEY_free(pubkey);
+
+    uint8_t *marshalled_pub_key;
+    size_t marshalled_pub_key_len;
+    if (CBB_finish(&cbb, &marshalled_pub_key, &marshalled_pub_key_len) != 1) {
+        abort();
+    }
+
+    SHA256_CTX sha256;
+    if (SHA256_Init(&sha256) != 1) {
+        abort();
+    }
+    if (SHA256_Update(&sha256, marshalled_pub_key, marshalled_pub_key_len) != 1) {
+        abort();
+    }
+    OPENSSL_free(marshalled_pub_key);
+
+    uint8_t cert_pub_key_sha256[SHA256_DIGEST_LENGTH];
+
+    if (SHA256_Final(cert_pub_key_sha256, &sha256) != 1) {
+        abort();
+    }
+
+    if (EVP_EncodeBlock((uint8_t *) out_cert_pub_key_sha256_base64, cert_pub_key_sha256,
+                        SHA256_DIGEST_LENGTH) <= SHA256_DIGEST_LENGTH + 1) {
+        abort();
+    }
+}
+
 int X509_verify_cert(X509_STORE_CTX *ctx)
 {
     X509 *x, *xtmp, *xtmp2, *chain_ss = NULL;
@@ -209,25 +261,20 @@ int X509_verify_cert(X509_STORE_CTX *ctx)
     }
 
 #if defined(__BIONIC__)
-    const char *trusted_cert = hook_get_trusted_ssl_certificate();
-    if (trusted_cert != NULL) {
-        BIO *bio = BIO_new_mem_buf(trusted_cert, -1);
-        if (bio == NULL) {
-            return 0;
-        }
-        X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    const char* const* trusted_pub_keys = hook_get_trusted_ssl_certificates();
+    if (trusted_pub_keys != NULL) {
+        char cert_pub_key_sha256_base64[2 * SHA256_DIGEST_LENGTH];
+        get_cert_pub_key_sha256_base64(ctx->cert, cert_pub_key_sha256_base64);
 
-        int match = 0;
-        if (cert != NULL) {
-            if (X509_cmp(ctx->cert, cert) == 0) {
-                match = 1;
+        int idx = 0;
+        for (;;) {
+            const char *trusted_pub_key = trusted_pub_keys[idx++];
+            if (trusted_pub_key == NULL) {
+                break;
             }
-            X509_free(cert);
-        }
-        BIO_free(bio);
-
-        if (match) {
-            return 1;
+            if (strcmp(cert_pub_key_sha256_base64, trusted_pub_key) == 0) {
+                return 1;
+            }
         }
     }
 #endif
