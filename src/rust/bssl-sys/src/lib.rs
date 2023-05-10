@@ -18,5 +18,7 @@ pub fn ERR_GET_FUNC(packed_error: u32) -> i32 {
 }
 
 pub fn init() {
-    unsafe { CRYPTO_library_init(); }
+    unsafe {
+        CRYPTO_library_init();
+    }
 }
