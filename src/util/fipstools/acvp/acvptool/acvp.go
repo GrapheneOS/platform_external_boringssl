@@ -530,25 +530,30 @@ func main() {
 	flag.Parse()
 
 	var config Config
-	if err := jsonFromFile(&config, *configFilename); err != nil {
-		log.Fatalf("Failed to load config file: %s", err)
-	}
-
 	var sessionTokensCacheDir string
-	if len(config.SessionTokensCache) > 0 {
-		sessionTokensCacheDir = config.SessionTokensCache
-		if strings.HasPrefix(sessionTokensCacheDir, "~/") {
-			home := os.Getenv("HOME")
-			if len(home) == 0 {
-				log.Fatal("~ used in config file but $HOME not set")
-			}
-			sessionTokensCacheDir = filepath.Join(home, sessionTokensCacheDir[2:])
-		}
-	}
 
-	if len(*uploadInputFile) > 0 {
-		uploadFromFile(*uploadInputFile, &config, sessionTokensCacheDir)
-		return
+	if *dumpRegcap || len(*jsonInputFile) > 0 {
+		// offline mode
+	} else {
+		if err := jsonFromFile(&config, *configFilename); err != nil {
+			log.Fatalf("Failed to load config file: %s", err)
+		}
+
+		if len(config.SessionTokensCache) > 0 {
+			sessionTokensCacheDir = config.SessionTokensCache
+			if strings.HasPrefix(sessionTokensCacheDir, "~/") {
+				home := os.Getenv("HOME")
+				if len(home) == 0 {
+					log.Fatal("~ used in config file but $HOME not set")
+				}
+				sessionTokensCacheDir = filepath.Join(home, sessionTokensCacheDir[2:])
+			}
+		}
+
+		if len(*uploadInputFile) > 0 {
+			uploadFromFile(*uploadInputFile, &config, sessionTokensCacheDir)
+			return
+		}
 	}
 
 	middle, err := subprocess.New(*wrapperPath)
