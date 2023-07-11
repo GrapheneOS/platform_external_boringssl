@@ -36,7 +36,7 @@ git log --format='format:* %s%n%n%b' ${old_revision}..${new_revision} \
 
 cd ..
 echo "
-Test: atest CtsLibcoreTestCases CtsLibcoreOkHttpTestCases boringssl_crypto_test boringssl_ssl_test" >> $msgfile
+Test: treehugger" >> $msgfile
 if [ ! "$branch" ]; then
   echo ${new_revision} > BORINGSSL_REVISION
 fi
