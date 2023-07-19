@@ -8,6 +8,9 @@
         },
         {
           "include-filter": "libcore.java.security"
+        },
+        {
+          "include-filter": "tests.security"
         }
       ]
     },
