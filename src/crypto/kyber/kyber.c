@@ -132,7 +132,7 @@ static uint16_t reduce_once(uint16_t x) {
 static uint16_t reduce(uint32_t x) {
   assert(x < kPrime + 2u * kPrime * kPrime);
   uint64_t product = (uint64_t)x * kBarrettMultiplier;
-  uint32_t quotient = product >> kBarrettShift;
+  uint32_t quotient = (uint32_t)(product >> kBarrettShift);
   uint32_t remainder = x - quotient * kPrime;
   return reduce_once(remainder);
 }
@@ -230,7 +230,7 @@ static void scalar_sub(scalar *lhs, const scalar *rhs) {
 static void scalar_mult(scalar *out, const scalar *lhs, const scalar *rhs) {
   for (int i = 0; i < DEGREE / 2; i++) {
     uint32_t real_real = (uint32_t)lhs->c[2 * i] * rhs->c[2 * i];
-    uint32_t img_img = (uint32_t)rhs->c[2 * i + 1] * lhs->c[2 * i + 1];
+    uint32_t img_img = (uint32_t)lhs->c[2 * i + 1] * rhs->c[2 * i + 1];
     uint32_t real_img = (uint32_t)lhs->c[2 * i] * rhs->c[2 * i + 1];
     uint32_t img_real = (uint32_t)lhs->c[2 * i + 1] * rhs->c[2 * i];
     out->c[2 * i] =
@@ -491,9 +491,10 @@ static int vector_decode(vector *out, const uint8_t *in, int bits) {
 // remainder (for rounding) and the quotient (as the result), we cannot use
 // |reduce| here, but need to do the Barrett reduction directly.
 static uint16_t compress(uint16_t x, int bits) {
-  uint32_t product = (uint32_t)x << bits;
-  uint32_t quotient = ((uint64_t)product * kBarrettMultiplier) >> kBarrettShift;
-  uint32_t remainder = product - quotient * kPrime;
+  uint32_t shifted = (uint32_t)x << bits;
+  uint64_t product = (uint64_t)shifted * kBarrettMultiplier;
+  uint32_t quotient = (uint32_t)(product >> kBarrettShift);
+  uint32_t remainder = shifted - quotient * kPrime;
 
   // Adjust the quotient to round correctly:
   //   0 <= remainder <= kHalfPrime round to 0
