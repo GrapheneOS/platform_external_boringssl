@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"boringssl.googlesource.com/boringssl/ssl/test/runner/hpke"
+	"golang.org/x/crypto/cryptobyte"
 )
 
 const echBadPayloadByte = 0xff
@@ -71,9 +72,12 @@ func replaceClientHello(hello *clientHelloMsg, in []byte) (*clientHelloMsg, erro
 	// Replace |newHellos|'s key shares with those of |hello|. For simplicity,
 	// we require their lengths match, which is satisfied by matching the
 	// DefaultCurves setting to the selection in the replacement ClientHello.
-	bb := newByteBuilder()
+	bb := cryptobyte.NewBuilder(nil)
 	hello.marshalKeyShares(bb)
-	keyShares := bb.finish()
+	keyShares, err := bb.Bytes()
+	if err != nil {
+		return nil, err
+	}
 	if len(keyShares) != len(newHello.keySharesRaw) {
 		return nil, errors.New("tls: ClientHello key share length is inconsistent with DefaultCurves setting")
 	}
@@ -925,7 +929,7 @@ func (hs *clientHandshakeState) encryptClientHello(hello, innerHello *clientHell
 	return nil
 }
 
-func (hs *clientHandshakeState) checkECHConfirmation(msg interface{}, hello *clientHelloMsg, finishedHash *finishedHash) bool {
+func (hs *clientHandshakeState) checkECHConfirmation(msg any, hello *clientHelloMsg, finishedHash *finishedHash) bool {
 	var offset int
 	var raw, label []byte
 	if hrr, ok := msg.(*helloRetryRequestMsg); ok {
@@ -950,7 +954,7 @@ func (hs *clientHandshakeState) checkECHConfirmation(msg interface{}, hello *cli
 	return bytes.Equal(confirmation, raw[offset:offset+echAcceptConfirmationLength])
 }
 
-func (hs *clientHandshakeState) doTLS13Handshake(msg interface{}) error {
+func (hs *clientHandshakeState) doTLS13Handshake(msg any) error {
 	c := hs.c
 
 	// The first message may be a ServerHello or HelloRetryRequest.
@@ -1897,7 +1901,7 @@ func (hs *clientHandshakeState) establishKeys() error {
 
 	clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV :=
 		keysFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.hello.random, hs.serverHello.random, hs.suite.macLen, hs.suite.keyLen, hs.suite.ivLen(c.vers))
-	var clientCipher, serverCipher interface{}
+	var clientCipher, serverCipher any
 	var clientHash, serverHash macFunction
 	if hs.suite.cipher != nil {
 		clientCipher = hs.suite.cipher(clientKey, clientIV, false /* not for reading */)
