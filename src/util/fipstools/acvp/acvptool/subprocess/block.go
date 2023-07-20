@@ -288,7 +288,7 @@ type blockCipherMCTResult struct {
 	Key3Hex string `json:"key3,omitempty"`
 }
 
-func (b *blockCipher) Process(vectorSet []byte, m Transactable) (any, error) {
+func (b *blockCipher) Process(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed blockCipherVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -397,35 +397,31 @@ func (b *blockCipher) Process(vectorSet []byte, m Transactable) (any, error) {
 
 			testResp := blockCipherTestResponse{ID: test.ID}
 			if !mct {
-				var args [][]byte
+				var result [][]byte
+				var err error
+
 				if b.hasIV {
-					args = [][]byte{key, input, iv, uint32le(1)}
+					result, err = m.Transact(op, b.numResults, key, input, iv, uint32le(1))
 				} else {
-					args = [][]byte{key, input, uint32le(1)}
+					result, err = m.Transact(op, b.numResults, key, input, uint32le(1))
+				}
+				if err != nil {
+					panic("block operation failed: " + err.Error())
 				}
 
-				m.TransactAsync(op, b.numResults, args, func(result [][]byte) error {
-					if encrypt {
-						testResp.CiphertextHex = hex.EncodeToString(result[0])
-					} else {
-						testResp.PlaintextHex = hex.EncodeToString(result[0])
-					}
-					response.Tests = append(response.Tests, testResp)
-					return nil
-				})
+				if encrypt {
+					testResp.CiphertextHex = hex.EncodeToString(result[0])
+				} else {
+					testResp.PlaintextHex = hex.EncodeToString(result[0])
+				}
 			} else {
 				testResp.MCTResults = b.mctFunc(transact, encrypt, key, input, iv)
-				response.Tests = append(response.Tests, testResp)
 			}
+
+			response.Tests = append(response.Tests, testResp)
 		}
 
-		m.Barrier(func() {
-			ret = append(ret, response)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		ret = append(ret, response)
 	}
 
 	return ret, nil

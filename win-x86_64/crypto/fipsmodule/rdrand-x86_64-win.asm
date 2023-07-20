@@ -6,7 +6,6 @@ default	rel
 %define XMMWORD
 %define YMMWORD
 %define ZMMWORD
-%define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
 %include "boringssl_prefix_symbols_nasm.inc"
@@ -22,7 +21,6 @@ global	CRYPTO_rdrand
 ALIGN	16
 CRYPTO_rdrand:
 
-_CET_ENDBR
 	xor	rax,rax
 DB	73,15,199,240
 
@@ -41,7 +39,6 @@ global	CRYPTO_rdrand_multiple8_buf
 ALIGN	16
 CRYPTO_rdrand_multiple8_buf:
 
-_CET_ENDBR
 	test	rdx,rdx
 	jz	NEAR $L$out
 	mov	r8,8

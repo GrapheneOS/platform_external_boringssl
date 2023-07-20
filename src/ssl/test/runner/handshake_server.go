@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"boringssl.googlesource.com/boringssl/ssl/test/runner/hpke"
-	"golang.org/x/crypto/cryptobyte"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
@@ -2077,7 +2076,7 @@ func (hs *serverHandshakeState) establishKeys() error {
 	clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV :=
 		keysFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.clientHello.random, hs.hello.random, hs.suite.macLen, hs.suite.keyLen, hs.suite.ivLen(c.vers))
 
-	var clientCipher, serverCipher any
+	var clientCipher, serverCipher interface{}
 	var clientHash, serverHash macFunction
 
 	if hs.suite.aead == nil {
@@ -2444,18 +2443,18 @@ func checkClientHellosEqual(a, b []byte, isDTLS bool, ignoreExtensions []uint16)
 	}
 
 	// Skip the handshake message header.
-	aReader := cryptobyte.String(a[4:])
-	bReader := cryptobyte.String(b[4:])
+	aReader := byteReader(a[4:])
+	bReader := byteReader(b[4:])
 
 	var aVers, bVers uint16
 	var aRandom, bRandom []byte
 	var aSessionID, bSessionID []byte
-	if !aReader.ReadUint16(&aVers) ||
-		!bReader.ReadUint16(&bVers) ||
-		!aReader.ReadBytes(&aRandom, 32) ||
-		!bReader.ReadBytes(&bRandom, 32) ||
-		!readUint8LengthPrefixedBytes(&aReader, &aSessionID) ||
-		!readUint8LengthPrefixedBytes(&bReader, &bSessionID) {
+	if !aReader.readU16(&aVers) ||
+		!bReader.readU16(&bVers) ||
+		!aReader.readBytes(&aRandom, 32) ||
+		!bReader.readBytes(&bRandom, 32) ||
+		!aReader.readU8LengthPrefixedBytes(&aSessionID) ||
+		!bReader.readU8LengthPrefixedBytes(&bSessionID) {
 		return errors.New("tls: could not parse ClientHello")
 	}
 
@@ -2475,17 +2474,17 @@ func checkClientHellosEqual(a, b []byte, isDTLS bool, ignoreExtensions []uint16)
 		// cookie altogether. If we implement DTLS 1.3, we'll need to ensure
 		// that parsing logic above this function rejects this cookie.
 		var aCookie, bCookie []byte
-		if !readUint8LengthPrefixedBytes(&aReader, &aCookie) ||
-			!readUint8LengthPrefixedBytes(&bReader, &bCookie) {
+		if !aReader.readU8LengthPrefixedBytes(&aCookie) ||
+			!bReader.readU8LengthPrefixedBytes(&bCookie) {
 			return errors.New("tls: could not parse ClientHello")
 		}
 	}
 
 	var aCipherSuites, bCipherSuites, aCompressionMethods, bCompressionMethods []byte
-	if !readUint16LengthPrefixedBytes(&aReader, &aCipherSuites) ||
-		!readUint16LengthPrefixedBytes(&bReader, &bCipherSuites) ||
-		!readUint8LengthPrefixedBytes(&aReader, &aCompressionMethods) ||
-		!readUint8LengthPrefixedBytes(&bReader, &bCompressionMethods) {
+	if !aReader.readU16LengthPrefixedBytes(&aCipherSuites) ||
+		!bReader.readU16LengthPrefixedBytes(&bCipherSuites) ||
+		!aReader.readU8LengthPrefixedBytes(&aCompressionMethods) ||
+		!bReader.readU8LengthPrefixedBytes(&bCompressionMethods) {
 		return errors.New("tls: could not parse ClientHello")
 	}
 	if !bytes.Equal(aCipherSuites, bCipherSuites) {
@@ -2500,9 +2499,9 @@ func checkClientHellosEqual(a, b []byte, isDTLS bool, ignoreExtensions []uint16)
 		return nil
 	}
 
-	var aExtensions, bExtensions cryptobyte.String
-	if !aReader.ReadUint16LengthPrefixed(&aExtensions) ||
-		!bReader.ReadUint16LengthPrefixed(&bExtensions) ||
+	var aExtensions, bExtensions byteReader
+	if !aReader.readU16LengthPrefixed(&aExtensions) ||
+		!bReader.readU16LengthPrefixed(&bExtensions) ||
 		len(aReader) != 0 ||
 		len(bReader) != 0 {
 		return errors.New("tls: could not parse ClientHello")
@@ -2511,8 +2510,8 @@ func checkClientHellosEqual(a, b []byte, isDTLS bool, ignoreExtensions []uint16)
 	for len(aExtensions) != 0 {
 		var aID uint16
 		var aBody []byte
-		if !aExtensions.ReadUint16(&aID) ||
-			!readUint16LengthPrefixedBytes(&aExtensions, &aBody) {
+		if !aExtensions.readU16(&aID) ||
+			!aExtensions.readU16LengthPrefixedBytes(&aBody) {
 			return errors.New("tls: could not parse ClientHello")
 		}
 		if _, ok := ignoreExtensionsSet[aID]; ok {
@@ -2525,8 +2524,8 @@ func checkClientHellosEqual(a, b []byte, isDTLS bool, ignoreExtensions []uint16)
 			}
 			var bID uint16
 			var bBody []byte
-			if !bExtensions.ReadUint16(&bID) ||
-				!readUint16LengthPrefixedBytes(&bExtensions, &bBody) {
+			if !bExtensions.readU16(&bID) ||
+				!bExtensions.readU16LengthPrefixedBytes(&bBody) {
 				return errors.New("tls: could not parse ClientHello")
 			}
 			if _, ok := ignoreExtensionsSet[bID]; ok {
@@ -2547,8 +2546,8 @@ func checkClientHellosEqual(a, b []byte, isDTLS bool, ignoreExtensions []uint16)
 	for len(bExtensions) != 0 {
 		var id uint16
 		var body []byte
-		if !bExtensions.ReadUint16(&id) ||
-			!readUint16LengthPrefixedBytes(&bExtensions, &body) {
+		if !bExtensions.readU16(&id) ||
+			!bExtensions.readU16LengthPrefixedBytes(&body) {
 			return errors.New("tls: could not parse ClientHello")
 		}
 		if _, ok := ignoreExtensionsSet[id]; !ok {

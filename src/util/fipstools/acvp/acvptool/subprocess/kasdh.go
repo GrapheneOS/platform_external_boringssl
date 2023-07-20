@@ -59,7 +59,7 @@ type kasDHTestResponse struct {
 
 type kasDH struct{}
 
-func (k *kasDH) Process(vectorSet []byte, m Transactable) (any, error) {
+func (k *kasDH) Process(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed kasDHVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -139,33 +139,31 @@ func (k *kasDH) Process(vectorSet []byte, m Transactable) (any, error) {
 					return nil, err
 				}
 
-				m.TransactAsync(method, 2, [][]byte{p, q, g, peerPublic, privateKey, publicKey}, func(result [][]byte) error {
-					ok := bytes.Equal(result[1], expectedOutput)
-					response.Tests = append(response.Tests, kasDHTestResponse{
-						ID:     test.ID,
-						Passed: &ok,
-					})
-					return nil
+				result, err := m.Transact(method, 2, p, q, g, peerPublic, privateKey, publicKey)
+				if err != nil {
+					return nil, err
+				}
+
+				ok := bytes.Equal(result[1], expectedOutput)
+				response.Tests = append(response.Tests, kasDHTestResponse{
+					ID:     test.ID,
+					Passed: &ok,
 				})
 			} else {
-				m.TransactAsync(method, 2, [][]byte{p, q, g, peerPublic, nil, nil}, func(result [][]byte) error {
-					response.Tests = append(response.Tests, kasDHTestResponse{
-						ID:             test.ID,
-						LocalPublicHex: hex.EncodeToString(result[0]),
-						ResultHex:      hex.EncodeToString(result[1]),
-					})
-					return nil
+				result, err := m.Transact(method, 2, p, q, g, peerPublic, nil, nil)
+				if err != nil {
+					return nil, err
+				}
+
+				response.Tests = append(response.Tests, kasDHTestResponse{
+					ID:             test.ID,
+					LocalPublicHex: hex.EncodeToString(result[0]),
+					ResultHex:      hex.EncodeToString(result[1]),
 				})
 			}
 		}
 
-		m.Barrier(func() {
-			ret = append(ret, response)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		ret = append(ret, response)
 	}
 
 	return ret, nil
