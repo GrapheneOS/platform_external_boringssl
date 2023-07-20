@@ -1,9 +1,16 @@
 // This file is generated from a similarly-named Perl script in the BoringSSL
 // source tree. Do not edit by hand.
 
-#include <openssl/asm_base.h>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && defined(__ELF__)
+#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && defined(__ELF__)
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 .text	
 
 .extern	OPENSSL_ia32cap_P
@@ -46,7 +53,6 @@
 .align	64
 ChaCha20_ctr32:
 .cfi_startproc	
-_CET_ENDBR
 	cmpq	$0,%rdx
 	je	.Lno_data
 	movq	OPENSSL_ia32cap_P+4(%rip),%r10
@@ -1625,4 +1631,8 @@ ChaCha20_8x:
 	.byte	0xf3,0xc3
 .cfi_endproc	
 .size	ChaCha20_8x,.-ChaCha20_8x
+#endif
+#if defined(__ELF__)
+// See https://www.airs.com/blog/archives/518.
+.section .note.GNU-stack,"",%progbits
 #endif

@@ -75,7 +75,7 @@
 typedef struct {
   // message digest
   const EVP_MD *md;
-  const EC_GROUP *gen_group;
+  EC_GROUP *gen_group;
 } EC_PKEY_CTX;
 
 
@@ -111,6 +111,7 @@ static void pkey_ec_cleanup(EVP_PKEY_CTX *ctx) {
     return;
   }
 
+  EC_GROUP_free(dctx->gen_group);
   OPENSSL_free(dctx);
 }
 
@@ -194,10 +195,11 @@ static int pkey_ec_ctrl(EVP_PKEY_CTX *ctx, int type, int p1, void *p2) {
       return 1;
 
     case EVP_PKEY_CTRL_EC_PARAMGEN_CURVE_NID: {
-      const EC_GROUP *group = EC_GROUP_new_by_curve_name(p1);
+      EC_GROUP *group = EC_GROUP_new_by_curve_name(p1);
       if (group == NULL) {
         return 0;
       }
+      EC_GROUP_free(dctx->gen_group);
       dctx->gen_group = group;
       return 1;
     }
