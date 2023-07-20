@@ -1499,7 +1499,6 @@ default	rel
 \%define XMMWORD
 \%define YMMWORD
 \%define ZMMWORD
-\%define _CET_ENDBR
 
 \%ifdef BORINGSSL_PREFIX
 \%include "boringssl_prefix_symbols_nasm.inc"
@@ -1523,9 +1522,16 @@ if ($gas) {
         die "unknown target: $flavour";
     }
     print <<___;
-#include <openssl/asm_base.h>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && $target
+#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && $target
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 ___
 }
 
@@ -1621,7 +1627,13 @@ print "\n$current_segment\tENDS\n"	if ($current_segment && $masm);
 if ($masm) {
     print "END\n";
 } elsif ($gas) {
-    print "#endif\n";
+    print <<___;
+#endif
+#if defined(__ELF__)
+// See https://www.airs.com/blog/archives/518.
+.section .note.GNU-stack,"",\%progbits
+#endif
+___
 } elsif ($nasm) {
     print <<___;
 \%else

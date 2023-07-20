@@ -138,10 +138,12 @@ OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_128_ctr_hmac_sha256(void);
 // authentication. See |EVP_aead_aes_128_ctr_hmac_sha256| for details.
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_ctr_hmac_sha256(void);
 
-// EVP_aead_aes_128_gcm_siv is AES-128 in GCM-SIV mode. See RFC 8452.
+// EVP_aead_aes_128_gcm_siv is AES-128 in GCM-SIV mode. See
+// https://tools.ietf.org/html/draft-irtf-cfrg-gcmsiv-02
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_128_gcm_siv(void);
 
-// EVP_aead_aes_256_gcm_siv is AES-256 in GCM-SIV mode. See RFC 8452.
+// EVP_aead_aes_256_gcm_siv is AES-256 in GCM-SIV mode. See
+// https://tools.ietf.org/html/draft-irtf-cfrg-gcmsiv-02
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_gcm_siv(void);
 
 // EVP_aead_aes_128_gcm_randnonce is AES-128 in Galois Counter Mode with
@@ -210,7 +212,7 @@ OPENSSL_EXPORT size_t EVP_AEAD_max_tag_len(const EVP_AEAD *aead);
 // AEAD operations.
 
 union evp_aead_ctx_st_state {
-  uint8_t opaque[564];
+  uint8_t opaque[580];
   uint64_t alignment;
 };
 
@@ -399,8 +401,6 @@ OPENSSL_EXPORT const EVP_AEAD *EVP_AEAD_CTX_aead(const EVP_AEAD_CTX *ctx);
 
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_128_cbc_sha1_tls(void);
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_128_cbc_sha1_tls_implicit_iv(void);
-
-OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_128_cbc_sha256_tls(void);
 
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls(void);
 OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls_implicit_iv(void);

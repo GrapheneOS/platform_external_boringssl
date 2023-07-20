@@ -116,7 +116,7 @@ type hkdfTestResponse struct {
 
 type hkdf struct{}
 
-func (k *hkdf) Process(vectorSet []byte, m Transactable) (any, error) {
+func (k *hkdf) Process(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed hkdfTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -169,29 +169,24 @@ func (k *hkdf) Process(vectorSet []byte, m Transactable) (any, error) {
 			info = append(info, uData...)
 			info = append(info, vData...)
 
-			m.TransactAsync("HKDF/"+hashName, 1, [][]byte{key, salt, info, uint32le(outBytes)}, func(result [][]byte) error {
-				if len(result[0]) != int(outBytes) {
-					return fmt.Errorf("HKDF operation resulted in %d bytes but wanted %d", len(result[0]), outBytes)
-				}
-				if isValidationTest {
-					passed := bytes.Equal(expected, result[0])
-					testResp.Passed = &passed
-				} else {
-					testResp.KeyOut = hex.EncodeToString(result[0])
-				}
+			resp, err := m.Transact("HKDF/"+hashName, 1, key, salt, info, uint32le(outBytes))
+			if err != nil {
+				return nil, fmt.Errorf("HKDF operation failed: %s", err)
+			}
+			if len(resp[0]) != int(outBytes) {
+				return nil, fmt.Errorf("HKDF operation resulted in %d bytes but wanted %d", len(resp[0]), outBytes)
+			}
 
-				groupResp.Tests = append(groupResp.Tests, testResp)
-				return nil
-			})
+			if isValidationTest {
+				passed := bytes.Equal(expected, resp[0])
+				testResp.Passed = &passed
+			} else {
+				testResp.KeyOut = hex.EncodeToString(resp[0])
+			}
+
+			groupResp.Tests = append(groupResp.Tests, testResp)
 		}
-
-		m.Barrier(func() {
-			respGroups = append(respGroups, groupResp)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		respGroups = append(respGroups, groupResp)
 	}
 
 	return respGroups, nil
