@@ -1999,7 +1999,7 @@ OPENSSL_EXPORT X509 *X509_find_by_subject(const STACK_OF(X509) *sk,
 //
 // WARNING: Unlike most comparison functions, this function returns zero on
 // error, not equality.
-OPENSSL_EXPORT int X509_cmp_time(const ASN1_TIME *s, const time_t *t);
+OPENSSL_EXPORT int X509_cmp_time(const ASN1_TIME *s, time_t *t);
 
 // X509_cmp_time_posix compares |s| against |t|. On success, it returns a
 // negative number if |s| <= |t| and a positive number if |s| > |t|. On error,
@@ -2015,12 +2015,12 @@ OPENSSL_EXPORT int X509_cmp_current_time(const ASN1_TIME *s);
 
 // X509_time_adj calls |X509_time_adj_ex| with |offset_day| equal to zero.
 OPENSSL_EXPORT ASN1_TIME *X509_time_adj(ASN1_TIME *s, long offset_sec,
-                                        const time_t *t);
+                                        time_t *t);
 
 // X509_time_adj_ex behaves like |ASN1_TIME_adj|, but adds an offset to |*t|. If
 // |t| is NULL, it uses the current time instead of |*t|.
 OPENSSL_EXPORT ASN1_TIME *X509_time_adj_ex(ASN1_TIME *s, int offset_day,
-                                           long offset_sec, const time_t *t);
+                                           long offset_sec, time_t *t);
 
 // X509_gmtime_adj behaves like |X509_time_adj_ex| but adds |offset_sec| to the
 // current time.
@@ -2529,7 +2529,7 @@ OPENSSL_EXPORT X509_TRUST *X509_TRUST_get0(int idx);
 OPENSSL_EXPORT int X509_TRUST_get_by_id(int id);
 OPENSSL_EXPORT int X509_TRUST_add(int id, int flags,
                                   int (*ck)(X509_TRUST *, X509 *, int),
-                                  const char *name, int arg1, void *arg2);
+                                  char *name, int arg1, void *arg2);
 OPENSSL_EXPORT void X509_TRUST_cleanup(void);
 OPENSSL_EXPORT int X509_TRUST_get_flags(const X509_TRUST *xp);
 OPENSSL_EXPORT char *X509_TRUST_get0_name(const X509_TRUST *xp);
@@ -2770,11 +2770,6 @@ OPENSSL_EXPORT void X509_STORE_set_verify(X509_STORE *ctx,
 OPENSSL_EXPORT void X509_STORE_CTX_set_verify(X509_STORE_CTX *ctx,
                                               X509_STORE_CTX_verify_fn verify);
 OPENSSL_EXPORT X509_STORE_CTX_verify_fn X509_STORE_get_verify(X509_STORE *ctx);
-
-// X509_STORE_set_verify_cb acts like |X509_STORE_CTX_set_verify_cb| but sets
-// the verify callback for any |X509_STORE_CTX| created from this |X509_STORE|
-//
-// Do not use this funciton. see |X509_STORE_CTX_set_verify_cb|.
 OPENSSL_EXPORT void X509_STORE_set_verify_cb(
     X509_STORE *ctx, X509_STORE_CTX_verify_cb verify_cb);
 #define X509_STORE_set_verify_cb_func(ctx, func) \
@@ -2915,27 +2910,8 @@ OPENSSL_EXPORT void X509_STORE_CTX_set_time(X509_STORE_CTX *ctx,
 OPENSSL_EXPORT void X509_STORE_CTX_set_time_posix(X509_STORE_CTX *ctx,
                                                   unsigned long flags,
                                                   int64_t t);
-
-// X509_STORE_CTX_set_verify_cb configures a callback function for |ctx| that is
-// called multiple times during |X509_verify_cert|. The callback returns zero to
-// fail verification and non-zero to proceed. Typically, it will return |ok|,
-// which preserves the default behavior. Returning one when |ok| is zero will
-// proceed past some error. The callback may inspect |ctx| and the error queue
-// to attempt to determine the current stage of certificate verification, but
-// this is often unreliable.
-//
-// WARNING: Do not use this function. It is extremely fragile and unpredictable.
-// This callback exposes implementation details of certificate verification,
-// which change as the library evolves. Attempting to use it for security checks
-// can introduce vulnerabilities if making incorrect assumptions about when the
-// callback is called. Additionally, overriding |ok| may leave |ctx| in an
-// inconsistent state and break invariants.
-//
-// Instead, customize certificate verification by configuring options on the
-// |X509_STORE_CTX| before verification, or applying additional checks after
-// |X509_verify_cert| completes successfully.
 OPENSSL_EXPORT void X509_STORE_CTX_set_verify_cb(
-    X509_STORE_CTX *ctx, int (*verify_cb)(int ok, X509_STORE_CTX *ctx));
+    X509_STORE_CTX *ctx, int (*verify_cb)(int, X509_STORE_CTX *));
 
 OPENSSL_EXPORT X509_VERIFY_PARAM *X509_STORE_CTX_get0_param(
     X509_STORE_CTX *ctx);

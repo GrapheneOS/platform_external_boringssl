@@ -1,9 +1,16 @@
 // This file is generated from a similarly-named Perl script in the BoringSSL
 // source tree. Do not edit by hand.
 
-#include <openssl/asm_base.h>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && defined(__APPLE__)
+#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && defined(__APPLE__)
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 .text	
 
 
@@ -20,7 +27,6 @@
 _abi_test_trampoline:
 
 
-_CET_ENDBR
 
 
 
@@ -182,7 +188,6 @@ L$call_done:
 .private_extern _abi_test_clobber_rax
 .p2align	4
 _abi_test_clobber_rax:
-_CET_ENDBR
 	xorq	%rax,%rax
 	.byte	0xf3,0xc3
 
@@ -191,7 +196,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_rbx
 .p2align	4
 _abi_test_clobber_rbx:
-_CET_ENDBR
 	xorq	%rbx,%rbx
 	.byte	0xf3,0xc3
 
@@ -200,7 +204,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_rcx
 .p2align	4
 _abi_test_clobber_rcx:
-_CET_ENDBR
 	xorq	%rcx,%rcx
 	.byte	0xf3,0xc3
 
@@ -209,7 +212,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_rdx
 .p2align	4
 _abi_test_clobber_rdx:
-_CET_ENDBR
 	xorq	%rdx,%rdx
 	.byte	0xf3,0xc3
 
@@ -218,7 +220,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_rdi
 .p2align	4
 _abi_test_clobber_rdi:
-_CET_ENDBR
 	xorq	%rdi,%rdi
 	.byte	0xf3,0xc3
 
@@ -227,7 +228,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_rsi
 .p2align	4
 _abi_test_clobber_rsi:
-_CET_ENDBR
 	xorq	%rsi,%rsi
 	.byte	0xf3,0xc3
 
@@ -236,7 +236,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_rbp
 .p2align	4
 _abi_test_clobber_rbp:
-_CET_ENDBR
 	xorq	%rbp,%rbp
 	.byte	0xf3,0xc3
 
@@ -245,7 +244,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r8
 .p2align	4
 _abi_test_clobber_r8:
-_CET_ENDBR
 	xorq	%r8,%r8
 	.byte	0xf3,0xc3
 
@@ -254,7 +252,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r9
 .p2align	4
 _abi_test_clobber_r9:
-_CET_ENDBR
 	xorq	%r9,%r9
 	.byte	0xf3,0xc3
 
@@ -263,7 +260,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r10
 .p2align	4
 _abi_test_clobber_r10:
-_CET_ENDBR
 	xorq	%r10,%r10
 	.byte	0xf3,0xc3
 
@@ -272,7 +268,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r11
 .p2align	4
 _abi_test_clobber_r11:
-_CET_ENDBR
 	xorq	%r11,%r11
 	.byte	0xf3,0xc3
 
@@ -281,7 +276,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r12
 .p2align	4
 _abi_test_clobber_r12:
-_CET_ENDBR
 	xorq	%r12,%r12
 	.byte	0xf3,0xc3
 
@@ -290,7 +284,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r13
 .p2align	4
 _abi_test_clobber_r13:
-_CET_ENDBR
 	xorq	%r13,%r13
 	.byte	0xf3,0xc3
 
@@ -299,7 +292,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r14
 .p2align	4
 _abi_test_clobber_r14:
-_CET_ENDBR
 	xorq	%r14,%r14
 	.byte	0xf3,0xc3
 
@@ -308,7 +300,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_r15
 .p2align	4
 _abi_test_clobber_r15:
-_CET_ENDBR
 	xorq	%r15,%r15
 	.byte	0xf3,0xc3
 
@@ -317,7 +308,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm0
 .p2align	4
 _abi_test_clobber_xmm0:
-_CET_ENDBR
 	pxor	%xmm0,%xmm0
 	.byte	0xf3,0xc3
 
@@ -326,7 +316,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm1
 .p2align	4
 _abi_test_clobber_xmm1:
-_CET_ENDBR
 	pxor	%xmm1,%xmm1
 	.byte	0xf3,0xc3
 
@@ -335,7 +324,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm2
 .p2align	4
 _abi_test_clobber_xmm2:
-_CET_ENDBR
 	pxor	%xmm2,%xmm2
 	.byte	0xf3,0xc3
 
@@ -344,7 +332,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm3
 .p2align	4
 _abi_test_clobber_xmm3:
-_CET_ENDBR
 	pxor	%xmm3,%xmm3
 	.byte	0xf3,0xc3
 
@@ -353,7 +340,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm4
 .p2align	4
 _abi_test_clobber_xmm4:
-_CET_ENDBR
 	pxor	%xmm4,%xmm4
 	.byte	0xf3,0xc3
 
@@ -362,7 +348,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm5
 .p2align	4
 _abi_test_clobber_xmm5:
-_CET_ENDBR
 	pxor	%xmm5,%xmm5
 	.byte	0xf3,0xc3
 
@@ -371,7 +356,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm6
 .p2align	4
 _abi_test_clobber_xmm6:
-_CET_ENDBR
 	pxor	%xmm6,%xmm6
 	.byte	0xf3,0xc3
 
@@ -380,7 +364,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm7
 .p2align	4
 _abi_test_clobber_xmm7:
-_CET_ENDBR
 	pxor	%xmm7,%xmm7
 	.byte	0xf3,0xc3
 
@@ -389,7 +372,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm8
 .p2align	4
 _abi_test_clobber_xmm8:
-_CET_ENDBR
 	pxor	%xmm8,%xmm8
 	.byte	0xf3,0xc3
 
@@ -398,7 +380,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm9
 .p2align	4
 _abi_test_clobber_xmm9:
-_CET_ENDBR
 	pxor	%xmm9,%xmm9
 	.byte	0xf3,0xc3
 
@@ -407,7 +388,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm10
 .p2align	4
 _abi_test_clobber_xmm10:
-_CET_ENDBR
 	pxor	%xmm10,%xmm10
 	.byte	0xf3,0xc3
 
@@ -416,7 +396,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm11
 .p2align	4
 _abi_test_clobber_xmm11:
-_CET_ENDBR
 	pxor	%xmm11,%xmm11
 	.byte	0xf3,0xc3
 
@@ -425,7 +404,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm12
 .p2align	4
 _abi_test_clobber_xmm12:
-_CET_ENDBR
 	pxor	%xmm12,%xmm12
 	.byte	0xf3,0xc3
 
@@ -434,7 +412,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm13
 .p2align	4
 _abi_test_clobber_xmm13:
-_CET_ENDBR
 	pxor	%xmm13,%xmm13
 	.byte	0xf3,0xc3
 
@@ -443,7 +420,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm14
 .p2align	4
 _abi_test_clobber_xmm14:
-_CET_ENDBR
 	pxor	%xmm14,%xmm14
 	.byte	0xf3,0xc3
 
@@ -452,7 +428,6 @@ _CET_ENDBR
 .private_extern _abi_test_clobber_xmm15
 .p2align	4
 _abi_test_clobber_xmm15:
-_CET_ENDBR
 	pxor	%xmm15,%xmm15
 	.byte	0xf3,0xc3
 
@@ -466,7 +441,6 @@ _CET_ENDBR
 _abi_test_bad_unwind_wrong_register:
 
 
-_CET_ENDBR
 	pushq	%r12
 
 
@@ -491,7 +465,6 @@ _CET_ENDBR
 _abi_test_bad_unwind_temporary:
 
 
-_CET_ENDBR
 	pushq	%r12
 
 
@@ -519,7 +492,6 @@ _CET_ENDBR
 .globl	_abi_test_get_and_clear_direction_flag
 .private_extern _abi_test_get_and_clear_direction_flag
 _abi_test_get_and_clear_direction_flag:
-_CET_ENDBR
 	pushfq
 	popq	%rax
 	andq	$0x400,%rax
@@ -534,8 +506,11 @@ _CET_ENDBR
 .globl	_abi_test_set_direction_flag
 .private_extern _abi_test_set_direction_flag
 _abi_test_set_direction_flag:
-_CET_ENDBR
 	std
 	.byte	0xf3,0xc3
 
+#endif
+#if defined(__ELF__)
+// See https://www.airs.com/blog/archives/518.
+.section .note.GNU-stack,"",%progbits
 #endif

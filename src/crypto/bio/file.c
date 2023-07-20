@@ -172,6 +172,7 @@ static long file_ctrl(BIO *b, int cmd, long num, void *ptr) {
   long ret = 1;
   FILE *fp = (FILE *)b->ptr;
   FILE **fpp;
+  char p[4];
 
   switch (cmd) {
     case BIO_CTRL_RESET:
@@ -196,28 +197,27 @@ static long file_ctrl(BIO *b, int cmd, long num, void *ptr) {
     case BIO_C_SET_FILENAME:
       file_free(b);
       b->shutdown = (int)num & BIO_CLOSE;
-      const char *mode;
       if (num & BIO_FP_APPEND) {
         if (num & BIO_FP_READ) {
-          mode = "a+";
+          OPENSSL_strlcpy(p, "a+", sizeof(p));
         } else {
-          mode = "a";
+          OPENSSL_strlcpy(p, "a", sizeof(p));
         }
       } else if ((num & BIO_FP_READ) && (num & BIO_FP_WRITE)) {
-        mode = "r+";
+        OPENSSL_strlcpy(p, "r+", sizeof(p));
       } else if (num & BIO_FP_WRITE) {
-        mode = "w";
+        OPENSSL_strlcpy(p, "w", sizeof(p));
       } else if (num & BIO_FP_READ) {
-        mode = "r";
+        OPENSSL_strlcpy(p, "r", sizeof(p));
       } else {
         OPENSSL_PUT_ERROR(BIO, BIO_R_BAD_FOPEN_MODE);
         ret = 0;
         break;
       }
-      fp = fopen(ptr, mode);
+      fp = fopen(ptr, p);
       if (fp == NULL) {
         OPENSSL_PUT_SYSTEM_ERROR();
-        ERR_add_error_data(5, "fopen('", ptr, "','", mode, "')");
+        ERR_add_error_data(5, "fopen('", ptr, "','", p, "')");
         OPENSSL_PUT_ERROR(BIO, ERR_R_SYS_LIB);
         ret = 0;
         break;

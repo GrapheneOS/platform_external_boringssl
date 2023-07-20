@@ -1,9 +1,16 @@
 // This file is generated from a similarly-named Perl script in the BoringSSL
 // source tree. Do not edit by hand.
 
-#include <openssl/asm_base.h>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && defined(__ELF__)
+#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && defined(__ELF__)
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 .text	
 
 .type	_aesni_ctr32_ghash_6x,@function
@@ -346,7 +353,6 @@ _aesni_ctr32_ghash_6x:
 aesni_gcm_decrypt:
 .cfi_startproc	
 
-_CET_ENDBR
 	xorq	%rax,%rax
 
 
@@ -377,18 +383,17 @@ _CET_ENDBR
 
 	vzeroupper
 
-	movq	16(%rbp),%r12
 	vmovdqu	(%r8),%xmm1
 	addq	$-128,%rsp
 	movl	12(%r8),%ebx
 	leaq	.Lbswap_mask(%rip),%r11
 	leaq	-128(%rcx),%r14
 	movq	$0xf80,%r15
-	vmovdqu	(%r12),%xmm8
+	vmovdqu	(%r9),%xmm8
 	andq	$-128,%rsp
 	vmovdqu	(%r11),%xmm0
 	leaq	128(%rcx),%rcx
-	leaq	32(%r9),%r9
+	leaq	32+32(%r9),%r9
 	movl	240-128(%rcx),%r10d
 	vpshufb	%xmm0,%xmm8,%xmm8
 
@@ -433,7 +438,6 @@ _CET_ENDBR
 
 	call	_aesni_ctr32_ghash_6x
 
-	movq	16(%rbp),%r12
 	vmovups	%xmm9,-96(%rsi)
 	vmovups	%xmm10,-80(%rsi)
 	vmovups	%xmm11,-64(%rsi)
@@ -442,7 +446,7 @@ _CET_ENDBR
 	vmovups	%xmm14,-16(%rsi)
 
 	vpshufb	(%r11),%xmm8,%xmm8
-	vmovdqu	%xmm8,(%r12)
+	vmovdqu	%xmm8,-64(%r9)
 
 	vzeroupper
 	leaq	-40(%rbp),%rsp
@@ -570,7 +574,6 @@ _aesni_ctr32_6x:
 aesni_gcm_encrypt:
 .cfi_startproc	
 
-_CET_ENDBR
 #ifdef BORINGSSL_DISPATCH_TEST
 .extern	BORINGSSL_function_hit
 .hidden BORINGSSL_function_hit
@@ -655,9 +658,8 @@ _CET_ENDBR
 
 	call	_aesni_ctr32_6x
 
-	movq	16(%rbp),%r12
-	leaq	32(%r9),%r9
-	vmovdqu	(%r12),%xmm8
+	vmovdqu	(%r9),%xmm8
+	leaq	32+32(%r9),%r9
 	subq	$12,%rdx
 	movq	$192,%rax
 	vpshufb	%xmm0,%xmm8,%xmm8
@@ -835,9 +837,8 @@ _CET_ENDBR
 	vpclmulqdq	$0x10,%xmm3,%xmm8,%xmm8
 	vpxor	%xmm7,%xmm2,%xmm2
 	vpxor	%xmm2,%xmm8,%xmm8
-	movq	16(%rbp),%r12
 	vpshufb	(%r11),%xmm8,%xmm8
-	vmovdqu	%xmm8,(%r12)
+	vmovdqu	%xmm8,-64(%r9)
 
 	vzeroupper
 	leaq	-40(%rbp),%rsp
@@ -880,4 +881,8 @@ _CET_ENDBR
 .byte	65,69,83,45,78,73,32,71,67,77,32,109,111,100,117,108,101,32,102,111,114,32,120,56,54,95,54,52,44,32,67,82,89,80,84,79,71,65,77,83,32,98,121,32,60,97,112,112,114,111,64,111,112,101,110,115,115,108,46,111,114,103,62,0
 .align	64
 .text	
+#endif
+#if defined(__ELF__)
+// See https://www.airs.com/blog/archives/518.
+.section .note.GNU-stack,"",%progbits
 #endif
