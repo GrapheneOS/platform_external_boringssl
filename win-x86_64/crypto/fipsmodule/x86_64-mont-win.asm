@@ -6,7 +6,6 @@ default	rel
 %define XMMWORD
 %define YMMWORD
 %define ZMMWORD
-%define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
 %include "boringssl_prefix_symbols_nasm.inc"
@@ -33,7 +32,6 @@ $L$SEH_begin_bn_mul_mont:
 
 
 
-_CET_ENDBR
 	mov	r9d,r9d
 	mov	rax,rsp
 

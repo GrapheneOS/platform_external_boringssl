@@ -22,30 +22,24 @@
     clippy::expect_used
 )]
 
-//! Rust BoringSSL bindings
+//! Rust boringssl binding
 
 extern crate core;
 
-/// AES block operations.
+/// BoringSSL implemented plain aes operations.
 pub mod aes;
 
-/// Hash functions.
+/// BoringSSL implemented hash functions.
 pub mod digest;
 
-/// Ed25519, a signature scheme.
-pub mod ed25519;
-
-/// HKDF, a hash-based key derivation function.
+/// BoringSSL implemented hkdf operations.
 pub mod hkdf;
 
-/// HMAC, a hash-based message authentication code.
+/// BoringSSL implemented hmac operations.
 pub mod hmac;
 
-/// Random number generation.
+/// BoringSSL implemented cryptographically secure pseudo-random number generation.
 pub mod rand;
-
-/// BoringSSL implemented memory-manipulation operations.
-pub mod mem;
 
 #[cfg(test)]
 mod test_helpers;
@@ -67,10 +61,6 @@ impl CSlice<'_> {
         } else {
             self.0.as_ptr() as *const T
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
     }
 }
 

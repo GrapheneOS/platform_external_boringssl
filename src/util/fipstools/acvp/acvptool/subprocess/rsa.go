@@ -117,7 +117,7 @@ type rsaSigVerTestResponse struct {
 	Passed bool   `json:"testPassed"`
 }
 
-func processKeyGen(vectorSet []byte, m Transactable) (any, error) {
+func processKeyGen(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed rsaKeyGenTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -137,32 +137,28 @@ func processKeyGen(vectorSet []byte, m Transactable) (any, error) {
 		}
 
 		for _, test := range group.Tests {
-			m.TransactAsync("RSA/keyGen", 5, [][]byte{uint32le(group.ModulusBits)}, func(result [][]byte) error {
-				response.Tests = append(response.Tests, rsaKeyGenTestResponse{
-					ID: test.ID,
-					E:  hex.EncodeToString(result[0]),
-					P:  hex.EncodeToString(result[1]),
-					Q:  hex.EncodeToString(result[2]),
-					N:  hex.EncodeToString(result[3]),
-					D:  hex.EncodeToString(result[4]),
-				})
-				return nil
+			results, err := m.Transact("RSA/keyGen", 5, uint32le(group.ModulusBits))
+			if err != nil {
+				return nil, err
+			}
+
+			response.Tests = append(response.Tests, rsaKeyGenTestResponse{
+				ID: test.ID,
+				E:  hex.EncodeToString(results[0]),
+				P:  hex.EncodeToString(results[1]),
+				Q:  hex.EncodeToString(results[2]),
+				N:  hex.EncodeToString(results[3]),
+				D:  hex.EncodeToString(results[4]),
 			})
 		}
 
-		m.Barrier(func() {
-			ret = append(ret, response)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		ret = append(ret, response)
 	}
 
 	return ret, nil
 }
 
-func processSigGen(vectorSet []byte, m Transactable) (any, error) {
+func processSigGen(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed rsaSigGenTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -189,35 +185,31 @@ func processSigGen(vectorSet []byte, m Transactable) (any, error) {
 				return nil, fmt.Errorf("test case %d/%d contains invalid hex: %s", group.ID, test.ID, err)
 			}
 
-			m.TransactAsync(operation, 3, [][]byte{uint32le(group.ModulusBits), msg}, func(result [][]byte) error {
-				if len(response.N) == 0 {
-					response.N = hex.EncodeToString(result[0])
-					response.E = hex.EncodeToString(result[1])
-				} else if response.N != hex.EncodeToString(result[0]) {
-					return fmt.Errorf("module wrapper returned different RSA keys for the same SigGen configuration")
-				}
+			results, err := m.Transact(operation, 3, uint32le(group.ModulusBits), msg)
+			if err != nil {
+				return nil, err
+			}
 
-				response.Tests = append(response.Tests, rsaSigGenTestResponse{
-					ID:  test.ID,
-					Sig: hex.EncodeToString(result[2]),
-				})
-				return nil
+			if len(response.N) == 0 {
+				response.N = hex.EncodeToString(results[0])
+				response.E = hex.EncodeToString(results[1])
+			} else if response.N != hex.EncodeToString(results[0]) {
+				return nil, fmt.Errorf("module wrapper returned different RSA keys for the same SigGen configuration")
+			}
+
+			response.Tests = append(response.Tests, rsaSigGenTestResponse{
+				ID:  test.ID,
+				Sig: hex.EncodeToString(results[2]),
 			})
 		}
 
-		m.Barrier(func() {
-			ret = append(ret, response)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		ret = append(ret, response)
 	}
 
 	return ret, nil
 }
 
-func processSigVer(vectorSet []byte, m Transactable) (any, error) {
+func processSigVer(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed rsaSigVerTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -257,22 +249,18 @@ func processSigVer(vectorSet []byte, m Transactable) (any, error) {
 				return nil, fmt.Errorf("test case %d/%d contains invalid hex: %s", group.ID, test.ID, err)
 			}
 
-			m.TransactAsync(operation, 1, [][]byte{n, e, msg, sig}, func(result [][]byte) error {
-				response.Tests = append(response.Tests, rsaSigVerTestResponse{
-					ID:     test.ID,
-					Passed: len(result[0]) == 1 && result[0][0] == 1,
-				})
-				return nil
+			results, err := m.Transact(operation, 1, n, e, msg, sig)
+			if err != nil {
+				return nil, err
+			}
+
+			response.Tests = append(response.Tests, rsaSigVerTestResponse{
+				ID:     test.ID,
+				Passed: len(results[0]) == 1 && results[0][0] == 1,
 			})
 		}
 
-		m.Barrier(func() {
-			ret = append(ret, response)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		ret = append(ret, response)
 	}
 
 	return ret, nil
@@ -280,7 +268,7 @@ func processSigVer(vectorSet []byte, m Transactable) (any, error) {
 
 type rsa struct{}
 
-func (*rsa) Process(vectorSet []byte, m Transactable) (any, error) {
+func (*rsa) Process(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed rsaTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
