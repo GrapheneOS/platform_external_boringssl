@@ -64,7 +64,6 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/mem.h>
-#include <openssl/span.h>
 
 #include "internal.h"
 #include "../crypto/internal.h"
@@ -485,14 +484,12 @@ void SSL_CTX_set_private_key_method(SSL_CTX *ctx,
 
 static constexpr size_t kMaxSignatureAlgorithmNameLen = 23;
 
-struct SignatureAlgorithmName {
-  uint16_t signature_algorithm;
-  const char name[kMaxSignatureAlgorithmNameLen];
-};
-
 // This was "constexpr" rather than "const", but that triggered a bug in MSVC
 // where it didn't pad the strings to the correct length.
-static const SignatureAlgorithmName kSignatureAlgorithmNames[] = {
+static const struct {
+  uint16_t signature_algorithm;
+  const char name[kMaxSignatureAlgorithmNameLen];
+} kSignatureAlgorithmNames[] = {
     {SSL_SIGN_RSA_PKCS1_MD5_SHA1, "rsa_pkcs1_md5_sha1"},
     {SSL_SIGN_RSA_PKCS1_SHA1, "rsa_pkcs1_sha1"},
     {SSL_SIGN_RSA_PKCS1_SHA256, "rsa_pkcs1_sha256"},
@@ -518,8 +515,6 @@ const char *SSL_get_signature_algorithm_name(uint16_t sigalg,
         return "ecdsa_sha384";
       case SSL_SIGN_ECDSA_SECP521R1_SHA512:
         return "ecdsa_sha512";
-        // If adding more here, also update
-        // |SSL_get_all_signature_algorithm_names|.
     }
   }
 
@@ -530,14 +525,6 @@ const char *SSL_get_signature_algorithm_name(uint16_t sigalg,
   }
 
   return NULL;
-}
-
-size_t SSL_get_all_signature_algorithm_names(const char **out, size_t max_out) {
-  const char *kPredefinedNames[] = {"ecdsa_sha256", "ecdsa_sha384",
-                                    "ecdsa_sha512"};
-  return GetAllNames(out, max_out, MakeConstSpan(kPredefinedNames),
-                     &SignatureAlgorithmName::name,
-                     MakeConstSpan(kSignatureAlgorithmNames));
 }
 
 int SSL_get_signature_algorithm_key_type(uint16_t sigalg) {

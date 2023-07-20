@@ -60,7 +60,7 @@ type kdfTestResponse struct {
 
 type kdfPrimitive struct{}
 
-func (k *kdfPrimitive) Process(vectorSet []byte, m Transactable) (any, error) {
+func (k *kdfPrimitive) Process(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed kdfTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -106,30 +106,26 @@ func (k *kdfPrimitive) Process(vectorSet []byte, m Transactable) (any, error) {
 			}
 
 			// Make the call to the crypto module.
-			m.TransactAsync("KDF-counter", 3, [][]byte{outputBytes, []byte(group.MACMode), []byte(group.CounterLocation), key, counterBits}, func(result [][]byte) error {
-				testResp.ID = test.ID
-				if test.Deferred {
-					testResp.KeyIn = hex.EncodeToString(result[0])
-				}
-				testResp.FixedData = hex.EncodeToString(result[1])
-				testResp.KeyOut = hex.EncodeToString(result[2])
+			resp, err := m.Transact("KDF-counter", 3, outputBytes, []byte(group.MACMode), []byte(group.CounterLocation), key, counterBits)
+			if err != nil {
+				return nil, fmt.Errorf("wrapper KDF operation failed: %s", err)
+			}
 
-				if !test.Deferred && !bytes.Equal(result[0], key) {
-					return fmt.Errorf("wrapper returned a different key for non-deferred KDF operation")
-				}
+			// Parse results.
+			testResp.ID = test.ID
+			if test.Deferred {
+				testResp.KeyIn = hex.EncodeToString(resp[0])
+			}
+			testResp.FixedData = hex.EncodeToString(resp[1])
+			testResp.KeyOut = hex.EncodeToString(resp[2])
 
-				groupResp.Tests = append(groupResp.Tests, testResp)
-				return nil
-			})
+			if !test.Deferred && !bytes.Equal(resp[0], key) {
+				return nil, fmt.Errorf("wrapper returned a different key for non-deferred KDF operation")
+			}
+
+			groupResp.Tests = append(groupResp.Tests, testResp)
 		}
-
-		m.Barrier(func() {
-			respGroups = append(respGroups, groupResp)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		respGroups = append(respGroups, groupResp)
 	}
 
 	return respGroups, nil

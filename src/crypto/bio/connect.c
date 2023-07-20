@@ -56,7 +56,7 @@
 
 #include <openssl/bio.h>
 
-#if !defined(OPENSSL_NO_SOCK)
+#if !defined(OPENSSL_TRUSTY)
 
 #include <assert.h>
 #include <errno.h>
@@ -544,4 +544,4 @@ int BIO_do_connect(BIO *bio) {
   return (int)BIO_ctrl(bio, BIO_C_DO_STATE_MACHINE, 0, NULL);
 }
 
-#endif  // OPENSSL_NO_SOCK
+#endif  // OPENSSL_TRUSTY

@@ -1,9 +1,16 @@
 // This file is generated from a similarly-named Perl script in the BoringSSL
 // source tree. Do not edit by hand.
 
-#include <openssl/asm_base.h>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && defined(__ELF__)
+#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && defined(__ELF__)
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 .text	
 .extern	OPENSSL_ia32cap_P
 .hidden OPENSSL_ia32cap_P
@@ -38,7 +45,6 @@
 .align	32
 ecp_nistz256_neg:
 .cfi_startproc	
-_CET_ENDBR
 	pushq	%r12
 .cfi_adjust_cfa_offset	8
 .cfi_offset	%r12,-16
@@ -101,7 +107,6 @@ _CET_ENDBR
 .align	32
 ecp_nistz256_ord_mul_mont:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -436,7 +441,6 @@ _CET_ENDBR
 .align	32
 ecp_nistz256_ord_sqr_mont:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -1196,7 +1200,6 @@ ecp_nistz256_ord_sqr_montx:
 .align	32
 ecp_nistz256_mul_mont:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -1494,7 +1497,6 @@ __ecp_nistz256_mul_montq:
 .align	32
 ecp_nistz256_sqr_mont:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -2025,7 +2027,6 @@ __ecp_nistz256_sqr_montx:
 .align	32
 ecp_nistz256_select_w5:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rax
 	movq	8(%rax),%rax
 	testl	$32,%eax
@@ -2093,7 +2094,6 @@ _CET_ENDBR
 .align	32
 ecp_nistz256_select_w7:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rax
 	movq	8(%rax),%rax
 	testl	$32,%eax
@@ -2214,7 +2214,6 @@ ecp_nistz256_avx2_select_w5:
 ecp_nistz256_avx2_select_w7:
 .cfi_startproc	
 .Lavx2_select_w7:
-_CET_ENDBR
 	vzeroupper
 	vmovdqa	.LThree(%rip),%ymm0
 
@@ -2421,7 +2420,6 @@ __ecp_nistz256_mul_by_2q:
 .align	32
 ecp_nistz256_point_double:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -2656,7 +2654,6 @@ _CET_ENDBR
 .align	32
 ecp_nistz256_point_add:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -3094,7 +3091,6 @@ _CET_ENDBR
 .align	32
 ecp_nistz256_point_add_affine:
 .cfi_startproc	
-_CET_ENDBR
 	leaq	OPENSSL_ia32cap_P(%rip),%rcx
 	movq	8(%rcx),%rcx
 	andl	$0x80100,%ecx
@@ -4545,4 +4541,8 @@ ecp_nistz256_point_add_affinex:
 	.byte	0xf3,0xc3
 .cfi_endproc	
 .size	ecp_nistz256_point_add_affinex,.-ecp_nistz256_point_add_affinex
+#endif
+#if defined(__ELF__)
+// See https://www.airs.com/blog/archives/518.
+.section .note.GNU-stack,"",%progbits
 #endif
