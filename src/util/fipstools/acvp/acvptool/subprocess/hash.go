@@ -62,7 +62,7 @@ type hashPrimitive struct {
 	size int
 }
 
-func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (any, error) {
+func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (interface{}, error) {
 	var parsed hashTestVectorSet
 	if err := json.Unmarshal(vectorSet, &parsed); err != nil {
 		return nil, err
@@ -89,12 +89,14 @@ func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (any, error) {
 			// http://usnistgov.github.io/ACVP/artifacts/draft-celi-acvp-sha-00.html#rfc.section.3
 			switch group.Type {
 			case "AFT":
-				m.TransactAsync(h.algo, 1, [][]byte{msg}, func(result [][]byte) error {
-					response.Tests = append(response.Tests, hashTestResponse{
-						ID:        test.ID,
-						DigestHex: hex.EncodeToString(result[0]),
-					})
-					return nil
+				result, err := m.Transact(h.algo, 1, msg)
+				if err != nil {
+					panic(h.algo + " hash operation failed: " + err.Error())
+				}
+
+				response.Tests = append(response.Tests, hashTestResponse{
+					ID:        test.ID,
+					DigestHex: hex.EncodeToString(result[0]),
 				})
 
 			case "MCT":
@@ -122,13 +124,7 @@ func (h *hashPrimitive) Process(vectorSet []byte, m Transactable) (any, error) {
 			}
 		}
 
-		m.Barrier(func() {
-			ret = append(ret, response)
-		})
-	}
-
-	if err := m.Flush(); err != nil {
-		return nil, err
+		ret = append(ret, response)
 	}
 
 	return ret, nil

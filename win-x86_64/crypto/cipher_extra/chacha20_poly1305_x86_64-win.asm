@@ -6,7 +6,6 @@ default	rel
 %define XMMWORD
 %define YMMWORD
 %define ZMMWORD
-%define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
 %include "boringssl_prefix_symbols_nasm.inc"
@@ -242,7 +241,6 @@ $L$SEH_begin_chacha20_poly1305_open:
 
 
 
-_CET_ENDBR
 	push	rbp
 
 	push	rbx
@@ -2149,7 +2147,6 @@ $L$SEH_begin_chacha20_poly1305_seal:
 
 
 
-_CET_ENDBR
 	push	rbp
 
 	push	rbx

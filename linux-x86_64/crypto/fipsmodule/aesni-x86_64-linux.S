@@ -1,9 +1,16 @@
 // This file is generated from a similarly-named Perl script in the BoringSSL
 // source tree. Do not edit by hand.
 
-#include <openssl/asm_base.h>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
+#define OPENSSL_NO_ASM
+#endif
+#endif
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && defined(__ELF__)
+#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && defined(__ELF__)
+#if defined(BORINGSSL_PREFIX)
+#include <boringssl_prefix_symbols_asm.h>
+#endif
 .text	
 .extern	OPENSSL_ia32cap_P
 .hidden OPENSSL_ia32cap_P
@@ -13,7 +20,6 @@
 .align	16
 aes_hw_encrypt:
 .cfi_startproc	
-_CET_ENDBR
 #ifdef BORINGSSL_DISPATCH_TEST
 .extern	BORINGSSL_function_hit
 .hidden BORINGSSL_function_hit
@@ -46,7 +52,6 @@ _CET_ENDBR
 .align	16
 aes_hw_decrypt:
 .cfi_startproc	
-_CET_ENDBR
 	movups	(%rdi),%xmm2
 	movl	240(%rdx),%eax
 	movups	(%rdx),%xmm0
@@ -535,7 +540,6 @@ _aesni_decrypt8:
 .align	16
 aes_hw_ecb_encrypt:
 .cfi_startproc	
-_CET_ENDBR
 	andq	$-16,%rdx
 	jz	.Lecb_ret
 
@@ -881,7 +885,6 @@ _CET_ENDBR
 .align	16
 aes_hw_ctr32_encrypt_blocks:
 .cfi_startproc	
-_CET_ENDBR
 #ifdef BORINGSSL_DISPATCH_TEST
 	movb	$1,BORINGSSL_function_hit(%rip)
 #endif
@@ -1259,8 +1262,6 @@ _CET_ENDBR
 	pxor	%xmm0,%xmm13
 	movdqu	80(%rdi),%xmm15
 	pxor	%xmm0,%xmm14
-	prefetcht0	448(%rdi)
-	prefetcht0	512(%rdi)
 	pxor	%xmm0,%xmm15
 .byte	102,15,56,220,209
 .byte	102,15,56,220,217
@@ -1467,7 +1468,6 @@ _CET_ENDBR
 .align	16
 aes_hw_cbc_encrypt:
 .cfi_startproc	
-_CET_ENDBR
 	testq	%rdx,%rdx
 	jz	.Lcbc_ret
 
@@ -2061,7 +2061,6 @@ _CET_ENDBR
 .align	16
 aes_hw_set_decrypt_key:
 .cfi_startproc	
-_CET_ENDBR
 .byte	0x48,0x83,0xEC,0x08
 .cfi_adjust_cfa_offset	8
 	call	__aesni_set_encrypt_key
@@ -2108,7 +2107,6 @@ _CET_ENDBR
 aes_hw_set_encrypt_key:
 __aesni_set_encrypt_key:
 .cfi_startproc	
-_CET_ENDBR
 #ifdef BORINGSSL_DISPATCH_TEST
 	movb	$1,BORINGSSL_function_hit+3(%rip)
 #endif
@@ -2506,4 +2504,8 @@ _CET_ENDBR
 .byte	65,69,83,32,102,111,114,32,73,110,116,101,108,32,65,69,83,45,78,73,44,32,67,82,89,80,84,79,71,65,77,83,32,98,121,32,60,97,112,112,114,111,64,111,112,101,110,115,115,108,46,111,114,103,62,0
 .align	64
 .text	
+#endif
+#if defined(__ELF__)
+// See https://www.airs.com/blog/archives/518.
+.section .note.GNU-stack,"",%progbits
 #endif

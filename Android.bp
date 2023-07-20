@@ -607,7 +607,7 @@ cc_library_static {
 }
 
 // Test support library
-cc_test_library {
+cc_library_static {
     name: "boringssl_test_support",
     host_supported: true,
     defaults: [
