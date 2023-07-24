@@ -43,12 +43,18 @@ fi
 
 rm -Rf src/.git
 rm -Rf src/fuzz
+# Omit the experimental new certificate verifier library for now.
+rm -Rf src/pki
 rm -Rf src/third_party/googletest
 rm -Rf apple-aarch64 apple-arm apple-x86 apple-x86_64 ios-aarch64 ios-arm \
    linux-aarch64 linux-arm linux-ppc64le linux-x86 linux-x86_64 win-aarch64 win-x86 win-x86_64
 
-python src/util/generate_build_files.py android android-cmake bazel eureka
+python3 src/util/generate_build_files.py android android-cmake bazel eureka
 cp src/LICENSE NOTICE
+
+# TODO(b/291253039): As a workaround for problems with the Android Rust build,
+# we currently need to revert a change in bssl-sys.
+sed -i -e 's/^include.*BINDGEN_RS_FILE.*$/${INCLUDES}/' src/rust/bssl-sys/src/lib.rs
 
 git add .
 git commit --no-verify -F $msgfile
