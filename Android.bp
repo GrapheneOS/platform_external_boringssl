@@ -42,14 +42,19 @@ build = ["sources.bp"]
 
 // Used by libcrypto, libssl, bssl tool, and native tests
 cc_defaults {
-    name: "boringssl_flags",
+    // This contains the common options between boringssl_flags and
+    // boringssl_flags_baremetal. Nothing else should include this target
+    // directly.
+    name: "boringssl_flags_common",
+
+    // TODO(b/293260907): These are probably incorrect for the "baremetal"
+    // builds and should likely be moved to boringssl_flags.
     vendor_available: true,
     product_available: true,
 
     cflags: [
         "-fvisibility=hidden",
         "-DBORINGSSL_SHARED_LIBRARY",
-        "-DBORINGSSL_ANDROID_SYSTEM",
         "-DOPENSSL_SMALL",
         "-Werror",
         "-Wno-unused-parameter",
@@ -61,8 +66,38 @@ cc_defaults {
     ],
 
     // Build BoringSSL and its tests against the same STL.
-    sdk_version: "9",
     stl: "libc++_static",
+
+    // The libcrypto_sources target does not include assembly for Windows and
+    // macOS. When updating to https://boringssl-review.googlesource.com/62005,
+    // remove this.
+    target: {
+        windows: {
+            cflags: ["-DOPENSSL_NO_ASM"],
+        },
+        darwin: {
+            cflags: ["-DOPENSSL_NO_ASM"],
+        },
+    },
+}
+
+cc_defaults {
+    name: "boringssl_flags",
+    cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
+    defaults: ["boringssl_flags_common"],
+    sdk_version: "9",
+}
+
+cc_defaults {
+    name: "boringssl_flags_baremetal",
+    cflags: [
+        "-DBORINGSSL_NO_STATIC_INITIALIZER",
+        // TODO(b/291106677): Remove this once BoringSSL can query the system
+        // registers for Android baremetal.
+        "-DOPENSSL_STATIC_ARMCAP",
+        "-D__TRUSTY__",
+    ],
+    defaults: ["boringssl_flags_common"],
 }
 
 // Used by libcrypto + libssl
@@ -74,22 +109,18 @@ cc_defaults {
     cflags: ["-DBORINGSSL_IMPLEMENTATION"],
 }
 
-//// libcrypto
+//// libcrypto, but not libcrypto_baremetal. libcrypto_baremetal is a single
+//// target, so there is no need for a libcrypto_defaults_baremetal.
 cc_defaults {
     name: "libcrypto_defaults",
     host_supported: true,
     ramdisk_available: true,
     vendor_ramdisk_available: true,
 
-    // Windows and Macs both have problems with assembly files
     target: {
         windows: {
             enabled: true,
-            cflags: ["-DOPENSSL_NO_ASM"],
             host_ldlibs: ["-lws2_32"],
-        },
-        darwin: {
-            cflags: ["-DOPENSSL_NO_ASM"],
         },
         host: {
             host_ldlibs: ["-lpthread"],
@@ -401,15 +432,8 @@ cc_library_static {
     defaults: [
         "libcrypto_bcm_sources",
         "libcrypto_sources",
-        "libcrypto_defaults",
         "boringssl_defaults",
-        "boringssl_flags",
-    ],
-    cflags: [
-        "-DBORINGSSL_NO_STATIC_INITIALIZER",
-        "-DOPENSSL_SMALL",
-        "-DOPENSSL_STATIC_ARMCAP",
-        "-D__TRUSTY__",
+        "boringssl_flags_baremetal",
     ],
     visibility: [
         "//external/avb",
@@ -496,7 +520,7 @@ cc_library_static {
     defaults: [
         "libssl_sources",
         "boringssl_defaults",
-        "boringssl_flags",
+        "boringssl_flags_baremetal",
     ],
     static_libs: ["libcrypto_baremetal"],
 }
@@ -782,7 +806,7 @@ cc_library_static {
 
 cc_library_static {
     name: "libbssl_rust_support_baremetal",
-    defaults: ["boringssl_flags"],
+    defaults: ["boringssl_flags_baremetal"],
     srcs: ["src/rust/bssl-sys/rust_wrapper.c"],
     static_libs: [
         "libcrypto_baremetal",
