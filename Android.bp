@@ -95,7 +95,7 @@ cc_defaults {
         // TODO(b/291106677): Remove this once BoringSSL can query the system
         // registers for Android baremetal.
         "-DOPENSSL_STATIC_ARMCAP",
-        "-D__TRUSTY__",
+        "-DANDROID_BAREMETAL",
     ],
     defaults: ["boringssl_flags_common"],
 }
