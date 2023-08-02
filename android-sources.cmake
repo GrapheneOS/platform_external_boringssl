@@ -80,15 +80,14 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/cipher_extra/tls_cbc.c
   ${BORINGSSL_ROOT}src/crypto/conf/conf.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_apple.c
-  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_freebsd.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_fuchsia.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_linux.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_openbsd.c
+  ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_sysreg.c
   ${BORINGSSL_ROOT}src/crypto/cpu_aarch64_win.c
   ${BORINGSSL_ROOT}src/crypto/cpu_arm.c
   ${BORINGSSL_ROOT}src/crypto/cpu_arm_freebsd.c
   ${BORINGSSL_ROOT}src/crypto/cpu_arm_linux.c
-  ${BORINGSSL_ROOT}src/crypto/cpu_arm_openbsd.c
   ${BORINGSSL_ROOT}src/crypto/cpu_intel.c
   ${BORINGSSL_ROOT}src/crypto/crypto.c
   ${BORINGSSL_ROOT}src/crypto/curve25519/curve25519.c
