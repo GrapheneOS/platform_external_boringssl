@@ -47,11 +47,6 @@ cc_defaults {
     // directly.
     name: "boringssl_flags_common",
 
-    // TODO(b/293260907): These are probably incorrect for the "baremetal"
-    // builds and should likely be moved to boringssl_flags.
-    vendor_available: true,
-    product_available: true,
-
     cflags: [
         "-fvisibility=hidden",
         "-DBORINGSSL_SHARED_LIBRARY",
@@ -83,6 +78,8 @@ cc_defaults {
 
 cc_defaults {
     name: "boringssl_flags",
+    vendor_available: true,
+    product_available: true,
     cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
     defaults: ["boringssl_flags_common"],
     sdk_version: "9",
@@ -445,7 +442,6 @@ cc_library_static {
         "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
     ],
-    apex_available: ["com.android.virt"],
 }
 
 // Common defaults for lib*_fuzz_unsafe. These are unsafe and deterministic
