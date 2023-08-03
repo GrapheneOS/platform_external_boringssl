@@ -1353,9 +1353,15 @@ OPENSSL_INLINE int CRYPTO_is_ADX_capable(void) {
 
 #if defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64)
 
-#if defined(OPENSSL_APPLE) && defined(OPENSSL_ARM)
-// We do not detect any features at runtime for Apple's 32-bit ARM platforms. On
-// 64-bit ARM, we detect some post-ARMv8.0 features.
+extern uint32_t OPENSSL_armcap_P;
+
+// We do not detect any features at runtime on several 32-bit Arm platforms.
+// Apple platforms and OpenBSD require NEON and moved to 64-bit to pick up Armv8
+// extensions. Android baremetal does not aim to support 32-bit Arm at all, but
+// it simplifies things to make it build.
+#if defined(OPENSSL_ARM) && !defined(OPENSSL_STATIC_ARMCAP) && \
+    (defined(OPENSSL_APPLE) || defined(OPENSSL_OPENBSD) ||     \
+     defined(ANDROID_BAREMETAL))
 #define OPENSSL_STATIC_ARMCAP
 #endif
 
