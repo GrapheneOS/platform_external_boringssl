@@ -62,18 +62,6 @@ cc_defaults {
 
     // Build BoringSSL and its tests against the same STL.
     stl: "libc++_static",
-
-    // The libcrypto_sources target does not include assembly for Windows and
-    // macOS. When updating to https://boringssl-review.googlesource.com/62005,
-    // remove this.
-    target: {
-        windows: {
-            cflags: ["-DOPENSSL_NO_ASM"],
-        },
-        darwin: {
-            cflags: ["-DOPENSSL_NO_ASM"],
-        },
-    },
 }
 
 cc_defaults {
