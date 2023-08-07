@@ -279,11 +279,11 @@ cc_defaults {
         "src/crypto/x509v3/v3_utl.c",
     ],
     target: {
-        android: {
+        linux: {
             srcs: libcrypto_sources_asm,
         },
-        not_windows: {
-            srcs: libcrypto_sources_asm,
+        darwin: {
+            cflags: ["-DOPENSSL_NO_ASM"],
         },
         windows: {
             cflags: ["-DOPENSSL_NO_ASM"],
@@ -406,11 +406,11 @@ cc_defaults {
         "src/crypto/fipsmodule/bcm.c",
     ],
     target: {
-        android: {
+        linux: {
             srcs: libcrypto_bcm_sources_asm,
         },
-        not_windows: {
-            srcs: libcrypto_bcm_sources_asm,
+        darwin: {
+            cflags: ["-DOPENSSL_NO_ASM"],
         },
         windows: {
             cflags: ["-DOPENSSL_NO_ASM"],
