@@ -77,9 +77,6 @@ cc_defaults {
     name: "boringssl_flags_baremetal",
     cflags: [
         "-DBORINGSSL_NO_STATIC_INITIALIZER",
-        // TODO(b/291106677): Remove this once BoringSSL can query the system
-        // registers for Android baremetal.
-        "-DOPENSSL_STATIC_ARMCAP",
         "-DANDROID_BAREMETAL",
     ],
     defaults: ["boringssl_flags_common"],
