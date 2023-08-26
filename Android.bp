@@ -399,7 +399,6 @@ cc_library_static {
     visibility: [
         "//external/avb",
         "//external/open-dice",
-        "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
     ],
 }
