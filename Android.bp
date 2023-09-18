@@ -798,7 +798,7 @@ cc_library_host_static {
 gensrcs {
     name: "libbssl_sys_src",
     srcs: ["src/rust/bssl-sys/src/lib.rs"],
-    cmd: "sed 's@^.{INCLUDES}@pub use bssl_sys_raw::*;@' $(in) > $(out)",
+    cmd: "sed 's@^include!(env!(\"BINDGEN_RS_FILE\"));@pub use bssl_sys_raw::*;@' $(in) > $(out)",
 }
 
 rust_defaults {
