@@ -80,6 +80,9 @@ cc_defaults {
         "-DANDROID_BAREMETAL",
     ],
     defaults: ["boringssl_flags_common"],
+    apex_available: [
+        "com.android.virt",
+    ],
 }
 
 // Used by libcrypto + libssl
@@ -742,6 +745,9 @@ rust_bindgen {
     header_libs: [
         "libcrypto_baremetal",
         "libssl_baremetal",
+    ],
+    apex_available: [
+        "com.android.virt",
     ],
 }
 
