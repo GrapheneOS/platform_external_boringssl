@@ -60,6 +60,7 @@ set(
   crypto/poly1305/poly1305_test.cc
   crypto/pool/pool_test.cc
   crypto/rand_extra/rand_test.cc
+  crypto/rand_extra/getentropy_test.cc
   crypto/refcount_test.cc
   crypto/rsa_extra/rsa_test.cc
   crypto/self_test.cc
@@ -352,14 +353,15 @@ set(
   pki/crl.cc
   pki/encode_values.cc
   pki/extended_key_usage.cc
-  pki/fillins/base64.cc
-  pki/fillins/ip_address.cc
+  pki/fillins/fillins_base64.cc
   pki/fillins/openssl_util.cc
-  pki/fillins/string_util.cc
-  pki/fillins/utf_string_conversions.cc
+  pki/fillins/fillins_string_util.cc
   pki/general_names.cc
   pki/input.cc
+  pki/ip_util.cc
   pki/name_constraints.cc
+  pki/ocsp.cc
+  pki/ocsp_verify_result.cc
   pki/parse_certificate.cc
   pki/parse_name.cc
   pki/parse_values.cc
@@ -393,10 +395,11 @@ set(
   pki/fillins/path_service.cc
   pki/general_names_unittest.cc
   pki/input_unittest.cc
+  pki/ip_util_unittest.cc
   pki/mock_signature_verify_cache.cc
   pki/name_constraints_unittest.cc
   pki/nist_pkits_unittest.cc
-  #  pki/ocsp_unittest.cc           # Not sure we will keep this here..
+  pki/ocsp_unittest.cc
   pki/parse_certificate_unittest.cc
   pki/parse_name_unittest.cc
   pki/parse_values_unittest.cc
@@ -586,6 +589,7 @@ set(
   pki/testdata/name_constraints_unittest/ipaddress-invalid_mask_not_contiguous_2.pem
   pki/testdata/name_constraints_unittest/ipaddress-invalid_mask_not_contiguous_3.pem
   pki/testdata/name_constraints_unittest/ipaddress-invalid_mask_not_contiguous_4.pem
+  pki/testdata/name_constraints_unittest/ipaddress-mapped_addrs.pem
   pki/testdata/name_constraints_unittest/ipaddress-permit_all.pem
   pki/testdata/name_constraints_unittest/ipaddress-permit_prefix1.pem
   pki/testdata/name_constraints_unittest/ipaddress-permit_prefix31.pem
@@ -1528,6 +1532,9 @@ set(
   pki/testdata/ssl/certificates/duplicate_cn_1.pem
   pki/testdata/ssl/certificates/duplicate_cn_2.p12
   pki/testdata/ssl/certificates/duplicate_cn_2.pem
+  pki/testdata/ssl/certificates/ec-prime256v1-1.key
+  pki/testdata/ssl/certificates/ec-prime256v1-2.key
+  pki/testdata/ssl/certificates/ec-prime256v1-3.key
   pki/testdata/ssl/certificates/eku-test-root.pem
   pki/testdata/ssl/certificates/ev_test.pem
   pki/testdata/ssl/certificates/ev_test_state_only.pem
@@ -1606,6 +1613,16 @@ set(
   pki/testdata/ssl/certificates/redundant-validated-chain-root.pem
   pki/testdata/ssl/certificates/redundant-validated-chain.pem
   pki/testdata/ssl/certificates/root_ca_cert.pem
+  pki/testdata/ssl/certificates/rsa-1024-1.key
+  pki/testdata/ssl/certificates/rsa-1024-2.key
+  pki/testdata/ssl/certificates/rsa-1024-3.key
+  pki/testdata/ssl/certificates/rsa-2048-1.key
+  pki/testdata/ssl/certificates/rsa-2048-2.key
+  pki/testdata/ssl/certificates/rsa-2048-3.key
+  pki/testdata/ssl/certificates/rsa-768-1.key
+  pki/testdata/ssl/certificates/rsa-768-2.key
+  pki/testdata/ssl/certificates/rsa-768-3.key
+  pki/testdata/ssl/certificates/rsa-8200-1.key
   pki/testdata/ssl/certificates/salesforce_com_test.pem
   pki/testdata/ssl/certificates/self-signed-invalid-name.pem
   pki/testdata/ssl/certificates/self-signed-invalid-sig.pem
