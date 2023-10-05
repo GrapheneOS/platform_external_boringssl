@@ -14,7 +14,7 @@
 
 # This file is created by generate_build_files.py. Do not edit manually.
 
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.12)
 
 project(BoringSSL LANGUAGES C CXX)
 
@@ -337,7 +337,6 @@ add_library(
   src/crypto/cpu_aarch64_openbsd.c
   src/crypto/cpu_aarch64_sysreg.c
   src/crypto/cpu_aarch64_win.c
-  src/crypto/cpu_arm.c
   src/crypto/cpu_arm_freebsd.c
   src/crypto/cpu_arm_linux.c
   src/crypto/cpu_intel.c
