@@ -691,6 +691,15 @@ cc_test {
 cc_binary {
     name: "test_fips",
     host_supported: false,
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "",
+        },
+    },
     defaults: [
         "boringssl_flags",
     ],
