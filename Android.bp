@@ -401,7 +401,7 @@ cc_library_static {
         "boringssl_flags_baremetal",
     ],
     visibility: [
-        "//external/avb",
+        "//external/avb:__subpackages__",
         "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
