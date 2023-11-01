@@ -125,7 +125,7 @@ crypto_sources := \
   src/crypto/fipsmodule/fips_shared_support.c\
   src/crypto/hpke/hpke.c\
   src/crypto/hrss/hrss.c\
-  src/crypto/kyber/keccak.c\
+  src/crypto/keccak/keccak.c\
   src/crypto/kyber/kyber.c\
   src/crypto/lhash/lhash.c\
   src/crypto/mem.c\
@@ -365,6 +365,8 @@ crypto_sources_asm := \
   src/crypto/poly1305/poly1305_arm_asm.S\
   src/third_party/fiat/asm/fiat_curve25519_adx_mul.S\
   src/third_party/fiat/asm/fiat_curve25519_adx_square.S\
+  src/third_party/fiat/asm/fiat_p256_adx_mul.S\
+  src/third_party/fiat/asm/fiat_p256_adx_sqr.S\
   win-aarch64/crypto/chacha/chacha-armv8-win.S\
   win-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8-win.S\
   win-aarch64/crypto/fipsmodule/aesv8-armv8-win.S\

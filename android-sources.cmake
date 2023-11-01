@@ -127,7 +127,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/fips_shared_support.c
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke.c
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss.c
-  ${BORINGSSL_ROOT}src/crypto/kyber/keccak.c
+  ${BORINGSSL_ROOT}src/crypto/keccak/keccak.c
   ${BORINGSSL_ROOT}src/crypto/kyber/kyber.c
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash.c
   ${BORINGSSL_ROOT}src/crypto/mem.c
@@ -367,6 +367,8 @@ set(crypto_sources_asm
   ${BORINGSSL_ROOT}src/crypto/poly1305/poly1305_arm_asm.S
   ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_curve25519_adx_mul.S
   ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_curve25519_adx_square.S
+  ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_p256_adx_mul.S
+  ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_p256_adx_sqr.S
   ${BORINGSSL_ROOT}win-aarch64/crypto/chacha/chacha-armv8-win.S
   ${BORINGSSL_ROOT}win-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8-win.S
   ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/aesv8-armv8-win.S
@@ -515,6 +517,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cmac_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_test.cc
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/hkdf/hkdf_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/md5/md5_test.cc
@@ -527,6 +530,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test.cc
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss_test.cc
   ${BORINGSSL_ROOT}src/crypto/impl_dispatch_test.cc
+  ${BORINGSSL_ROOT}src/crypto/keccak/keccak_test.cc
   ${BORINGSSL_ROOT}src/crypto/kyber/kyber_test.cc
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash_test.cc
   ${BORINGSSL_ROOT}src/crypto/obj/obj_test.cc
