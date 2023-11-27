@@ -819,9 +819,10 @@ cc_library_host_static {
 }
 
 // Replace the upstream CMake placeholder with a re-export of all of the local bindgen output.
-gensrcs {
+genrule {
     name: "libbssl_sys_src",
     srcs: ["src/rust/bssl-sys/src/lib.rs"],
+    out: ["lib.rs"],
     cmd: "sed 's@^include!(env!(\"BINDGEN_RS_FILE\"));@pub use bssl_sys_raw::*;@' $(in) > $(out)",
 }
 
@@ -863,9 +864,10 @@ rust_library_host_rlib {
     ],
 }
 
-gensrcs {
+genrule {
     name: "libbssl_sys_src_nostd",
     srcs: [":libbssl_sys_src"],
+    out: ["lib.rs"],
     cmd: "(echo '#![no_std]' && cat $(in)) > $(out)",
 }
 
