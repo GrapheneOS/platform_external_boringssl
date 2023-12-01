@@ -296,6 +296,7 @@ cc_library {
         "com.android.virt",
     ],
     min_sdk_version: "29",
+    afdo: true,
 }
 
 // Version of libcrypto build with BORINGSSL_FIPS_BREAK_TESTS defined
